@@ -7,7 +7,11 @@ authors = [
     { name = "Sara Ammourh", email = "saraammourh814@gmail.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "fastapi>=0.158.1",
+    "sqlmodel>=0.0.48",
+    "uvicorn[standard]>=0.54.0",
+]
 
 [project.scripts]
 concierge = "concierge:main"
@@ -15,3 +19,6 @@ concierge = "concierge:main"
 [build-system]
 requires = ["uv_build>=0.13.4,<0.14.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "concierge"
