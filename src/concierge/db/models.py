@@ -86,7 +86,7 @@ class Message(SQLModel, table=True):
     session_id: int = Field(foreign_key="session.session_id", index=True)
     role: MessageRole
     content: str
-    tool_calls: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    tool_calls: Optional[list] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = updated_at_field()
 
@@ -118,6 +118,7 @@ class Event(SQLModel, table=True):
     start_at: datetime = Field(index=True)
     end_at: datetime
     price: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2)
+    currency: str = Field(default="JPY", max_length=3)  # ISO code: "JPY", "EUR"
     reg_deadline: datetime
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = updated_at_field()
@@ -134,7 +135,7 @@ class Booking(SQLModel, table=True):
     __tablename__ = "booking"
 
     user_id: int = Field(foreign_key="user.user_id", primary_key=True)
-    event_id: int = Field(foreign_key="event.event_id", primary_key=True)
+    event_id: int = Field(foreign_key="event.event_id", primary_key=True, index=True)
     status: BookingStatus = Field(default=BookingStatus.confirmed)
     registered_at: datetime = Field(default_factory=utcnow)
 
@@ -146,6 +147,7 @@ class Member(SQLModel, table=True):
 
     member_id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(max_length=255)
+    category_id: int = Field(foreign_key="member_category.category_id", index=True)
     continent: str = Field(max_length=50, index=True)
     country: str = Field(max_length=100, index=True)
     sector: str = Field(max_length=100, index=True)
@@ -157,8 +159,38 @@ class Member(SQLModel, table=True):
     updated_at: datetime = updated_at_field()
 
 
+class MemberCategory(SQLModel, table=True):
+    __tablename__ = "member_category"
+
+    category_id: Optional[int] = Field(default=None, primary_key=True)
+    category_name: str = Field(max_length=255, unique=True)
+    category_description: str
+    annual_price: Decimal = Field(max_digits=10, decimal_places=2)
+    currency: str = Field(default="JPY", max_length=3)  # ISO code: "JPY", "EUR"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = updated_at_field()
+
+
 class Belongs(SQLModel, table=True):
     __tablename__ = "belongs"
 
     user_id: int = Field(foreign_key="user.user_id", primary_key=True)
-    member_id: int = Field(foreign_key="member.member_id", primary_key=True)
+    member_id: int = Field(foreign_key="member.member_id", primary_key=True, index=True)
+
+
+class Speaker(SQLModel, table=True):
+    __tablename__ = "speaker"
+
+    speaker_id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=100)
+    role: str = Field(max_length=255)
+    biography: str
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = updated_at_field()
+
+
+class SpeaksAt(SQLModel, table=True):
+    __tablename__ = "speaks_at"
+
+    speaker_id: int = Field(foreign_key="speaker.speaker_id", primary_key=True)
+    event_id: int = Field(foreign_key="event.event_id", primary_key=True, index=True)
