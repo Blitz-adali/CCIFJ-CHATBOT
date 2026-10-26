@@ -16,10 +16,15 @@ def updated_at_field():
 
 # ---------- Fixed-value fields ----------
 
-class TicketStatus(str, Enum):
-    open = "open"
-    in_progress = "in_progress"
-    resolved = "resolved"
+class SubscriptionType(str, Enum):
+    newsletter = "newsletter"
+    studio_newsletter = "studio_newsletter"
+    training = "training"
+
+
+class ReservationStatus(str, Enum):
+    confirmed = "confirmed"
+    cancelled = "cancelled"
 
 
 class BookingStatus(str, Enum):
@@ -41,8 +46,8 @@ class User(SQLModel, table=True):
     user_id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(max_length=100)
     email: str = Field(max_length=255, unique=True, index=True)
-    mobile: str = Field(max_length=30)
-    address: str = Field(max_length=255)
+    mobile: Optional[str] = Field(default=None, max_length=30)
+    address: Optional[str] = Field(default=None, max_length=255)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = updated_at_field()
 
@@ -52,18 +57,6 @@ class UserAuth(SQLModel, table=True):
 
     user_id: int = Field(foreign_key="user.user_id", primary_key=True)
     password_hash: str = Field(max_length=255)
-    updated_at: datetime = updated_at_field()
-
-
-class Staff(SQLModel, table=True):
-    __tablename__ = "staff"
-
-    staff_id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(max_length=100)
-    role: str = Field(max_length=50)
-    mobile: str = Field(max_length=30)
-    email: str = Field(max_length=255)
-    created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = updated_at_field()
 
 
@@ -91,19 +84,6 @@ class Message(SQLModel, table=True):
     updated_at: datetime = updated_at_field()
 
 
-class Ticket(SQLModel, table=True):
-    __tablename__ = "ticket"
-
-    ticket_id: Optional[int] = Field(default=None, primary_key=True)
-    session_id: int = Field(foreign_key="session.session_id")
-    staff_id: Optional[int] = Field(default=None, foreign_key="staff.staff_id")
-    status: TicketStatus = Field(default=TicketStatus.open)
-    subject: str = Field(max_length=255)
-    description: str
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = updated_at_field()
-
-
 # ---------- Events ----------
 
 class Event(SQLModel, table=True):
@@ -119,7 +99,7 @@ class Event(SQLModel, table=True):
     end_at: datetime
     price: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2)
     currency: str = Field(default="JPY", max_length=3)  # ISO code: "JPY", "EUR"
-    reg_deadline: datetime
+    reg_deadline: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = updated_at_field()
 
@@ -134,10 +114,22 @@ class EventLanguage(SQLModel, table=True):
 class Booking(SQLModel, table=True):
     __tablename__ = "booking"
 
-    user_id: int = Field(foreign_key="user.user_id", primary_key=True)
-    event_id: int = Field(foreign_key="event.event_id", primary_key=True, index=True)
+    booking_id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.user_id")
+    event_id: int = Field(foreign_key="event.event_id", index=True)
     status: BookingStatus = Field(default=BookingStatus.confirmed)
     registered_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = updated_at_field()
+
+
+class Ticket(SQLModel, table=True):
+    __tablename__ = "ticket"
+
+    ticket_id:  Optional[int] = Field(default=None, primary_key=True)
+    booking_id: int = Field(foreign_key="booking.booking_id")
+    name: str = Field(max_length=100)
+    email: str = Field(max_length=255)
+    telephone: Optional[str] = Field(default=None, max_length=30)
 
 
 # ---------- Members ----------
@@ -150,11 +142,12 @@ class Member(SQLModel, table=True):
     category_id: int = Field(foreign_key="member_category.category_id", index=True)
     continent: str = Field(max_length=50, index=True)
     country: str = Field(max_length=100, index=True)
+    region: str = Field(max_length=255, index=True)
     sector: str = Field(max_length=100, index=True)
-    manpower: int
+    manpower: Optional[int] = Field(default=None)
     description: str
-    contact: str = Field(max_length=255)
-    established_at: date
+    contact: Optional[str] = Field(default=None, max_length=255)
+    established_at: Optional[date] = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = updated_at_field()
 
@@ -194,3 +187,59 @@ class SpeaksAt(SQLModel, table=True):
 
     speaker_id: int = Field(foreign_key="speaker.speaker_id", primary_key=True)
     event_id: int = Field(foreign_key="event.event_id", primary_key=True, index=True)
+
+
+# ---------- Subscriptions & Contact Us ----------
+
+
+class Subscription(SQLModel, table=True):
+    __tablename__ = "subscription"
+
+    user_email: str = Field(max_length=255, primary_key=True, index=True)
+    sub_type: SubscriptionType = Field(primary_key=True, index=True)
+
+
+class ContactUs(SQLModel, table=True):
+    __tablename__ = "contact_us"
+
+    contact_id: Optional[int] = Field(default=None, primary_key=True)
+    name: Optional[str] = Field(default=None, max_length=100)
+    role: Optional[str] = Field(default=None, max_length=50)
+    mobile: Optional[str] = Field(default=None, max_length=30)
+    email: str = Field(max_length=255)
+    category: str = Field(max_length=100)
+    sub_category: str = Field(max_length=255)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = updated_at_field()
+
+
+# ---------- Spaces ----------
+
+
+class Space(SQLModel, table=True):
+    __tablename__ = "space"
+
+    space_id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=100, unique=True)
+    description: Optional[str] = Field(default=None)
+    capacity: Optional[int] = Field(default=None)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = updated_at_field()
+
+
+class SpaceReservation(SQLModel, table=True):
+    __tablename__ = "space_reservation"
+
+    reservation_id: Optional[int] = Field(default=None, primary_key=True)
+    space_id: int = Field(foreign_key="space.space_id", index=True)
+    user_id: int = Field(foreign_key="user.user_id", index=True)
+    event_id: Optional[int] = Field(default=None, foreign_key="event.event_id")
+    title: str = Field(max_length=255)
+    is_public: bool = Field(default=False)
+    expected_attendees: Optional[int] = Field(default=None)
+    notes: Optional[str] = Field(default=None)
+    start_at: datetime = Field(index=True)
+    end_at: datetime
+    status: ReservationStatus = Field(default=ReservationStatus.confirmed)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = updated_at_field()

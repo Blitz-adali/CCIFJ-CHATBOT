@@ -8,7 +8,9 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "aiosqlite>=0.22.1",
     "fastapi>=0.158.1",
+    "sqlalchemy[asyncio]>=2.1.6",
     "sqlmodel>=0.0.48",
     "uvicorn[standard]>=0.54.0",
 ]
