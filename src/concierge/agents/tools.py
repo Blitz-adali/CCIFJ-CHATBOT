@@ -5,14 +5,14 @@ from typing import Literal, Optional
 from langchain_core.tools import tool
 from langgraph.prebuilt import ToolRuntime
 from pydantic import BaseModel
-from rag import search, EMBED_MODEL_NAME
+from ..rag import search, EMBED_MODEL_NAME
+from ..rag.src.config import INDEX_PATH
 from sentence_transformers import SentenceTransformer
 import bm25s
 
-# Adjust "concierge" to your actual package name.
-from DB.relationaldb import crud
-from DB.relationaldb.models import SubscriptionType
-from DB.relationaldb.session import AsyncSessionLocal
+from ..db.relationaldb import crud
+from ..db.relationaldb.models import SubscriptionType
+from ..db.relationaldb.session import AsyncSessionLocal
 
 # Cached embedding model singleton to avoid reloading weights on every invocation
 _embed_model = None
@@ -29,7 +29,7 @@ _retriever = None
 def _get_retriever():
     global _retriever
     if _retriever is None:
-        _retriever = bm25s.BM25.load("index/", load_corpus=True)
+        _retriever = bm25s.BM25.load(str(INDEX_PATH), load_corpus=True)
     return _retriever
 
 #################################################

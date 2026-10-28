@@ -1,4 +1,4 @@
-from .config import DB_PATH, COLLECTION_NAME, EMBED_MODEL_NAME, PAGES_PATH, CHUNKS_PATH
+from .config import DB_PATH, COLLECTION_NAME, EMBED_MODEL_NAME, PAGES_PATH, CHUNKS_PATH, INDEX_PATH
 from .preprocess import MinimalSource, chunk, blocks_to_markdown
 import chromadb
 from pathlib import Path
@@ -45,8 +45,8 @@ def lexical_index(sources: list[MinimalSource]):
     try:
         retriever = bm25s.BM25(corpus=corpus)
         retriever.index(bm25s.tokenize(corpus))
-        index_files = Path("index/")
-        index_files.parent.mkdir(parents=True, exist_ok=True)
+        index_files = INDEX_PATH
+        index_files.mkdir(parents=True, exist_ok=True)
     except Exception as e:
         print("Error Indexing Corpus", e,
                 "Check files under data/raw")
@@ -56,7 +56,7 @@ def lexical_index(sources: list[MinimalSource]):
         sources_json = json.dumps(
             [src.model_dump(mode="json") for src in sources], indent=4
             )
-        with open("data/chunks.json", "w") as f:
+        with open(CHUNKS_PATH, "w", encoding="utf-8") as f:
             f.write(sources_json)
     except Exception as e:
         print("Error Saving Index", e)

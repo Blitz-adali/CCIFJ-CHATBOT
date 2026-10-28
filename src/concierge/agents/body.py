@@ -3,7 +3,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
-from Agents.schema_prompts import (
+from .schema_prompts import (
         AgentState,
         EventsState,
         MembershipState,
@@ -17,8 +17,8 @@ from Agents.schema_prompts import (
         _ALL_QUESTIONS,
         PREDEFINED_QA_LOOKUP
     )
-from Agents.model import llm, llm_routing
-from Agents.utlis import (
+from .model import llm, llm_routing
+from .utlis import (
     last_humain_message,
     do_trim_messages,
     route_from_orchestrator,
@@ -26,7 +26,7 @@ from Agents.utlis import (
     route_after_supervisor,
     route_after_subagent,
 )
-from Agents.langchain_agents import (
+from .langchain_agents import (
     event_agent,
     membership_agent,
     general_agent,

@@ -3,11 +3,7 @@ from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import os
-try:
-    # pyrefly: ignore[missing-import]
-    import schema_prompts
-except ImportError: 
-    from Agents.schema_prompts import AgentState
+from .schema_prompts import AgentState
 
 load_dotenv()
 model_name = os.getenv("model_name")
