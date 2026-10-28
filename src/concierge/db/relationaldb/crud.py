@@ -1,10 +1,11 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, Sequence
 
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
+from .datetimes import japan_now, japan_naive
 
 from .models import (
     Booking,
@@ -29,14 +30,12 @@ from .models import (
 
 
 def _now() -> datetime:
-    # SQLite returns naive datetimes, so compare against naive UTC.
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return japan_now()
 
 
 def _naive(dt: datetime) -> datetime:
-    """Datetimes are stored without a timezone. Pass them in the same local
-    time the event times use; any tzinfo is simply dropped."""
-    return dt.replace(tzinfo=None)
+    """Normalize scheduling values to the database's naive Japan time."""
+    return japan_naive(dt)
 
 
 # ---------- Events ----------
@@ -81,9 +80,9 @@ async def search_events(
         )
         stmt = stmt.where(col(Event.event_id).in_(has_language))
     if date_from:
-        stmt = stmt.where(Event.start_at >= date_from)
+        stmt = stmt.where(Event.start_at >= _naive(date_from))
     if date_to:
-        stmt = stmt.where(Event.start_at <= date_to)
+        stmt = stmt.where(Event.start_at <= _naive(date_to))
     if max_price is not None:
         price_currency = (currency or "JPY").upper()
         stmt = stmt.where(
@@ -313,7 +312,8 @@ async def book_event(
     event = await session.get(Event, event_id)
     if event is None:
         raise ValueError("That event doesn't exist.")
-    if event.reg_deadline and _now() > event.reg_deadline:
+    closing_at = event.reg_deadline if event.reg_deadline is not None else event.end_at
+    if closing_at is not None and _now() >= _naive(closing_at):
         raise ValueError("Registration for this event has closed.")
     if not attendees:
         raise ValueError("At least one attendee (name and email) is required.")
@@ -419,7 +419,7 @@ async def cancel_booking(
     if booking.status == BookingStatus.cancelled:
         raise ValueError("This booking is already cancelled.")
     event = await session.get(Event, booking.event_id)
-    if event is not None and event.start_at <= _now():
+    if event is not None and event.start_at is not None and _naive(event.start_at) <= _now():
         raise ValueError("This event has already started, so it can't be cancelled.")
 
     booking.status = BookingStatus.cancelled  # updated_at refreshes via onupdate
@@ -431,9 +431,8 @@ async def cancel_booking(
 
 # ---------- Spaces and reservations ----------
 
-# Makes "check the slot is free, then save" one step per server process.
-# (If you ever run several worker processes, you'll need a database-level
-# safeguard as well.)
+# Avoid redundant attempts within this process. Database triggers installed by
+# migrations enforce the same rule across processes and direct SQL writes.
 _reservation_lock = asyncio.Lock()
 
 
@@ -516,6 +515,8 @@ async def create_reservation(
         raise ValueError("Reservations must start in the future.")
     if not title.strip():
         raise ValueError("A title or purpose for the reservation is required.")
+    if expected_attendees is not None and expected_attendees <= 0:
+        raise ValueError("Expected attendees must be greater than zero.")
 
     if await session.get(User, user_id) is None:
         raise ValueError("No registered user was found for this account.")
@@ -546,7 +547,13 @@ async def create_reservation(
             end_at=end_at,
         )
         session.add(reservation)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            if "space_reservation_overlap" in str(exc.orig):
+                raise ValueError("That time slot is already reserved for this space.") from exc
+            raise
         await session.refresh(reservation)
     return reservation
 

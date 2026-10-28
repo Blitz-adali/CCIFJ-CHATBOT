@@ -6,8 +6,9 @@ readme = "README.md"
 authors = [
     { name = "Sara Ammourh", email = "saraammourh814@gmail.com" }
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.16.0",
     "aiosqlite>=0.22.1",
     "bm25s>=0.3.15",
     "cohere>=7.3.0",
@@ -33,6 +34,7 @@ dependencies = [
 
 [project.scripts]
 concierge = "concierge:main"
+concierge-db = "concierge.db.relationaldb.migrate:main"
 
 [build-system]
 requires = ["uv_build>=0.13.4,<0.14.0"]

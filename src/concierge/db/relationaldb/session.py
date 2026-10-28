@@ -33,8 +33,11 @@ def _enable_foreign_keys(dbapi_connection, _):
 
 
 async def create_db_and_tables() -> None:
+    """Apply versioned migrations, preserving existing application records."""
+    from .migrate import upgrade_connection
+
     async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(upgrade_connection)
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -45,4 +48,4 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 if __name__ == "__main__":
     asyncio.run(create_db_and_tables())
-    print(f"Created tables in {DB_PATH}")
+    print(f"Migrated database at {DB_PATH}")

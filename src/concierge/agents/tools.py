@@ -1,5 +1,5 @@
 from collections import Counter
-from datetime import datetime, time, timezone
+from datetime import datetime, time
 from typing import Literal, Optional
 
 from langchain_core.tools import tool
@@ -13,6 +13,7 @@ import bm25s
 from ..db.relationaldb import crud
 from ..db.relationaldb.models import SubscriptionType
 from ..db.relationaldb.session import AsyncSessionLocal
+from ..db.relationaldb.datetimes import japan_now
 
 # Cached embedding model singleton to avoid reloading weights on every invocation
 _embed_model = None
@@ -42,8 +43,8 @@ PAGE_SIZE = 10
 
 
 def _now() -> datetime:
-    # SQLite stores naive datetimes, so compare against naive UTC.
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    # Event and reservation schedules are stored in Japan time (UTC+9).
+    return japan_now()
 
 
 def _parse_date(text: str, end_of_day: bool = False) -> datetime:
