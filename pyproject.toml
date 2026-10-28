@@ -9,7 +9,17 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
     "aiosqlite>=0.22.1",
+    "bm25s>=0.3.15",
+    "cohere>=7.3.0",
+    "dotenv>=0.9.9",
     "fastapi>=0.158.1",
+    "ipykernel>=7.4.0",
+    "langchain>=1.4.6",
+    "langchain-core>=1.6.9",
+    "langchain-ollama>=1.1.0",
+    "langchain-openai>=1.7.2",
+    "langgraph>=1.2.14",
+    "rag",
     "sqlalchemy[asyncio]>=2.1.6",
     "sqlmodel>=0.0.48",
     "uvicorn[standard]>=0.54.0",
@@ -24,3 +34,11 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 module-name = "concierge"
+
+[tool.uv.workspace]
+members = [
+    "rag",
+    # add any other sub-folders/packages here
+]
+[tool.uv.sources]
+rag = { workspace = true }
