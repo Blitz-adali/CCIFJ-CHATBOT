@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Optional, Sequence
 
 from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy import func, update
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from .datetimes import japan_now, japan_naive
@@ -26,6 +27,7 @@ from .models import (
     SubscriptionType,
     Ticket,
     User,
+    UserAuth,
 )
 
 
@@ -250,6 +252,90 @@ async def get_member_category(
 
 
 # ---------- Chat sessions and messages ----------
+
+async def get_user_by_email(session: AsyncSession, email: str) -> Optional[User]:
+    result = await session.exec(
+        select(User).where(func.lower(User.email) == email.strip().casefold())
+    )
+    return result.first()
+
+
+async def get_user_credentials(
+    session: AsyncSession, email: str
+) -> Optional[tuple[User, UserAuth]]:
+    result = await session.exec(
+        select(User, UserAuth)
+        .join(UserAuth, UserAuth.user_id == User.user_id)
+        .where(func.lower(User.email) == email.strip().casefold())
+    )
+    return result.first()
+
+
+async def register_user(
+    session: AsyncSession, name: str, email: str, password_hash: str
+) -> User:
+    email = email.strip().casefold()
+    if await get_user_by_email(session, email) is not None:
+        raise ValueError("An account with this email already exists.")
+    user = User(name=name.strip(), email=email)
+    try:
+        session.add(user)
+        await session.flush()
+        session.add(UserAuth(user_id=user.user_id, password_hash=password_hash))
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if await get_user_by_email(session, email) is not None:
+            raise ValueError("An account with this email already exists.") from exc
+        raise
+    await session.refresh(user)
+    return user
+
+
+async def get_chat_session(session: AsyncSession, session_id: int) -> Optional[ChatSession]:
+    return await session.get(ChatSession, session_id)
+
+
+async def claim_chat_session(session: AsyncSession, session_id: int, user_id: int) -> ChatSession:
+    """Atomically bind a guest conversation to the first authenticated owner."""
+    await session.exec(
+        update(ChatSession).where(
+            ChatSession.session_id == session_id, ChatSession.user_id.is_(None)
+        ).values(user_id=user_id)
+    )
+    await session.commit()
+    chat = await session.get(ChatSession, session_id, populate_existing=True)
+    if chat is None or chat.user_id != user_id:
+        raise ValueError("This session is not available for your account.")
+    return chat
+
+
+async def list_session_messages(
+    session: AsyncSession, session_id: int, *, after_id: int = 0, limit: int = 100
+) -> Sequence[Message]:
+    result = await session.exec(
+        select(Message).where(
+            Message.session_id == session_id, Message.message_id > after_id
+        ).order_by(Message.message_id).limit(limit)
+    )
+    return result.all()
+
+
+async def get_latest_message(session: AsyncSession, session_id: int) -> Optional[Message]:
+    result = await session.exec(
+        select(Message).where(Message.session_id == session_id)
+        .order_by(col(Message.message_id).desc()).limit(1)
+    )
+    return result.first()
+
+
+async def update_message_metadata(
+    session: AsyncSession, message: Message, metadata: Optional[list]
+) -> None:
+    message.tool_calls = metadata
+    session.add(message)
+    await session.commit()
+
 
 async def create_chat_session(
     session: AsyncSession, user_id: Optional[int] = None
