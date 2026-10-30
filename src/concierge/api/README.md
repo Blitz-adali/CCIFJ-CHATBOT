@@ -83,3 +83,80 @@ In that case start a new session. Agent failures return 502 (including the sessi
 ID for a failed new conversation); do not automatically retry requests that may
 have written bookings. Model initialization failures return 503; configure the
 existing model environment variables and service before using `/chat`.
+
+
+## Frontend and live transports
+
+Every route is also available under `/api/v1`. The React frontend uses that prefix.
+`GET /status` provides JSON process health; `GET /suggestions` reads the same
+predefined question catalog used by the agents without loading any models.
+Chat and approval decisions accept `locale` (`en`, `fr`, `ja`). The API adapter
+uses the existing configured text model, without tools, for a final presentation
+pass in that language. Neither the agent graph nor RAG code is changed.
+
+`POST /chat/stream` accepts the same body and authorization as `/chat`, and emits
+SSE `progress`, `delta`, `result`, and `error` events. The result contains the normal chat
+response. Errors after the stream starts carry `status` and `message` in the event.
+`delta` contains public answer text chunks from the presentation pass. Internal
+agent/tool streams are not exposed.
+
+`WS /chat/ws` starts with a JSON authentication frame: `{}` for guests or
+`{"access_token":"<token>"}` for accounts. Wait for `{"type":"ready"}`, then send
+the normal chat request. Events use `type: progress`, `delta`, `result`, or `error`.
+The connection supports sequential turns. Tokens are checked on each turn and
+never placed in URLs. Configure `CCIFJ_CORS_ORIGINS` for cross-origin WebSockets;
+same-origin connections are permitted. Reverse proxies must forward upgrades.
+
+Both live transports call the same persisted chat operation as HTTP, retaining
+session ownership, pending-approval checks, and per-session turn serialization.
+Neither automatically retries failed operations. A disconnect cannot undo a write
+that already completed. Check history and bookings before retrying.
+
+`GET /sessions/{session_id}/approvals` lists pending approvals, and
+`GET /sessions/{session_id}/approvals/{interrupt_id}` retrieves one action's details.
+Both apply the usual session authorization. Approval items include `actions`
+(normalized from the agent's `action_requests`) with tool names and arguments.
+
+Contract tests use a disposable SQLite database and fake agent:
+
+```bash
+PYTHONPATH=src uv run --with httpx python -m unittest discover -s tests -v
+```
+
+
+### Session recovery and action outcomes
+
+`POST /sessions/{session_id}/claim` requires authentication and attaches a guest
+conversation to the current user, retaining its history and pending approval thread.
+History now includes `turn_status` (`ready`, `processing`, `unknown`),
+`last_request_id`, and saved public response metadata on assistant messages.
+Optional `request_id` on chat/approval bodies is returned with the completed response
+and history. This is correlation data, not an idempotency guarantee.
+
+The API persists processing/uncertain markers using existing message metadata.
+A disconnect, failed agent action, or processing marker left after restart makes
+the outcome uncertain. New messages and approval decisions return 409 until the
+user checks the outcome. `POST /sessions/{session_id}/reconcile` with
+`{"checked_outcome":true}` clears the uncertainty marker, preserving pending
+approvals, and never executes or replays any action. Running requests cannot be
+reconciled. Acknowledgment is the user's confirmation of checking external effects,
+not an assertion by the server that a booking was rolled back.
+
+Structured errors preserve `session_id`, `outcome_unknown`, and `safe_to_retry`
+where available. SSE and WebSocket errors also carry their HTTP-style `status`.
+Source and external-link action cards use actual links from the answer; they do
+not claim to expose retrieval provenance that the agent does not return.
+
+The development proxy preserves the public Host for same-origin WebSocket checks.
+Cross-origin production sites must still configure `CCIFJ_CORS_ORIGINS`, and HTTPS
+sites must use secure WebSockets. Keep one API worker because approval checkpoints
+and active-task tracking are process-local.
+
+
+An optional real-browser smoke test is provided in `tests/api_browser_smoke.py`,
+with a disposable API in `tests/api_browser_fixture.py`. It uses a fake agent and
+isolated database and checks the real Vite WebSocket proxy, reload restoration,
+guest approvals, login claiming, account restoration, locale propagation, and
+uncertain cancellation. Install Playwright/Chromium in a test environment, start
+the fixture and Vite as documented in the script, then run it. Production model
+quality and actual external booking side effects are outside this smoke test.

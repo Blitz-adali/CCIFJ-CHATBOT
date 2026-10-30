@@ -15,6 +15,8 @@ class SessionResponse(BaseModel):
 
 
 class ChatRequest(RequestModel):
+    request_id: str | None = Field(default=None, max_length=100)
+    locale: Literal["en", "fr", "ja"] = "en"
     session_id: str | None = Field(default=None, max_length=4096)
     message: str = Field(min_length=1, max_length=16000)
 
@@ -27,13 +29,18 @@ class ChatRequest(RequestModel):
 
 
 class ChatResponse(SessionResponse):
+    request_id: str | None = None
     reply: str
     pending_approvals: list[dict[str, Any]] = Field(default_factory=list)
     suggested_questions: list[str] = Field(default_factory=list)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    actions: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class MessageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+    response: ChatResponse | None = None
     message_id: int
     role: Literal["user", "assistant", "tool"]
     content: str
@@ -47,6 +54,8 @@ class MessageResponse(BaseModel):
 
 
 class HistoryResponse(SessionResponse):
+    last_request_id: str | None = None
+    turn_status: Literal["ready", "processing", "unknown"] = "ready"
     messages: list[MessageResponse]
     next_after_id: int | None = None
     pending_approvals: list[dict[str, Any]] = Field(default_factory=list)
@@ -98,6 +107,12 @@ class TokenResponse(BaseModel):
     user: UserResponse
 
 
+class ReconcileRequest(RequestModel):
+    checked_outcome: Literal[True]
+
+
 class ApprovalRequest(RequestModel):
+    request_id: str | None = Field(default=None, max_length=100)
+    locale: Literal["en", "fr", "ja"] = "en"
     interrupt_id: str = Field(min_length=1, max_length=200)
     decision: Literal["approve", "reject"]

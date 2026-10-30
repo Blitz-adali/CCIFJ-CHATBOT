@@ -28,6 +28,8 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(chat.router)
+for router in (health.router, auth.router, sessions.router, chat.router):
+    app.include_router(router, prefix="/api/v1")
 
 # Only explicit frontend origins are allowed; no permissive wildcard default.
 settings = get_settings()

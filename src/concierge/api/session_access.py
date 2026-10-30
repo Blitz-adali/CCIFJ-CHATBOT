@@ -45,3 +45,23 @@ def pending_turn(message):
             if item.get("type") == "pending_approval":
                 return item
     return None
+
+
+active_turns: set[int] = set()
+
+
+def turn_status(message, session_id: int) -> str:
+    if session_id in active_turns:
+        return "processing"
+    for item in (message.tool_calls or []) if message else []:
+        if item.get("type") == "api_turn_state":
+            # A processing marker without an active task survived a disconnect/restart.
+            return "unknown"
+    return "ready"
+
+
+def normalize_approvals(items):
+    return [
+        {**item, "actions": item.get("actions") or item.get("action_requests") or []}
+        for item in items or [] if isinstance(item, dict)
+    ]
