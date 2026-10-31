@@ -1,18 +1,18 @@
 # CCIFJ frontend
 
-Standalone React + TypeScript frontend in the CCIFJ blue, magenta and white theme. Contains the interface, translations, API client and request/response types. A minimal local API is available in the repository's `backend/` folder; no dashboard, crawler or browser extension is included.
+Standalone React + TypeScript frontend in the CCIFJ blue, magenta and white theme. Contains the interface, translations, API client and request/response types. The FastAPI backend is in `../src/concierge/`; no dashboard, crawler or browser extension is included.
 
 ## Start
 
 ```bash
-cd /home/blitz/ccifj-frontend
+cd ccifj-frontend
 npm install
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173/**. Dependencies are already installed in this local folder, so `npm run dev` works directly. For a fresh copy, use `npm ci` with the supplied lockfile.
+Open **http://127.0.0.1:5173/**. Use `npm ci` with the supplied lockfile for a reproducible installation.
 
-The frontend requires the local API to send messages. Follow `../backend/README.md` to start it on http://127.0.0.1:8000. The default Vite proxy points there. There are no simulated answers.
+The frontend requires the local API to send messages. Follow `../src/concierge/api/README.md` to start it on http://127.0.0.1:8000. The default Vite proxy points there. There are no simulated answers.
 
 ## Configure the API
 

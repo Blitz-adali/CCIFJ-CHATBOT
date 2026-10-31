@@ -160,3 +160,20 @@ guest approvals, login claiming, account restoration, locale propagation, and
 uncertain cancellation. Install Playwright/Chromium in a test environment, start
 the fixture and Vite as documented in the script, then run it. Production model
 quality and actual external booking side effects are outside this smoke test.
+
+
+### Durable execution and optional presentation
+
+The adapter returns the agent's execution result before language presentation.
+The API commits that original reply and the new pending-approval set first, then
+performs the optional presentation pass with a separate 30-second timeout. If
+presentation fails, the API returns the saved original answer and a localized
+warning. Disconnecting during presentation leaves the completed result available
+in history; it does not turn a completed booking into an uncertain action or
+restore a consumed approval. A presentation failure never replays the graph.
+
+Authorization/history reads are committed before waiting for a session lock or
+calling the agent. The post-insert refresh transaction is also released before
+presentation, and authenticated WebSockets release their user lookup transaction
+before waiting for messages. This avoids reserving pooled SQL connections during
+model generation, language formatting, or idle socket time.

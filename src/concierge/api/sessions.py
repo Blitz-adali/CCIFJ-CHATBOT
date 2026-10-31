@@ -47,6 +47,7 @@ async def claim(session_id: str, session: DatabaseSession, user: CurrentUser, re
     if user is None:
         raise HTTPException(status_code=401, detail="Log in to claim this conversation.")
     chat = await authorize_session(session_id, user, session)
+    await session.commit()
     async with session_turn(chat.session_id):
         await session.refresh(chat)
         await authorize_session(session_id, user, session)
@@ -66,6 +67,7 @@ async def reconcile(session_id: str, body: ReconcileRequest, session: DatabaseSe
     latest = await crud.get_latest_message(session, chat.session_id)
     if turn_status(latest, chat.session_id) == "processing":
         raise HTTPException(status_code=409, detail="This request is still running.")
+    await session.commit()
     async with session_turn(chat.session_id):
         await session.refresh(chat)
         await authorize_session(session_id, user, session)

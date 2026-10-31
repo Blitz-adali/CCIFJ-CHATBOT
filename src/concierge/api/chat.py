@@ -18,10 +18,12 @@ router = APIRouter(tags=["chat"])
 logger = logging.getLogger(__name__)
 
 
-def agent_backend():
+async def agent_backend(session: DatabaseSession):
     """Lazy model initialization; expose a dependency for isolated API checks."""
+    # Authentication may have opened a read transaction before model loading.
+    await session.commit()
     try:
-        return get_agent_backend()
+        return await asyncio.to_thread(get_agent_backend)
     except Exception as exc:
         logger.exception("Agent initialization failed")
         raise HTTPException(status_code=503, detail={"message": "The agent is unavailable; check server model configuration.", "outcome_unknown": False, "safe_to_retry": True}) from exc
@@ -30,17 +32,57 @@ def agent_backend():
 Backend = Annotated[object, Depends(agent_backend)]
 
 
-async def save_reply(session, chat, token, result, thread_id):
-    result = dict(result)
-    result["pending_approvals"] = normalize_approvals(result.get("pending_approvals"))
-    body = ChatResponse(session_id=token, **result)
+def reply_metadata(body, thread_id):
     metadata = [{
         "type": "pending_approval", "thread_id": thread_id,
         "approvals": body.pending_approvals,
     }] if body.pending_approvals else []
     metadata.append({"type": "api_response", "response": body.model_dump(mode="json")})
-    await crud.add_message(session, chat.session_id, MessageRole.assistant, body.reply, metadata)
-    return body
+    return metadata
+
+
+async def save_reply(session, chat, token, result, thread_id):
+    result = dict(result)
+    result["pending_approvals"] = normalize_approvals(result.get("pending_approvals"))
+    body = ChatResponse(session_id=token, **result)
+    row = await crud.add_message(session, chat.session_id, MessageRole.assistant, body.reply, reply_metadata(body, thread_id))
+    # add_message refreshes the row after its commit, opening another read transaction.
+    await session.commit()
+    return body, row
+
+
+async def present_saved_reply(session, backend, body, row, thread_id, locale):
+    """Presentation is optional; completed agent results are already durable."""
+    if not hasattr(backend, "present_result"):
+        return body
+    locale_token = response_locale.set(locale)
+    try:
+        try:
+            async with asyncio.timeout(30):
+                result = await backend.present_result(body.model_dump(exclude={"session_id"}))
+            rendered = ChatResponse(session_id=body.session_id, **result)
+        except Exception:
+            logger.warning("Answer presentation failed; keeping the saved agent result", exc_info=True)
+            warning = {
+                "en": "Language formatting is unavailable. The original answer is shown; no action was repeated.",
+                "fr": "La mise en forme linguistique est indisponible. La réponse originale est affichée ; aucune action n’a été répétée.",
+                "ja": "言語変換を利用できないため、元の回答を表示しています。操作は再実行されていません。",
+            }[locale]
+            rendered = body.model_copy(update={"warnings": [*body.warnings, warning]})
+        # This acquires a connection only for the short result update. A failed
+        # update cannot remove the raw reply committed before presentation.
+        try:
+            row.content = rendered.reply
+            row.tool_calls = reply_metadata(rendered, thread_id)
+            session.add(row)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            logger.exception("Could not store presentation; the original result remains saved")
+            return body
+        return rendered
+    finally:
+        response_locale.reset(locale_token)
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -54,6 +96,8 @@ async def chat(
     else:
         conversation = await crud.create_chat_session(session, user.user_id if user else None)
         token = session_token(conversation.session_id)
+    # Release authorization reads before waiting on another turn.
+    await session.commit()
     async with session_turn(conversation.session_id):
         # Re-read ownership after waiting for another turn or a guest claim.
         await session.refresh(conversation)
@@ -71,13 +115,16 @@ async def chat(
         message = await crud.add_message(session, conversation.session_id, MessageRole.user, body.message, [{"type": "api_turn_state", "status": "processing"}])
         history = await crud.get_history(session, conversation.session_id, limit=100)
         thread_id = f"api:session:{conversation.session_id}:turn:{message.message_id}"
+        # Snapshot the data needed by the agent and release its read transaction.
+        user_id = conversation.user_id
+        await session.commit()
         active_turns.add(conversation.session_id)
         locale_token = response_locale.set(body.locale)
         try:
             async with asyncio.timeout(get_settings().agent_timeout_seconds):
-                result = await backend.chat(history, conversation.user_id, thread_id)
+                result = await backend.chat(history, user_id, thread_id)
             result["request_id"] = body.request_id
-            result = await save_reply(session, conversation, token, result, thread_id)
+            result, saved = await save_reply(session, conversation, token, result, thread_id)
         except asyncio.CancelledError:
             await crud.add_message(session, conversation.session_id, MessageRole.assistant,
                 "The connection ended. Check the request outcome before continuing.",
@@ -97,6 +144,7 @@ async def chat(
         finally:
             active_turns.discard(conversation.session_id)
             response_locale.reset(locale_token)
+        result = await present_saved_reply(session, backend, result, saved, thread_id, body.locale)
         response.headers["Cache-Control"] = "no-store"
         return result
 
@@ -107,6 +155,8 @@ async def approve(
     user: CurrentUser, backend: Backend, response: Response,
 ):
     conversation = await authorize_session(session_id, user, session)
+    # Release authorization reads before waiting on another turn.
+    await session.commit()
     async with session_turn(conversation.session_id):
         await session.refresh(conversation)
         await authorize_session(session_id, user, session)
@@ -126,7 +176,7 @@ async def approve(
             async with asyncio.timeout(get_settings().agent_timeout_seconds):
                 result = await backend.resume(pending["thread_id"], body.interrupt_id, body.decision)
             result["request_id"] = body.request_id
-            result = await save_reply(session, conversation, session_id, result, pending["thread_id"])
+            result, saved = await save_reply(session, conversation, session_id, result, pending["thread_id"])
             await crud.update_message_metadata(session, latest, None)
         except ApprovalStateUnavailable as exc:
             await crud.update_message_metadata(session, latest, original_metadata)
@@ -139,6 +189,7 @@ async def approve(
         finally:
             active_turns.discard(conversation.session_id)
             response_locale.reset(locale_token)
+        result = await present_saved_reply(session, backend, result, saved, pending["thread_id"], body.locale)
         response.headers["Cache-Control"] = "no-store"
         return result
 
@@ -224,6 +275,8 @@ async def chat_socket(websocket: WebSocket, session: DatabaseSession, backend: B
                 user = await session.get(User, read_token(token, "access"))
                 if user is None:
                     raise ValueError("Unknown account")
+                # An authenticated idle socket must not hold a pooled connection.
+                await session.commit()
             except (ValueError, TypeError):
                 await websocket.send_json({"type": "error", "status": 401, "message": "Invalid or expired bearer token."})
                 await websocket.close(code=1008)

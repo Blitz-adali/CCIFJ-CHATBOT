@@ -43,7 +43,7 @@ class AgentBackend:
             {"messages": messages, "user_id": str(user_id) if user_id is not None else None},
             config=self.config(thread_id),
         )
-        return await self.present_result(self.format_result(result))
+        return self.format_result(result)
 
     async def resume(self, thread_id, interrupt_id, decision):
         snapshot = await self.graph.aget_state(self.config(thread_id))
@@ -53,7 +53,7 @@ class AgentBackend:
         if not any(item.id == interrupt_id for item in interrupts):
             raise ApprovalStateUnavailable()
         result = await self.resume_approval(self.config(thread_id), interrupt_id, decision)
-        return await self.present_result(self.format_result(result))
+        return self.format_result(result)
 
     async def present_result(self, result):
         locale = response_locale.get()
@@ -117,8 +117,9 @@ class AgentBackend:
                         break
         if not reply:
             raise RuntimeError("Agent returned no reply.")
+        sources, actions = linked_resources(reply)
         return {
-            "reply": reply, "pending_approvals": approvals,
+            "reply": reply, "pending_approvals": approvals, "sources": sources, "actions": actions,
             "suggested_questions": result.get("suggested_questions") or [],
         }
 

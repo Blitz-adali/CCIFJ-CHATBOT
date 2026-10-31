@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { WidgetChat } from './WidgetChat';
-import { clearAuthSession, getApiStatus, getSavedAuthSession } from './api';
+import { clearAuthSession, watchApiStatus, subscribeAuth, getSavedAuthSession } from './api';
 import { AuthDialog } from './AuthDialog';
 import { readLocale, siteCopy } from './site-copy';
 import type { AuthSession, Locale } from './types';
@@ -17,12 +17,12 @@ export default function App() {
     : locale === 'ja'
       ? { login: 'ログイン', logout: 'ログアウト' }
       : { login: 'Log in', logout: 'Log out' };
-  useEffect(() => {
-    let active = true;
-    getApiStatus().then(result => { if (active) setStatus(result.status === 'ok' ? 'online' : 'offline'); })
-      .catch(() => { if (active) setStatus('offline'); });
-    return () => { active = false; };
-  }, []);
+  useEffect(() => watchApiStatus(online => setStatus(online ? 'online' : 'offline')), []);
+  useEffect(() => subscribeAuth(change => {
+    setAuth(change.current);
+    if (change.reason === 'expired') setAuthOpen(true);
+    else setAuthOpen(false);
+  }), []);
   useEffect(() => {
     document.documentElement.lang = locale;
     document.title = `CCI ${siteCopy[locale].name}`;
@@ -36,7 +36,7 @@ export default function App() {
     <header className="simple-header"><div className="simple-container header-inner">
       <a className="site-brand" href={`?lang=${locale}`}><span className="brand-emblem">CCI<span>↗</span></span><span><strong>{t.name}</strong><small>{t.chamber}</small></span></a>
       <div className="header-actions">
-        {auth ? <><span className="account-name">{auth.user.name}</span><button className="auth-button secondary" type="button" onClick={()=>{clearAuthSession();setAuth(null);}}>{authLabel.logout}</button></> : <button className="auth-button" type="button" onClick={()=>setAuthOpen(true)}>{authLabel.login}</button>}
+        {auth ? <><span className="account-name">{auth.user.name}</span><button className="auth-button secondary" type="button" onClick={()=>{clearAuthSession();}}>{authLabel.logout}</button></> : <button className="auth-button" type="button" onClick={()=>setAuthOpen(true)}>{authLabel.login}</button>}
         <label className="site-language"><span>{t.language}</span><select value={locale} onChange={event=>setLocale(event.target.value as Locale)}><option value="en">English</option><option value="fr">Français</option><option value="ja">日本語</option></select></label>
       </div>
     </div></header>

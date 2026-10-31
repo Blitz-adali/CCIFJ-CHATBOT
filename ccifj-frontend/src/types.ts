@@ -2,6 +2,7 @@ export type Locale = "en" | "fr" | "ja";
 export type ApiMode = string;
 
 export interface ChatRequest {
+  request_id?: string;
   session_id: string | null;
   message: string;
   locale: Locale;
@@ -20,12 +21,15 @@ export interface AuthUser {
 }
 
 export interface AuthSession {
+  expires_in?: number;
+  expires_at?: number;
   access_token: string;
   token_type: "bearer";
   user: AuthUser;
 }
 
 export interface ApprovalAction {
+  description?: string;
   name: string;
   args: Record<string, unknown>;
 }
@@ -69,6 +73,7 @@ export interface JourneyStep {
 }
 
 export interface ChatResponse {
+  reply?: string;
   session_id?: string | null;
   message_id?: string;
   mode?: ApiMode;
@@ -89,4 +94,14 @@ export interface ApiStatusResponse {
   mode?: ApiMode;
   data_freshness?: string;
   version?: string;
+}
+
+
+export interface ChatHistory {
+  last_request_id: string | null;
+  session_id: string;
+  messages: { message_id: number; role: "user" | "assistant" | "tool"; content: string; created_at: string; response?: ChatResponse }[];
+  next_after_id: number | null;
+  pending_approvals: PendingApproval[];
+  turn_status: "ready" | "processing" | "unknown";
 }

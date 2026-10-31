@@ -55,7 +55,7 @@ export function AuthDialog({
         <form onSubmit={event => void submit(event)}>
           {mode === 'register' && <label>{t.name}<input autoComplete="name" value={name} onChange={event => setName(event.target.value)} required maxLength={100}/></label>}
           <label>{t.email}<input type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} required maxLength={255}/></label>
-          <label>{t.password}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} onChange={event => setPassword(event.target.value)} required minLength={mode === 'register' ? 8 : 1} maxLength={128}/></label>
+          <label>{t.password}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} onChange={event => setPassword(event.target.value)} required minLength={mode === 'register' ? 8 : 1} maxLength={1024}/></label>
           {error && <p className="auth-error" role="alert">{error}</p>}
           <button className="auth-submit" type="submit" disabled={busy}>{busy ? '…' : mode === 'login' ? t.submitLogin : t.create}</button>
         </form>
