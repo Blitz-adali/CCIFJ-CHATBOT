@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, sendChat } from "./api";
+import { ApiError, AUTH_EXPIRED_EVENT, reconcileSession, resolveApproval, sendChat, sendChatStream } from "./api";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
@@ -51,104 +51,66 @@ describe("sendChat", () => {
 });
 
 
-describe('backend contract', () => {
-  it('maps the backend reply into the displayed answer', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      session_id: 'opaque-token', reply: 'Backend reply', pending_approvals: [], suggested_questions: [],
-    }))));
-    expect((await sendChat({ session_id: null, message: 'Hello', locale: 'en' })).answer).toBe('Backend reply');
+describe("Sara backend contract", () => {
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+  it("maps the backend reply field to answer and keeps guided path data", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({
+      session_id: "signed-session", reply: "## Upcoming CCIFJ events", mode: "guided_path",
+      path_actions: [{ id: "events.details", event_id: "23", label: "View event details: Gala" }],
+    })));
+    const result = await sendChat({ session_id: null, message: "Upcoming", locale: "en", path_step_id: "events.upcoming" });
+    expect(result.answer).toBe("## Upcoming CCIFJ events");
+    expect(result.path_actions?.[0].event_id).toBe("23");
+    expect(result.pending_approvals).toEqual([]);
   });
 
-  it('posts approval decisions to the session route with the requested answer language', async () => {
-    const { resolveApproval } = await import('./api');
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ reply: 'Rejected' })));
-    vi.stubGlobal('fetch', fetchMock);
-    const response = await resolveApproval({ session_id: 'signed/token', interrupt_id: 'id-1', decision: 'reject', locale: 'fr' });
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/sessions/signed%2Ftoken/approvals', expect.objectContaining({
-      body: JSON.stringify({ interrupt_id: 'id-1', decision: 'reject', locale: 'fr' }),
+  it("posts approval decisions to the session approvals route without the session id in the body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ session_id: "s/1", reply: "Booked." }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await resolveApproval({ session_id: "s/1", interrupt_id: "i-1", decision: "approve", locale: "fr" });
+    expect(result.answer).toBe("Booked.");
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/sessions/s%2F1/approvals", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ interrupt_id: "i-1", decision: "approve", locale: "fr" }),
     }));
-    expect(response.answer).toBe('Rejected');
   });
 
-  it('parses fragmented SSE progress and the backend result', async () => {
-    const { sendChatStream } = await import('./api');
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({ start(controller) {
-      for (const chunk of ['event: progress\r\ndata: {"message":"Working"}\r', '\n\r\nevent: result\ndata: {"reply":"Bonjour","session_id":"signed"}\n\n']) {
-        controller.enqueue(encoder.encode(chunk));
-      }
-      controller.close();
-    } });
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream)));
-    const progress = vi.fn();
-    const result = await sendChatStream({ session_id: null, message: 'Bonjour', locale: 'fr' }, progress);
-    expect(progress).toHaveBeenCalledWith(['Working']);
-    expect(result.answer).toBe('Bonjour');
-    expect(result.session_id).toBe('signed');
+  it("reads structured error details and the uncertain-outcome flag", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ detail: { message: "Check the previous request outcome before continuing.", outcome_unknown: true } }, 409)));
+    const error = await sendChat({ session_id: "s", message: "Hello", locale: "en" }).catch(cause => cause);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.message).toBe("Check the previous request outcome before continuing.");
+    expect(error.outcomeUnknown).toBe(true);
+    expect(error.status).toBe(409);
   });
 
-  it('authenticates a WebSocket and sends the chat after ready', async () => {
-    const { sendChatSocket } = await import('./api');
-    vi.stubGlobal('window', { location: { href: 'https://example.com/' } });
-    class MockSocket {
-      static instance: MockSocket;
-      onopen?: () => void;
-      onmessage?: (event: { data: string }) => void;
-      onclose?: () => void;
-      onerror?: () => void;
-      send = vi.fn();
-      close = vi.fn();
-      constructor(public url: URL) { MockSocket.instance = this; }
-    }
-    vi.stubGlobal('WebSocket', MockSocket);
-    const request = { session_id: null, message: 'Hello', locale: 'en' as const };
-    const pending = sendChatSocket(request, vi.fn());
-    const socket = MockSocket.instance;
-    expect(socket.url.href).toBe('wss://example.com/api/v1/chat/ws');
-    socket.onopen!();
-    expect(socket.send).toHaveBeenLastCalledWith('{}');
-    socket.onmessage!({ data: '{"type":"ready"}' });
-    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify(request));
-    socket.onmessage!({ data: '{"type":"result","reply":"Hello","session_id":"signed"}' });
-    expect((await pending).answer).toBe('Hello');
-    expect(socket.close).toHaveBeenCalledOnce();
+  it("surfaces stream progress and stream error events", async () => {
+    const stream = 'event: progress\ndata: {"messages": ["Checking our events database…"]}\n\n'
+      + 'event: error\ndata: {"status": 502, "message": "Agent failed", "outcome_unknown": true}\n\n';
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(stream, { status: 200 })));
+    const progress: string[][] = [];
+    const error = await sendChatStream({ session_id: "s", message: "events", locale: "en" }, messages => progress.push(messages)).catch(cause => cause);
+    expect(progress).toEqual([["Checking our events database…"]]);
+    expect(error.message).toBe("Agent failed");
+    expect(error.outcomeUnknown).toBe(true);
   });
-});
 
-describe('safe transport recovery',()=>{
-  it('falls back to JSON only when the SSE route rejects the request before execution',async()=>{
-    const {sendLiveChat}=await import('./api');
-    vi.stubGlobal('WebSocket',undefined);
-    vi.stubGlobal('window',{location:{href:'https://example.com/'}});
-    const fetchMock=vi.fn().mockResolvedValueOnce(new Response('Not found',{status:404})).mockResolvedValueOnce(new Response(JSON.stringify({reply:'JSON answer'})));
-    vi.stubGlobal('fetch',fetchMock);
-    expect((await sendLiveChat({session_id:null,message:'Hello',locale:'en'},vi.fn())).answer).toBe('JSON answer');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+  it("drops a rejected login and notifies the app", async () => {
+    const storage = new Map<string, string>();
+    const listener = vi.fn();
+    vi.stubGlobal("localStorage", { getItem: (k: string) => storage.get(k) ?? null, setItem: (k: string, v: string) => storage.set(k, v), removeItem: (k: string) => storage.delete(k) });
+    vi.stubGlobal("window", { dispatchEvent: (event: Event) => listener(event.type) });
+    storage.set("ccifj-auth-session", JSON.stringify({ access_token: "opaque", token_type: "bearer", user: { user_id: 1, name: "A", email: "a@example.com" } }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ detail: "Invalid or expired bearer token." }, 401)));
+    await expect(sendChat({ session_id: null, message: "Hi", locale: "en" })).rejects.toBeInstanceOf(ApiError);
+    expect(storage.has("ccifj-auth-session")).toBe(false);
+    expect(listener).toHaveBeenCalledWith(AUTH_EXPIRED_EVENT);
   });
-  it('preserves SSE error status and uncertainty instead of replaying a failed write',async()=>{
-    const {sendLiveChat}=await import('./api');vi.stubGlobal('WebSocket',undefined);
-    const fetchMock=vi.fn().mockResolvedValue(new Response('event: error\ndata: {"message":"Check booking","status":502,"session_id":"signed","outcome_unknown":true}\n\n'));
-    vi.stubGlobal('fetch',fetchMock);
-    await expect(sendLiveChat({session_id:'signed',message:'Book',locale:'en'},vi.fn())).rejects.toMatchObject({status:502,sessionId:'signed',outcomeUnknown:true,safeToRetry:false});
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
-  it('normalizes legacy and missing approval action arrays',async()=>{
-    const {normalizeChat}=await import('./api');
-    expect(normalizeChat({reply:'Review',pending_approvals:[{interrupt_id:'a',action_requests:[{name:'newsletter',args:{email:'a@example.com'}}]},{interrupt_id:'b'}]}).pending_approvals).toEqual([
-      {interrupt_id:'a',actions:[{name:'newsletter',args:{email:'a@example.com'},description:undefined}]},{interrupt_id:'b',actions:[]},
-    ]);
-  });
-  it('retains partial answer chunks separately from the final structured result',async()=>{
-    const {sendChatStream}=await import('./api');
-    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response('event: delta\ndata: {"text":"Bon"}\n\nevent: delta\ndata: {"text":"jour"}\n\nevent: result\ndata: {"reply":"Bonjour"}\n\n')));
-    const delta=vi.fn();const result=await sendChatStream({session_id:null,message:'Hello',locale:'fr'},vi.fn(),undefined,delta);
-    expect(delta.mock.calls).toEqual([['Bon'],['jour']]);expect(result.answer).toBe('Bonjour');
-  });
-  it('refreshes an offline status and recovers when the backend returns',async()=>{
-    vi.useFakeTimers();
-    const {watchApiStatus}=await import('./api');const listener=vi.fn();
-    vi.stubGlobal('fetch',vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValue(new Response(JSON.stringify({status:'ok'}))));
-    const stop=watchApiStatus(listener);await vi.advanceTimersByTimeAsync(1);expect(listener).toHaveBeenLastCalledWith(false);
-    await vi.advanceTimersByTimeAsync(15000);expect(listener).toHaveBeenLastCalledWith(true);stop();
+
+  it("acknowledges an uncertain outcome through the reconcile route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ session_id: "s" }));
+    vi.stubGlobal("fetch", fetchMock);
+    await reconcileSession("s");
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/sessions/s/reconcile", expect.objectContaining({ body: JSON.stringify({ checked_outcome: true }) }));
   });
 });

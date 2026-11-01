@@ -2,10 +2,19 @@ export type Locale = "en" | "fr" | "ja";
 export type ApiMode = string;
 
 export interface ChatRequest {
-  request_id?: string;
   session_id: string | null;
   message: string;
   locale: Locale;
+  path_step_id?: string;
+  path_event_id?: string;
+  path_context?: Record<string, unknown>;
+}
+
+export interface PathAction {
+  id: string;
+  label: string;
+  event_id?: string;
+  data?: Record<string, unknown>;
 }
 
 export interface ChatIntent {
@@ -21,15 +30,13 @@ export interface AuthUser {
 }
 
 export interface AuthSession {
-  expires_in?: number;
-  expires_at?: number;
   access_token: string;
   token_type: "bearer";
+  expires_in?: number;
   user: AuthUser;
 }
 
 export interface ApprovalAction {
-  description?: string;
   name: string;
   args: Record<string, unknown>;
 }
@@ -73,11 +80,12 @@ export interface JourneyStep {
 }
 
 export interface ChatResponse {
-  reply?: string;
   session_id?: string | null;
   message_id?: string;
   mode?: ApiMode;
+  /** Normalized from the backend's `reply` field by api.ts. */
   answer: string;
+  attachment_count?: number;
   suggested_questions?: string[];
   intent?: ChatIntent | null;
   requires_clarification?: boolean;
@@ -86,6 +94,9 @@ export interface ChatResponse {
   journey?: JourneyStep[];
   warnings?: string[];
   pending_approvals?: PendingApproval[];
+  path_actions?: PathAction[];
+  active_path_step?: string | null;
+  path_context?: Record<string, unknown>;
   request_id?: string;
 }
 
@@ -94,14 +105,4 @@ export interface ApiStatusResponse {
   mode?: ApiMode;
   data_freshness?: string;
   version?: string;
-}
-
-
-export interface ChatHistory {
-  last_request_id: string | null;
-  session_id: string;
-  messages: { message_id: number; role: "user" | "assistant" | "tool"; content: string; created_at: string; response?: ChatResponse }[];
-  next_after_id: number | null;
-  pending_approvals: PendingApproval[];
-  turn_status: "ready" | "processing" | "unknown";
 }

@@ -1,252 +1,317 @@
-import { API_BASE_URL as baseUrl, API_ENDPOINTS } from './endpoints';
-import { getSavedAuthSession, saveAuthSession, invalidateAuth } from './auth-session';
-import type { ApiStatusResponse, AuthSession, ChatHistory, ChatRequest, ChatResponse, PendingApproval } from './types';
-export { getSavedAuthSession, clearAuthSession, subscribeAuth } from './auth-session';
+import { API_BASE_URL, API_ENDPOINTS } from "./endpoints";
+import type { ApiStatusResponse, AuthSession, ChatRequest, ChatResponse, Locale } from "./types";
+import type { PathAction } from "./types";
+import englishQuestions from "../../src/concierge/data/predefined_qa.json";
+import localizedQuestions from "../../src/concierge/data/predefined_qa_i18n.json";
 
+const baseUrl = API_BASE_URL;
 const timeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS || 600000);
-type ErrorDetails = { session_id?: string; outcome_unknown?: boolean; safe_to_retry?: boolean; transport_unavailable?: boolean };
-export class ApiError extends Error {
-  readonly sessionId?: string;
-  readonly outcomeUnknown: boolean;
-  readonly safeToRetry: boolean;
-  readonly transportUnavailable: boolean;
-  constructor(message: string, readonly status?: number, readonly requestId?: string, details: ErrorDetails = {}) {
-    super(message);
-    this.name = 'ApiError';
-    this.sessionId = details.session_id;
-    this.outcomeUnknown = details.outcome_unknown ?? (status === undefined || status >= 500);
-    this.safeToRetry = details.safe_to_retry ?? !this.outcomeUnknown;
-    this.transportUnavailable = details.transport_unavailable ?? false;
+const AUTH_STORAGE_KEY = "ccifj-auth-session";
+/** Fired on window when a saved login is rejected or has expired. */
+export const AUTH_EXPIRED_EVENT = "ccifj:auth-expired";
+
+/** Access tokens are JWTs; read their expiry so stale logins are dropped locally. */
+function tokenExpiresAt(token: string): number | null {
+  try {
+    const payload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const exp = (JSON.parse(atob(payload)) as { exp?: unknown }).exp;
+    return typeof exp === "number" ? exp * 1000 : null;
+  } catch {
+    return null;
   }
 }
-function record(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+export function getSavedAuthSession(): AuthSession | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || "null") as AuthSession | null;
+    if (!parsed || typeof parsed.access_token !== "string" || !parsed.user?.user_id) return null;
+    const expiresAt = tokenExpiresAt(parsed.access_token);
+    if (expiresAt !== null && expiresAt <= Date.now()) {
+      clearAuthSession();
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
 }
-function apiError(payload: unknown, status?: number, requestId?: string, token?: string): ApiError {
-  const body = record(payload);
-  const detail = body.detail ?? body;
-  const fields = record(detail);
-  const validation = Array.isArray(detail) ? detail.map(item => record(item).msg).filter(item => typeof item === 'string').join('; ') : '';
-  const message = validation || (typeof detail === 'string' ? detail : typeof fields.message === 'string' ? fields.message : `Request failed (${status ?? 'connection lost'})`);
-  if (status === 401) invalidateAuth(token);
-  return new ApiError(message, status, requestId, fields as ErrorDetails);
+
+function expireAuthSession(): void {
+  if (!getSavedAuthSession()) return;
+  clearAuthSession();
+  try { window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT)); } catch { /* Non-browser test environment. */ }
 }
-export function normalizeApprovals(value: unknown): PendingApproval[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap(item => {
-    const approval = record(item);
-    if (typeof approval.interrupt_id !== 'string') return [];
-    const actions = approval.actions ?? approval.action_requests;
-    return [{ interrupt_id: approval.interrupt_id, actions: Array.isArray(actions) ? actions.flatMap(item => {
-      const action = record(item);
-      return typeof action.name === 'string' ? [{ name: action.name, args: record(action.args), description: typeof action.description === 'string' ? action.description : undefined }] : [];
-    }) : [] }];
-  });
+
+export function clearAuthSession(): void {
+  try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch { /* Storage may be unavailable. */ }
 }
-export function normalizeChat(value: unknown): ChatResponse {
-  const body = record(value);
-  const answer = body.reply ?? body.answer;
-  if (typeof answer !== 'string') throw new ApiError('The API response is missing its reply. Check the request outcome before continuing.');
+
+function saveAuthSession(session: AuthSession): AuthSession {
+  try { localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session)); } catch { /* Keep the in-memory login usable. */ }
+  return session;
+}
+
+export class ApiError extends Error {
+  readonly status?: number;
+  readonly requestId?: string;
+  /** The server could not confirm whether the request (e.g. a booking) ran. */
+  readonly outcomeUnknown: boolean;
+
+  constructor(message: string, status?: number, requestId?: string, outcomeUnknown = false) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.requestId = requestId;
+    this.outcomeUnknown = outcomeUnknown;
+  }
+}
+
+/** Build an ApiError from a backend error body (`detail` may be a string or an object). */
+function errorFromBody(body: unknown, status: number, requestId?: string, authSent = false): ApiError {
+  const record = typeof body === "object" && body !== null ? body as Record<string, unknown> : {};
+  const detail = record.detail ?? record;
+  const details = typeof detail === "object" && detail !== null ? detail as Record<string, unknown> : {};
+  const text = typeof detail === "string" ? detail : details.message ?? record.message ?? record.error;
+  if (status === 401 && authSent) expireAuthSession();
+  return new ApiError(
+    typeof text === "string" ? text : `Request failed (${status})`,
+    status,
+    requestId,
+    details.outcome_unknown === true,
+  );
+}
+
+/** The backend calls the answer `reply`; the UI uses `answer`. */
+function normalizeResponse(raw: unknown): ChatResponse {
+  const body = (typeof raw === "object" && raw !== null ? raw : {}) as ChatResponse & { reply?: unknown };
+  const answer = typeof body.reply === "string" ? body.reply : body.answer;
+  if (typeof answer !== "string") {
+    throw new ApiError("The API response is missing its reply. Check the request outcome before continuing.", undefined, undefined, true);
+  }
   return {
-    ...body, answer,
-    suggested_questions: Array.isArray(body.suggested_questions) ? body.suggested_questions.filter((item): item is string => typeof item === 'string') : [],
-    pending_approvals: normalizeApprovals(body.pending_approvals),
+    ...body,
+    answer,
+    suggested_questions: Array.isArray(body.suggested_questions) ? body.suggested_questions : [],
+    pending_approvals: Array.isArray(body.pending_approvals) ? body.pending_approvals : [],
     sources: Array.isArray(body.sources) ? body.sources : [],
     actions: Array.isArray(body.actions) ? body.actions : [],
     warnings: Array.isArray(body.warnings) ? body.warnings : [],
-  } as ChatResponse;
+    path_actions: Array.isArray(body.path_actions) ? body.path_actions : [],
+  };
 }
-async function requestJson<T>(path: string, init: RequestInit = {}, timeout = timeoutMs): Promise<T> {
+
+export function getPathStepForQuestion(question: string, locale: Locale): string | undefined {
+  const canonical = 'What events are coming up at CCIFJ?';
+  const localized = locale === 'en' ? canonical : localizedQuestions[locale]?.[canonical]?.question;
+  return localized === question.trim() ? 'events.upcoming' : undefined;
+}
+
+async function requestJson<T>(path: string, init: RequestInit = {}, timeout = timeoutMs, sendAuth = true): Promise<T> {
   const controller = new AbortController();
-  const abort = () => controller.abort();
-  init.signal?.addEventListener('abort', abort, { once: true });
-  if (init.signal?.aborted) controller.abort();
-  const timer = setTimeout(abort, timeout);
-  const token = getSavedAuthSession()?.access_token;
+  const timer = setTimeout(() => controller.abort(), timeout);
+  const auth = sendAuth ? getSavedAuthSession() : null;
   try {
     const response = await fetch(`${baseUrl}${path}`, {
-      ...init, signal: controller.signal,
-      headers: { Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init.headers },
+      ...init,
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...(auth ? { Authorization: `Bearer ${auth.access_token}` } : {}),
+        ...init.headers,
+      },
     });
+
+    const requestId = response.headers.get("x-request-id") ?? undefined;
     const raw = await response.text();
-    let body: unknown;
-    try { body = raw ? JSON.parse(raw) : null; } catch { body = { message: raw }; }
-    if (!response.ok) throw apiError(body, response.status, response.headers.get('x-request-id') ?? undefined, token);
+    let body: unknown = undefined;
+    if (raw) {
+      try {
+        body = JSON.parse(raw) as unknown;
+      } catch {
+        body = raw;
+      }
+    }
+
+    if (!response.ok) throw errorFromBody(body, response.status, requestId, Boolean(auth));
     return body as T;
   } catch (error) {
-    if (init.signal?.aborted) throw new DOMException('Stopped waiting', 'AbortError');
     if (error instanceof ApiError) throw error;
-    throw new ApiError(controller.signal.aborted ? 'The request timed out. Check its outcome before continuing.' : 'Could not reach the API. Check its connection and the request outcome.');
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError("The request timed out. Please try again.");
+    }
+    if (error instanceof TypeError) {
+      throw new ApiError("Could not reach the API. Check the backend URL and that the backend is running.");
+    }
+    throw error instanceof Error ? error : new ApiError("An unexpected API error occurred.");
   } finally {
     clearTimeout(timer);
-    init.signal?.removeEventListener('abort', abort);
   }
 }
-export async function sendChat(request: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
-  return normalizeChat(await requestJson(API_ENDPOINTS.chat, { method: 'POST', body: JSON.stringify(request), signal }));
+
+export async function sendChat(request: ChatRequest): Promise<ChatResponse> {
+  return normalizeResponse(await requestJson<unknown>(API_ENDPOINTS.chat, {
+    method: "POST",
+    body: JSON.stringify(request),
+  }));
 }
-export async function sendChatStream(request: ChatRequest, onProgress: (messages: string[]) => void, signal?: AbortSignal, onDelta?: (text: string) => void): Promise<ChatResponse> {
+
+export async function sendChatStream(
+  request: ChatRequest,
+  onProgress: (messages: string[]) => void,
+  signal?: AbortSignal,
+): Promise<ChatResponse> {
   const controller = new AbortController();
-  const abort = () => controller.abort();
-  const timer = setTimeout(abort, timeoutMs);
-  signal?.addEventListener('abort', abort, { once: true });
-  if (signal?.aborted) controller.abort();
-  const token = getSavedAuthSession()?.access_token;
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromCaller = () => controller.abort();
+  signal?.addEventListener('abort', abortFromCaller, { once: true });
   try {
+    const auth = getSavedAuthSession();
     const response = await fetch(`${baseUrl}${API_ENDPOINTS.chatStream}`, {
-      method: 'POST', signal: controller.signal, body: JSON.stringify(request),
-      headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json',
+        ...(auth ? { Authorization: `Bearer ${auth.access_token}` } : {}),
+      },
+      body: JSON.stringify(request),
     });
+
     if (!response.ok) {
       const raw = await response.text();
-      let payload: unknown;
-      try { payload = JSON.parse(raw); } catch { payload = { message: raw }; }
-      const error = apiError(payload, response.status, undefined, token);
-      if ([404, 405].includes(response.status)) throw new ApiError(error.message, response.status, undefined, { safe_to_retry: true, outcome_unknown: false, transport_unavailable: true });
-      throw error;
+      let body: unknown = undefined;
+      try { body = JSON.parse(raw); } catch { /* Keep the HTTP status message. */ }
+      throw errorFromBody(body, response.status, response.headers.get('x-request-id') ?? undefined, Boolean(auth));
     }
-    if (!response.body) throw new ApiError('The API stream has no body. Check the request outcome.');
-    reader = response.body.getReader();
+    if (!response.body) throw new ApiError('The API did not provide a streaming response.');
+
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let result: ChatResponse | undefined;
-    let failure: ApiError | undefined;
-    function frame(text: string) {
-      let kind = 'message';
+    const received: { result?: unknown; error?: ApiError } = {};
+
+    const handleFrame = (frame: string) => {
+      let eventType = 'message';
       const data: string[] = [];
-      for (const line of text.split(/\r?\n/)) {
-        if (line.startsWith('event:')) kind = line.slice(6).trim();
-        if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+      for (const line of frame.split(/\r?\n/)) {
+        if (line.startsWith('event:')) eventType = line.slice(6).trim();
+        else if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
       }
       if (!data.length) return;
-      const body = record(JSON.parse(data.join('\n')));
-      if (kind === 'progress') onProgress(typeof body.message === 'string' ? [body.message] : Array.isArray(body.messages) ? body.messages.filter((v): v is string => typeof v === 'string') : []);
-      if (kind === 'delta' && typeof body.text === 'string') onDelta?.(body.text);
-      if (kind === 'result') result = normalizeChat(body);
-      if (kind === 'error') failure = apiError(body, typeof body.status === 'number' ? body.status : undefined, undefined, token);
-    }
+      const payload = JSON.parse(data.join('\n')) as Record<string, unknown>;
+      if (eventType === 'progress') {
+        if (typeof payload.message === 'string') onProgress([payload.message]);
+        else if (Array.isArray(payload.messages)) {
+          onProgress(payload.messages.filter((message): message is string => typeof message === 'string'));
+        }
+      }
+      if (eventType === 'result') received.result = payload;
+      if (eventType === 'error') {
+        received.error = errorFromBody(payload, typeof payload.status === 'number' ? payload.status : 500, undefined, Boolean(auth));
+      }
+    };
+
     while (true) {
       const { value, done } = await reader.read();
       buffer += decoder.decode(value, { stream: !done });
       const frames = buffer.split(/\r?\n\r?\n/);
       buffer = frames.pop() ?? '';
-      frames.forEach(frame);
+      for (const frame of frames) handleFrame(frame);
       if (done) break;
     }
-    if (buffer.trim()) frame(buffer);
-    if (failure) throw failure;
-    if (!result) throw new ApiError('The stream ended without a final answer. Check the request outcome.');
-    return result;
+    if (buffer.trim()) handleFrame(buffer);
+    if (received.error) throw received.error;
+    if (!received.result) {
+      throw new ApiError('The API stream ended without a final answer. Check the request outcome before continuing.', undefined, undefined, true);
+    }
+    return normalizeResponse(received.result);
   } catch (error) {
-    if (signal?.aborted) throw new DOMException('Stopped waiting', 'AbortError');
     if (error instanceof ApiError) throw error;
-    throw new ApiError('Chat stream interrupted. Check the request outcome before continuing.');
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError('The request timed out. Please try again.');
+    }
+    if (error instanceof TypeError) {
+      throw new ApiError('Could not reach the API. Check the backend URL and that the backend is running.');
+    }
+    throw error instanceof Error ? error : new ApiError('An unexpected API error occurred.');
   } finally {
     clearTimeout(timer);
-    signal?.removeEventListener('abort', abort);
-    await reader?.cancel().catch(() => {});
-    reader?.releaseLock();
+    signal?.removeEventListener('abort', abortFromCaller);
   }
 }
-export async function sendChatSocket(request: ChatRequest, onProgress: (messages: string[]) => void, signal?: AbortSignal, onDelta?: (text: string) => void): Promise<ChatResponse> {
-  return new Promise((resolve, reject) => {
-    const token = getSavedAuthSession()?.access_token;
-    if (signal?.aborted) { reject(new DOMException('Stopped waiting', 'AbortError')); return; }
-    if (typeof WebSocket === 'undefined') { reject(new ApiError('WebSockets are unavailable.', undefined, undefined, { outcome_unknown: false, safe_to_retry: true, transport_unavailable: true })); return; }
-    const url = new URL(`${baseUrl}${API_ENDPOINTS.chatSocket}`, window.location.href);
-    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(url);
-    let settled = false, sent = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const abort = () => finish(undefined, new DOMException('Stopped waiting', 'AbortError'));
-    const connectionError = () => new ApiError(sent ? 'Live chat disconnected. Check the request outcome.' : 'Live chat could not connect.', undefined, undefined, { outcome_unknown: sent, safe_to_retry: !sent, transport_unavailable: !sent });
-    const finish = (result?: ChatResponse, error?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', abort);
-      socket.close();
-      if (error) reject(error); else resolve(result!);
-    };
-    timer = setTimeout(() => finish(undefined, connectionError()), 8000);
-    signal?.addEventListener('abort', abort, { once: true });
-    socket.onopen = () => socket.send(JSON.stringify({ access_token: token }));
-    socket.onmessage = event => {
-      try {
-        const body = record(JSON.parse(event.data));
-        if (body.type === 'ready' && !sent) {
-          sent = true;
-          clearTimeout(timer);
-          timer = setTimeout(() => finish(undefined, connectionError()), timeoutMs);
-          socket.send(JSON.stringify(request));
-        } else if (body.type === 'progress' && typeof body.message === 'string') onProgress([body.message]);
-        else if (body.type === 'delta' && typeof body.text === 'string') onDelta?.(body.text);
-        else if (body.type === 'error') finish(undefined, apiError(body, typeof body.status === 'number' ? body.status : undefined, undefined, token));
-        else if (body.type === 'result') finish(normalizeChat(body));
-      } catch { finish(undefined, new ApiError('Invalid chat response. Check the request outcome.')); }
-    };
-    socket.onerror = () => finish(undefined, connectionError());
-    socket.onclose = () => finish(undefined, connectionError());
+
+export async function loginAccount(email: string, password: string): Promise<AuthSession> {
+  const session = await requestJson<AuthSession>(API_ENDPOINTS.login, {
+    method: "POST", body: JSON.stringify({ email, password }),
+  }, timeoutMs, false);
+  return saveAuthSession(session);
+}
+
+export async function registerAccount(name: string, email: string, password: string): Promise<AuthSession> {
+  const session = await requestJson<AuthSession>(API_ENDPOINTS.register, {
+    method: "POST", body: JSON.stringify({ name, email, password }),
+  }, timeoutMs, false);
+  return saveAuthSession(session);
+}
+
+export async function resolveApproval({ session_id, ...decision }: {
+  session_id: string;
+  interrupt_id: string;
+  decision: "approve" | "reject";
+  locale: "en" | "fr" | "ja";
+}): Promise<ChatResponse> {
+  return normalizeResponse(await requestJson<unknown>(API_ENDPOINTS.approval(session_id), {
+    method: "POST", body: JSON.stringify(decision),
+  }));
+}
+
+/** Confirm the user checked an uncertain outcome; the server never replays it. */
+export async function reconcileSession(sessionId: string): Promise<void> {
+  await requestJson(API_ENDPOINTS.reconcile(sessionId), {
+    method: "POST", body: JSON.stringify({ checked_outcome: true }),
   });
 }
-export async function sendLiveChat(request: ChatRequest, onProgress: (messages: string[]) => void, signal?: AbortSignal, onDelta?: (text: string) => void): Promise<ChatResponse> {
-  const mode = import.meta.env.VITE_CHAT_TRANSPORT;
-  if (mode === 'json') return sendChat(request, signal);
-  if (mode !== 'sse') {
-    try { return await sendChatSocket(request, onProgress, signal, onDelta); }
-    catch (error) { if (!(error instanceof ApiError) || !error.transportUnavailable || signal?.aborted) throw error; }
-  }
-  try { return await sendChatStream(request, onProgress, signal, onDelta); }
-  catch (error) {
-    if (!(error instanceof ApiError) || !error.transportUnavailable || signal?.aborted) throw error;
-    return sendChat(request, signal);
-  }
+
+export async function getApiStatus(): Promise<ApiStatusResponse> {
+  return requestJson<ApiStatusResponse>(API_ENDPOINTS.status, { method: "GET" }, 6000);
 }
-export async function loginAccount(email: string, password: string): Promise<AuthSession> {
-  return saveAuthSession(await requestJson(API_ENDPOINTS.login, { method: 'POST', body: JSON.stringify({ email, password }) }));
+
+export async function getSuggestedQuestions(locale: Locale = "en"): Promise<string[]> {
+  try {
+    const response = await requestJson<{ suggested_questions?: unknown }>(`${API_ENDPOINTS.suggestions}?locale=${encodeURIComponent(locale)}`);
+    if (Array.isArray(response?.suggested_questions)) {
+      const questions = response.suggested_questions.filter((question): question is string => typeof question === "string");
+      if (questions.length) return questions;
+    }
+  } catch { /* The bundled catalog still allows the welcome screen to render offline. */ }
+  return getLocalSuggestedQuestions(locale);
 }
-export async function registerAccount(name: string, email: string, password: string): Promise<AuthSession> {
-  return saveAuthSession(await requestJson(API_ENDPOINTS.register, { method: 'POST', body: JSON.stringify({ name, email, password }) }));
-}
-export async function resolveApproval(request: { session_id: string; interrupt_id: string; decision: 'approve' | 'reject'; locale: 'en' | 'fr' | 'ja'; request_id?: string }, signal?: AbortSignal): Promise<ChatResponse> {
-  const { session_id, interrupt_id, decision, locale, request_id } = request;
-  return normalizeChat(await requestJson(API_ENDPOINTS.approval(session_id), { method: 'POST', body: JSON.stringify({ interrupt_id, decision, locale, request_id }), signal }));
-}
-export async function createChatSession(signal?: AbortSignal): Promise<string> {
-  return (await requestJson<{ session_id: string }>(API_ENDPOINTS.sessions, { method: 'POST', signal })).session_id;
-}
-export async function claimChatSession(id: string, signal?: AbortSignal): Promise<void> {
-  await requestJson(API_ENDPOINTS.claim(id), { method: 'POST', signal });
-}
-export async function reconcileChatSession(id: string, signal?: AbortSignal): Promise<void> {
-  await requestJson(API_ENDPOINTS.reconcile(id), { method: 'POST', body: JSON.stringify({ checked_outcome: true }), signal });
-}
-export async function getChatHistory(id: string, signal?: AbortSignal): Promise<ChatHistory> {
-  let after = 0;
-  const messages: ChatHistory['messages'] = [];
-  while (true) {
-    const page = await requestJson<ChatHistory>(`${API_ENDPOINTS.history(id)}?after_id=${after}&limit=100`, { signal });
-    messages.push(...page.messages.map(row => ({ ...row, response: row.response ? normalizeChat(row.response) : undefined })));
-    if (page.next_after_id === null) return { ...page, messages, pending_approvals: normalizeApprovals(page.pending_approvals) };
-    after = page.next_after_id;
+
+export async function getStarterPaths(locale: Locale): Promise<PathAction[]> {
+  const fallback: PathAction[] = [
+    { id: 'events.upcoming', label: locale === 'fr' ? 'Événements CCIFJ à venir' : locale === 'ja' ? '今後のCCIFJイベント' : 'Browse upcoming CCIFJ events' },
+    { id: 'spaces.start', label: locale === 'fr' ? 'Vérifier la disponibilité et réserver un espace' : locale === 'ja' ? '会場の空き状況を確認して予約' : 'Check space availability and book' },
+  ];
+  try {
+    const response = await requestJson<{ starter_paths?: PathAction[] }>(`${API_ENDPOINTS.suggestions}?locale=${encodeURIComponent(locale)}`);
+    return Array.isArray(response?.starter_paths) ? response.starter_paths : fallback;
+  } catch {
+    return fallback;
   }
 }
-export async function getApiStatus(): Promise<ApiStatusResponse> { return requestJson(API_ENDPOINTS.status, {}, 6000); }
-export async function getSuggestedQuestions(): Promise<string[]> {
-  const response = await requestJson<{ suggested_questions: unknown }>(API_ENDPOINTS.suggestions);
-  return Array.isArray(response.suggested_questions) ? response.suggested_questions.filter((v): v is string => typeof v === 'string') : [];
+
+export function getLocalSuggestedQuestions(locale: Locale): string[] {
+  if (locale === "en") return englishQuestions.map(item => item.question);
+  return Object.values(localizedQuestions[locale]).map(item => item.question);
 }
-export function watchApiStatus(listener: (online: boolean) => void): () => void {
-  let active = true, timer: ReturnType<typeof setTimeout>;
-  async function check() {
-    try { const status = await getApiStatus(); if (active) listener(status.status === 'ok'); }
-    catch { if (active) listener(false); }
-    finally { if (active) timer = setTimeout(check, 15000); }
-  }
-  void check();
-  return () => { active = false; clearTimeout(timer); };
-}
+
 export function isSafeExternalUrl(value: string | undefined): value is string {
-  try { return !!value && new URL(value).protocol === 'https:'; } catch { return false; }
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }

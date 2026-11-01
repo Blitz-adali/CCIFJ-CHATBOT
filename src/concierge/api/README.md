@@ -155,11 +155,12 @@ and active-task tracking are process-local.
 
 An optional real-browser smoke test is provided in `tests/api_browser_smoke.py`,
 with a disposable API in `tests/api_browser_fixture.py`. It uses a fake agent and
-isolated database and checks the real Vite WebSocket proxy, reload restoration,
-guest approvals, login claiming, account restoration, locale propagation, and
-uncertain cancellation. Install Playwright/Chromium in a test environment, start
-the fixture and Vite as documented in the script, then run it. Production model
-quality and actual external booking side effects are outside this smoke test.
+isolated database and drives `ccifj-frontend` through the Vite proxy: chat replies,
+guided space paths, cancellation and outcome acknowledgement, registration,
+approvals, and rejected logins. Install Playwright (or set `CCIFJ_CHROMIUM` to an
+installed Chromium), start the fixture and Vite as documented in the script, then
+run it. Production model quality and actual external booking side effects are
+outside this smoke test.
 
 
 ### Durable execution and optional presentation
@@ -177,3 +178,68 @@ calling the agent. The post-insert refresh transaction is also released before
 presentation, and authenticated WebSockets release their user lookup transaction
 before waiting for messages. This avoids reserving pooled SQL connections during
 model generation, language formatting, or idle socket time.
+
+
+## Features ported from the main branch
+
+### Agent
+
+The agent graph (`concierge/agents`) classifies each request as in scope
+(CCIFJ events, membership, business support), out of scope, or unclear, and a
+final policy node reviews answers before they are returned. Predefined
+questions are answered directly in English, French, or Japanese
+(`data/predefined_qa_i18n.json`), with follow-up suggestions in the same
+language. The events agent can fall back to the CCIFJ knowledge base
+(`search_vectordb`) when the live events database has no match.
+
+Each turn still runs on a fresh graph thread rebuilt from SQL history. State
+the graph needs across turns is saved in message metadata: extracted file
+text (`attachment_context` on user messages) and the out-of-scope counter
+(`agent_state` on assistant messages).
+
+### Guided conversation paths
+
+`GET /suggestions?locale=fr` returns localized `suggested_questions` and
+`starter_paths`. Paths are defined in `data/conversation_paths.json`:
+
+- `events.upcoming` → `events.details` (needs `path_event_id`) → `events.booking_info`
+- `spaces.start` → `spaces.availability` (message `YYYY-MM-DD HH:MM to YYYY-MM-DD HH:MM`)
+  → `spaces.booking_details` (needs the chosen `path_context`) → `spaces.submit`
+
+Send `path_step_id` (and `path_event_id` / `path_context` where needed) with a
+normal chat request. Steps are fixed, read-only lookups that do not call the
+model or the presentation pass; they are saved to history like any turn and
+return `mode: "guided_path"`, `path_actions` (next choices), and, while a step
+expects free text, `active_path_step` and `path_context`. `spaces.submit`
+sends the selected space, time, and the user's description to the agent,
+which prepares a `book_space` action for approval; guests are asked to sign
+in. The selected space is re-checked for availability before submission.
+
+Agent answers also include `path_actions` that offer these journeys when the
+conversation is about events or spaces, and `intent.code` with the routed
+specialist domains.
+
+### Attachments
+
+Chat requests accept up to four `attachments` per request
+(`{"name", "mime_type", "data_base64"}`): PDF, PNG, or JPEG, 5 MB each, PDFs up
+to 20 pages. Text is extracted on the server; images and scan-only PDF pages
+are OCRed with Tesseract (`eng+fra+jpn`). Install the Tesseract executable and
+those language packs on the API host; without them, image OCR returns 503.
+Extracted text (12,000 characters per file) stays available to the agent for
+the rest of the conversation, up to four distinct files, as untrusted
+reference data. Responses report `attachment_count`.
+
+### Progress, approvals, and accounts
+
+SSE and WebSocket `progress` events now carry `messages`: localized labels for
+the concierge, each specialist agent (including parallel work), and each tool
+in use. Heartbeats repeat the current label.
+
+Ticket approvals include `event_title`, `event_start`, and `event_location` in
+the action arguments for the review card, and the reply explains the specific
+action in the request locale. When a guest's request reaches a protected
+action, the API returns a login prompt instead of an approval and leaves the
+session usable.
+
+`GET /auth/me` returns the signed-in user.

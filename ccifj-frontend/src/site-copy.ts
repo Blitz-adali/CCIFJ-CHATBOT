@@ -2,32 +2,39 @@ import type { Locale } from './types';
 export const siteCopy = {
   en: {
     name: 'FRANCE JAPAN', chamber: 'FRENCH CHAMBER OF COMMERCE AND INDUSTRY', language: 'Language',
-    title: 'How can we help you in Japan?', subtitle: 'Ask the CCIFJ concierge about membership, events, or doing business in Japan.',
-    assistant: 'Your assistant',
-    checking: 'Connecting…', online: 'Assistant available', offline: 'Assistant offline',
-    footer: 'Independent portal · CCI France Japan', skip: 'Skip to content',
+    title: 'Make your next move in Japan.', subtitle: 'A clear starting point for business, membership and connections between France and Japan.',
+    assistant: 'Your assistant', checking: 'Connecting…', online: 'Concierge online', offline: 'Concierge offline',
+    footer: 'CCI France Japan · Your bridge to the Japanese market', skip: 'Skip to content',
   },
   fr: {
     name: 'FRANCE JAPON', chamber: 'CHAMBRE DE COMMERCE ET D’INDUSTRIE', language: 'Langue',
-    title: 'Comment vous aider au Japon ?', subtitle: 'Interrogez le concierge CCIFJ sur l’adhésion, les événements ou le développement de votre activité au Japon.',
-    assistant: 'Votre assistant',
-    checking: 'Connexion en cours…', online: 'Assistant disponible', offline: 'Assistant hors ligne',
-    footer: 'Portail indépendant · CCI France Japon', skip: 'Aller au contenu',
+    title: 'Donnez vie à vos projets au Japon.', subtitle: 'Un point de départ clair pour vos activités, votre adhésion et vos échanges entre la France et le Japon.',
+    assistant: 'Votre assistant', checking: 'Connexion…', online: 'Concierge en ligne', offline: 'Concierge hors ligne',
+    footer: 'CCI France Japon · Votre passerelle vers le marché japonais', skip: 'Aller au contenu',
   },
   ja: {
     name: '在日フランス商工会議所', chamber: 'CCI FRANCE JAPON', language: '言語',
-    title: '日本でのビジネスをお手伝いします', subtitle: '会員制度、イベント、日本でのビジネスについて CCIFJ コンシェルジュにご相談ください。',
-    assistant: 'アシスタント',
-    checking: '接続を確認中…', online: 'アシスタントに接続済み', offline: 'アシスタントはオフラインです',
-    footer: '独立ポータル · 在日フランス商工会議所', skip: 'コンテンツへ移動',
+    title: '日本での次の一歩を、ここから。', subtitle: 'ビジネス、会員サービス、フランスと日本をつなぐネットワークをご案内します。',
+    assistant: 'アシスタント', checking: '接続中…', online: 'コンシェルジュ接続中', offline: 'コンシェルジュに接続できません',
+    footer: 'CCI France Japon · 日本市場への架け橋', skip: 'コンテンツへ移動',
   },
 } satisfies Record<Locale, {name:string;chamber:string;language:string;title:string;subtitle:string;assistant:string;checking:string;online:string;offline:string;footer:string;skip:string}>;
+
+/** Explicit embed setting wins; otherwise use the browser's preferred language. */
 export function readLocale(): Locale {
   const query = new URLSearchParams(window.location.search).get('lang');
   if (query === 'fr' || query === 'en' || query === 'ja') return query;
-  try {
-    const saved = window.localStorage.getItem('ccifj-language');
-    if (saved === 'fr' || saved === 'en' || saved === 'ja') return saved;
-  } catch { /* Storage may be unavailable in private browser contexts. */ }
+  const preferences = typeof navigator === 'undefined' ? [] : [...(navigator.languages ?? []), navigator.language];
+  for (const preference of preferences) {
+    const language = preference.toLowerCase().split(/[-_]/)[0];
+    if (language === 'fr' || language === 'ja' || language === 'en') return language;
+  }
   return 'en';
+}
+
+/** Backend UI locale is limited to supported locales; free-text user content stays untouched. */
+export function detectMessageLocale(text: string, fallback: Locale): Locale {
+  if (/[\u3040-\u30ff\u3400-\u9fff]/u.test(text)) return 'ja';
+  if (/[àâçéèêëîïôùûüÿœæ]/iu.test(text) || /\b(bonjour|merci|adhésion|événement|entreprise|comment|pourquoi|quels?)\b/iu.test(text)) return 'fr';
+  return fallback;
 }

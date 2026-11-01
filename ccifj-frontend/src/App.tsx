@@ -1,52 +1,44 @@
 import { useEffect, useState } from 'react';
+import { LogIn } from 'lucide-react';
 import { WidgetChat } from './WidgetChat';
-import { clearAuthSession, watchApiStatus, subscribeAuth, getSavedAuthSession } from './api';
+import { AUTH_EXPIRED_EVENT, clearAuthSession, getSavedAuthSession } from './api';
 import { AuthDialog } from './AuthDialog';
 import { readLocale, siteCopy } from './site-copy';
-import type { AuthSession, Locale } from './types';
+import type { AuthSession } from './types';
 import './widget.css';
 
 export default function App() {
-  const [locale, setLocale] = useState<Locale>(readLocale);
-  const [status, setStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [locale] = useState(readLocale);
   const [auth, setAuth] = useState<AuthSession | null>(getSavedAuthSession);
   const [authOpen, setAuthOpen] = useState(false);
   const t = siteCopy[locale];
-  const authLabel = locale === 'fr'
-    ? { login: 'Connexion', logout: 'Déconnexion' }
-    : locale === 'ja'
-      ? { login: 'ログイン', logout: 'ログアウト' }
-      : { login: 'Log in', logout: 'Log out' };
-  useEffect(() => watchApiStatus(online => setStatus(online ? 'online' : 'offline')), []);
-  useEffect(() => subscribeAuth(change => {
-    setAuth(change.current);
-    if (change.reason === 'expired') setAuthOpen(true);
-    else setAuthOpen(false);
-  }), []);
+  const authLabels = locale === 'fr' ? ['Connexion', 'Déconnexion'] : locale === 'ja' ? ['ログイン', 'ログアウト'] : ['Sign in', 'Sign out'];
+  useEffect(() => {
+    // The API rejected the saved login (expired or revoked): sign out and offer to log in again.
+    const expired = () => { setAuth(null); setAuthOpen(true); };
+    window.addEventListener(AUTH_EXPIRED_EVENT, expired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, expired);
+  }, []);
   useEffect(() => {
     document.documentElement.lang = locale;
-    document.title = `CCI ${siteCopy[locale].name}`;
-    try { window.localStorage.setItem('ccifj-language', locale); } catch { /* Optional persistence. */ }
-    const url = new URL(window.location.href);
-    url.searchParams.set('lang', locale);
-    window.history.replaceState(null, '', url);
-  }, [locale]);
-  return <div className="simple-site">
+    document.title = `CCI ${t.name}`;
+  }, [locale, t.name]);
+  return <div className={`concierge-site locale-${locale}`}>
     <a className="skip-link" href="#main-content">{t.skip}</a>
-    <header className="simple-header"><div className="simple-container header-inner">
-      <a className="site-brand" href={`?lang=${locale}`}><span className="brand-emblem">CCI<span>↗</span></span><span><strong>{t.name}</strong><small>{t.chamber}</small></span></a>
-      <div className="header-actions">
-        {auth ? <><span className="account-name">{auth.user.name}</span><button className="auth-button secondary" type="button" onClick={()=>{clearAuthSession();}}>{authLabel.logout}</button></> : <button className="auth-button" type="button" onClick={()=>setAuthOpen(true)}>{authLabel.login}</button>}
-        <label className="site-language"><span>{t.language}</span><select value={locale} onChange={event=>setLocale(event.target.value as Locale)}><option value="en">English</option><option value="fr">Français</option><option value="ja">日本語</option></select></label>
+    <header className="topbar">
+      <a className="brand" href="#main-content" aria-label="CCI France Japon">
+        <span className="brand-logo"><b>CCI</b><i>↗</i></span>
+        <span><strong>{t.name}</strong><small>{t.chamber}</small></span>
+      </a>
+      <div className="topbar-right">
+        {auth ? <><span className="account-name">{auth.user.name}</span><button className="signin-button" type="button" onClick={()=>{clearAuthSession();setAuth(null);}}>{authLabels[1]}</button></> : <button className="signin-button" type="button" onClick={()=>setAuthOpen(true)}><LogIn size={16}/>{authLabels[0]}</button>}
       </div>
-    </div></header>
-    <main id="main-content" className="simple-container simple-main">
-      <section className="simple-intro">
-        <div className="intro-topline"><span className="intro-label">CCI FRANCE JAPON</span><span className={`connection-label ${status}`} role="status"><span/>{t[status]}</span></div>
-        <h1>{t.title}</h1><p>{t.subtitle}</p>
+    </header>
+    <main id="main-content" className="chat-page">
+      <section className="simple-chat" aria-label={t.assistant}>
+        <WidgetChat locale={locale} isAuthenticated={Boolean(auth)} userId={auth?.user.user_id} onLogin={()=>setAuthOpen(true)}/>
       </section>
-      <section className="simple-chat" aria-label={t.assistant}><WidgetChat locale={locale} isAuthenticated={Boolean(auth)} onLogin={()=>setAuthOpen(true)}/></section>
-    </main><footer className="simple-footer simple-container">{t.footer}</footer>
+    </main>
     <AuthDialog locale={locale} open={authOpen} onClose={()=>setAuthOpen(false)} onSuccess={setAuth}/>
   </div>;
 }

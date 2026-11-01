@@ -1,6 +1,48 @@
 # CCIFJ Concierge
 
-Requires Python 3.12 or newer. Install dependencies with `uv sync`.
+An AI concierge for the Chambre de Commerce et d'Industrie France Japon (CCIFJ).
+
+```text
+src/concierge/agents/    LangGraph orchestrator, specialist agents, and tools
+src/concierge/api/       FastAPI routes (auth, sessions, chat, guided paths, attachments)
+src/concierge/rag/       Hybrid retrieval (Chroma + BM25 + Cohere rerank) and indexing
+src/concierge/db/        SQLite models, migrations, and the vector store
+src/concierge/data/      Source documents, Q&A catalogs, and conversation paths
+src/concierge/index/     BM25 index
+ccifj-frontend/          React + TypeScript chat site
+tests/                   API contract tests
+```
+
+Requires Python 3.12 or newer. Install dependencies with `uv sync`. Copy
+`.env.example` to `.env` and set the model settings and `CCIFJ_AUTH_SECRET`.
+Image and scanned-PDF attachments need the Tesseract executable with English,
+French, and Japanese language data.
+
+## Running locally
+
+```bash
+uv run concierge-db upgrade
+uv run uvicorn concierge.main:app --app-dir src --reload
+```
+
+In a second terminal:
+
+```bash
+cd ccifj-frontend
+npm ci
+npm run dev
+```
+
+Open http://127.0.0.1:5173. Vite proxies `/api` to the API on port 8000. See
+`src/concierge/api/README.md` for the API reference and
+`ccifj-frontend/README.md` for frontend configuration.
+
+Contract tests use a fake agent and a disposable database:
+
+```bash
+PYTHONPATH=src uv run --with httpx python -m unittest discover -s tests -v
+cd ccifj-frontend && npm test
+```
 
 ## Database schema updates
 
