@@ -35,6 +35,7 @@ event_agent = create_agent(
         t.book_event_ticket,
         t.book_space,
         t.get_ccifj_contact,
+        t.search_vectordb,
         t.return_to_main_menu,
     ],
     middleware=[_write_approval(["book_event_ticket", "book_space"])],

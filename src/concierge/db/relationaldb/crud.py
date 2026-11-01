@@ -363,6 +363,16 @@ async def add_message(
     return msg
 
 
+async def list_message_metadata(session: AsyncSession, session_id: int) -> list[list]:
+    """Metadata of every message in a conversation that has any, oldest first."""
+    result = await session.exec(
+        select(Message.tool_calls).where(
+            Message.session_id == session_id, col(Message.tool_calls).is_not(None)
+        ).order_by(Message.message_id)
+    )
+    return [item for item in result.all() if isinstance(item, list)]
+
+
 async def get_history(
     session: AsyncSession, session_id: int, limit: int = 20
 ) -> list[Message]:

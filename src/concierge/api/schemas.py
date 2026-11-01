@@ -14,11 +14,24 @@ class SessionResponse(BaseModel):
     session_id: str
 
 
+class AttachmentUpload(RequestModel):
+    """A PDF/PNG/JPEG file sent inline; text is extracted server-side (OCR)."""
+    name: str = Field(default="attachment", max_length=200)
+    mime_type: str = Field(max_length=100)
+    # 5 MB of binary data is at most ~7 MB of base64 text.
+    data_base64: str = Field(min_length=1, max_length=7_000_000)
+
+
 class ChatRequest(RequestModel):
     request_id: str | None = Field(default=None, max_length=100)
     locale: Literal["en", "fr", "ja"] = "en"
     session_id: str | None = Field(default=None, max_length=4096)
     message: str = Field(min_length=1, max_length=16000)
+    # Guided conversation paths (see data/conversation_paths.json).
+    path_step_id: str | None = Field(default=None, max_length=80)
+    path_event_id: str | None = Field(default=None, max_length=40)
+    path_context: dict[str, Any] = Field(default_factory=dict)
+    attachments: list[AttachmentUpload] = Field(default_factory=list, max_length=4)
 
     @field_validator("message")
     @classmethod
@@ -30,12 +43,18 @@ class ChatRequest(RequestModel):
 
 class ChatResponse(SessionResponse):
     request_id: str | None = None
+    mode: str = "agent"
     reply: str
+    intent: dict[str, Any] | None = None
     pending_approvals: list[dict[str, Any]] = Field(default_factory=list)
     suggested_questions: list[str] = Field(default_factory=list)
     sources: list[dict[str, Any]] = Field(default_factory=list)
     actions: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    path_actions: list[dict[str, Any]] = Field(default_factory=list)
+    active_path_step: str | None = None
+    path_context: dict[str, Any] = Field(default_factory=dict)
+    attachment_count: int = 0
 
 
 class MessageResponse(BaseModel):

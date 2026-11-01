@@ -1,20 +1,116 @@
-"""Adapter over the existing agent's public functions; no agent changes.
+"""Adapter over the agent's public functions.
 
 Ordinary turns reconstruct context from SQL history on a fresh graph thread.
-Approval resumption uses the exact interrupted thread and never replays writes.
+State that the graph keeps between turns (uploaded file text and the
+out-of-scope counter) is persisted in message metadata and passed back in
+through ``agent_inputs``. Approval resumption uses the exact interrupted
+thread and never replays writes.
 """
 
-from functools import lru_cache
+import logging
 from contextvars import ContextVar
+from functools import lru_cache
 
+from .paths import path_actions_for
 from .presentation import linked_resources
+from .progress import ProgressTracker
+
+logger = logging.getLogger(__name__)
 
 response_locale = ContextVar("api_response_locale", default="en")
 response_events = ContextVar("api_response_events", default=None)
+# Per-turn extras: {"context": [...], "agent_message": str | None, "out_of_scope_count": int}
+agent_inputs = ContextVar("api_agent_inputs", default=None)
+
+LOGIN_REQUIRED = {
+    "en": "This action needs a signed-in account. Log in, start a new conversation, and ask again.",
+    "fr": "Cette action nécessite un compte connecté. Connectez-vous, démarrez une nouvelle conversation, puis réessayez.",
+    "ja": "この操作にはログインが必要です。ログイン後、新しい会話を開始して、もう一度お試しください。",
+}
+LOGIN_WARNING = {
+    "en": "Login is required for protected actions. Start a new conversation after signing in.",
+    "fr": "La connexion est requise pour les actions protégées. Démarrez une nouvelle conversation après connexion.",
+    "ja": "保護された操作にはログインが必要です。ログイン後、新しい会話を開始してください。",
+}
+APPROVAL_WARNING = {
+    "en": "The action will not run until you approve it.",
+    "fr": "L’action ne sera exécutée qu’après votre approbation.",
+    "ja": "承認するまで操作は実行されません。",
+}
+APPROVAL_PROMPTS = {
+    "book_event_ticket": {
+        "en": "Please review the event and attendee details in the booking card below. Confirming will create the ticket reservation in your CCIFJ account; no payment will be taken.",
+        "fr": "Vérifiez les détails de l’événement et des participants dans la carte ci-dessous. La confirmation enregistrera la réservation dans votre compte CCIFJ ; aucun paiement ne sera effectué.",
+        "ja": "下の予約カードでイベントと参加者の詳細をご確認ください。確定するとチケット予約がCCIFJアカウントに登録されます。支払いは発生しません。",
+    },
+    "book_space": {
+        "en": "Please review the space reservation details in the card below. Confirming will submit this reservation to CCIFJ.",
+        "fr": "Vérifiez les détails de la réservation d’espace dans la carte ci-dessous. La confirmation transmettra cette demande à la CCIFJ.",
+        "ja": "下のスペース予約カードをご確認ください。確定するとCCIFJに予約が送信されます。",
+    },
+    "subscribe_newsletter": {
+        "en": "Please review the newsletter subscription details in the card below. Confirming will subscribe your account.",
+        "fr": "Vérifiez les détails de l’inscription à la newsletter dans la carte ci-dessous. La confirmation abonnera votre compte.",
+        "ja": "下のニュースレター登録カードをご確認ください。確定するとアカウントが登録されます。",
+    },
+    None: {
+        "en": "Please review the details in the action card below. Confirm only if you want this action to proceed.",
+        "fr": "Vérifiez les détails dans la carte ci-dessous. Confirmez uniquement si vous souhaitez poursuivre cette action.",
+        "ja": "下の操作カードをご確認ください。実行してよい場合のみ確定してください。",
+    },
+}
 
 
 class ApprovalStateUnavailable(Exception):
     pass
+
+
+def _text(content) -> str:
+    if isinstance(content, str):
+        return content
+    return "".join(
+        block if isinstance(block, str) else block.get("text", "")
+        for block in content or []
+        if isinstance(block, (str, dict))
+    )
+
+
+def approval_prompt(approvals, locale):
+    names = {
+        str(action.get("name", ""))
+        for item in approvals
+        for action in item.get("action_requests", [])
+        if isinstance(action, dict)
+    }
+    key = next((name for name in ("book_event_ticket", "book_space", "subscribe_newsletter") if name in names), None)
+    return APPROVAL_PROMPTS[key][locale]
+
+
+async def enrich_ticket_approvals(approvals):
+    """Add event title/date/location to ticket approvals for the review card."""
+    from concierge.db.relationaldb import crud
+    from concierge.db.relationaldb.session import AsyncSessionLocal
+
+    for item in approvals:
+        for action in item.get("action_requests", []):
+            if not isinstance(action, dict) or action.get("name") != "book_event_ticket":
+                continue
+            args = action.get("args")
+            if not isinstance(args, dict):
+                continue
+            try:
+                async with AsyncSessionLocal() as db_session:
+                    event = await crud.get_event(db_session, int(args.get("event_id")))
+                if event is not None:
+                    action["args"] = {
+                        **args,
+                        "event_title": event.title,
+                        "event_start": event.start_at.isoformat() if event.start_at else None,
+                        "event_location": event.location,
+                    }
+            except Exception:
+                # The approval card can still show the event ID.
+                logger.exception("Could not load event details for a pending ticket approval")
 
 
 class AgentBackend:
@@ -33,17 +129,39 @@ class AgentBackend:
     async def chat(self, history, user_id, thread_id):
         from langchain_core.messages import AIMessage, HumanMessage
 
+        inputs = agent_inputs.get() or {}
         messages = [
             (HumanMessage if row.role.value == "user" else AIMessage)(
                 content=row.content, id=f"db:{row.message_id}"
             )
             for row in history if row.role.value in {"user", "assistant"}
         ]
-        result = await self.graph.ainvoke(
-            {"messages": messages, "user_id": str(user_id) if user_id is not None else None},
-            config=self.config(thread_id),
-        )
-        return self.format_result(result)
+        override = inputs.get("agent_message")
+        if override and messages and isinstance(messages[-1], HumanMessage):
+            # A guided path turns structured selections into an explicit request.
+            messages[-1] = HumanMessage(content=override, id=messages[-1].id)
+        graph_input = {
+            "messages": messages,
+            "user_id": str(user_id) if user_id is not None else None,
+            "context": list(inputs.get("context") or []),
+            "out_of_scope_count": int(inputs.get("out_of_scope_count") or 0),
+        }
+        config = self.config(thread_id)
+        queue = response_events.get()
+        if queue is None:
+            result = await self.graph.ainvoke(graph_input, config=config)
+        else:
+            tracker = ProgressTracker(response_locale.get())
+            async for event in self.graph.astream_events(graph_input, config=config, version="v2"):
+                progress = tracker.update(event)
+                if progress:
+                    queue.put_nowait({"type": "progress", "messages": progress})
+            snapshot = await self.graph.aget_state(config)
+            result = dict(snapshot.values or {})
+            interrupts = [i for task in snapshot.tasks for i in getattr(task, "interrupts", ())]
+            if interrupts:
+                result["__interrupt__"] = interrupts
+        return await self.format_result(result, guest=user_id is None)
 
     async def resume(self, thread_id, interrupt_id, decision):
         snapshot = await self.graph.aget_state(self.config(thread_id))
@@ -53,19 +171,13 @@ class AgentBackend:
         if not any(item.id == interrupt_id for item in interrupts):
             raise ApprovalStateUnavailable()
         result = await self.resume_approval(self.config(thread_id), interrupt_id, decision)
-        return self.format_result(result)
+        return await self.format_result(result)
 
     async def present_result(self, result):
         locale = response_locale.get()
-        if result["pending_approvals"]:
-            result["reply"] = {
-                "en": "Please approve or reject the proposed action before it is saved.",
-                "fr": "Veuillez approuver ou refuser l’action proposée avant son enregistrement.",
-                "ja": "保存する前に、提案された操作を承認または拒否してください。",
-            }[locale]
-        else:
+        if not result["pending_approvals"]:
             # Reuse the configured text model without tools. Rendering cannot book,
-            # subscribe, retrieve, or resume a graph. Agent code stays unchanged.
+            # subscribe, retrieve, or resume a graph.
             from concierge.agents.model import llm
             language = {"en": "English", "fr": "French", "ja": "Japanese"}[locale]
             messages = [
@@ -80,10 +192,7 @@ class AgentBackend:
             queue = response_events.get()
             reply = ""
             async for chunk in llm.astream(messages):
-                content = chunk.content
-                text = content if isinstance(content, str) else "".join(
-                    block.get("text", "") for block in content if isinstance(block, dict)
-                )
+                text = _text(chunk.content)
                 if text:
                     reply += text
                     if queue is not None:
@@ -94,33 +203,50 @@ class AgentBackend:
         result["sources"], result["actions"] = linked_resources(result["reply"])
         return result
 
-    def format_result(self, result):
-        from langchain_core.messages import AIMessage
+    async def format_result(self, result, guest=False):
+        from langchain_core.messages import AIMessage, HumanMessage
 
+        locale = response_locale.get()
         approvals = self.pending(result)
+        messages = result.get("messages", [])
+        # Only consider this turn: history contains earlier assistant replies.
+        latest_human = next(
+            (index for index in range(len(messages) - 1, -1, -1) if isinstance(messages[index], HumanMessage)),
+            -1,
+        )
+        user_text = _text(messages[latest_human].content) if latest_human >= 0 else ""
         reply = ""
+        for message in reversed(messages[latest_human + 1:]):
+            if isinstance(message, AIMessage) and not message.tool_calls:
+                reply = _text(message.content).strip()
+                if reply:
+                    break
+        warnings = []
         if approvals:
-            reply = "Please approve or reject the proposed action before it is saved."
-        else:
-            for message in reversed(result.get("messages", [])):
-                if isinstance(message, AIMessage) and not message.tool_calls:
-                    content = message.content
-                    if isinstance(content, str):
-                        reply = content
-                    else:
-                        reply = "".join(
-                            block if isinstance(block, str) else block.get("text", "")
-                            for block in content
-                            if isinstance(block, (str, dict))
-                        )
-                    if reply:
-                        break
+            if guest:
+                # Booking tools require an account; drop the interrupted thread
+                # instead of leaving the guest conversation blocked on it.
+                reply = LOGIN_REQUIRED[locale]
+                approvals = []
+                warnings.append(LOGIN_WARNING[locale])
+            else:
+                await enrich_ticket_approvals(approvals)
+                reply = approval_prompt(approvals, locale)
+                warnings.append(APPROVAL_WARNING[locale])
         if not reply:
             raise RuntimeError("Agent returned no reply.")
+        suggested = (result.get("suggested_questions") or [])[:3]
+        plan = result.get("plan") or {}
+        tasks = plan.get("tasks", []) if isinstance(plan, dict) else []
+        intent = ", ".join(dict.fromkeys(t.get("target", "") for t in tasks if isinstance(t, dict) and t.get("target")))
         sources, actions = linked_resources(reply)
         return {
             "reply": reply, "pending_approvals": approvals, "sources": sources, "actions": actions,
-            "suggested_questions": result.get("suggested_questions") or [],
+            "suggested_questions": suggested, "warnings": warnings,
+            "intent": {"code": intent} if intent else None,
+            "path_actions": path_actions_for(user_text, reply, suggested, locale),
+            "attachment_count": len(result.get("context") or []),
+            "agent_state": {"out_of_scope_count": int(result.get("out_of_scope_count") or 0)},
         }
 
 

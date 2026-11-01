@@ -278,6 +278,172 @@ class ApiContractTest(unittest.TestCase):
         self.assertIn('"reply": "Bonjour"', result.text)
         self.assertLess(result.text.index("event: delta"), result.text.index("event: result"))
 
+    # --- Features ported from the main branch -------------------------------
+
+    def _seed_space(self, name="L'Espace@CCIFJ"):
+        import asyncio
+        from concierge.db.relationaldb.models import Space
+
+        async def seed():
+            async with AsyncSession(self.engine, expire_on_commit=False) as session:
+                space = Space(name=name, capacity=80)
+                session.add(space)
+                await session.commit()
+                return space.space_id
+        return asyncio.run(seed())
+
+    def test_localized_suggestions_starter_paths_and_current_user(self):
+        french = self.client.get("/api/v1/suggestions?locale=fr").json()
+        self.assertIn("Qu’est-ce que la CCIFJ ?", french["suggested_questions"])
+        self.assertEqual([path["id"] for path in french["starter_paths"]], ["events.upcoming", "spaces.start"])
+        self.assertEqual(french["starter_paths"][0]["label"], "Événements CCIFJ à venir")
+        self.assertEqual(self.client.get("/api/v1/auth/me").status_code, 401)
+        account = self.client.post("/api/v1/auth/register", json={"name": "Me", "email": "me@example.com", "password": "password123"}).json()
+        me = self.client.get("/api/v1/auth/me", headers={"Authorization": "Bearer " + account["access_token"]})
+        self.assertEqual(me.json()["email"], "me@example.com")
+
+    def test_guided_space_path_runs_without_agent_and_is_saved(self):
+        calls = []
+        original = self.backend.chat
+        async def recording(*args):
+            calls.append(args)
+            return await original(*args)
+        self.backend.chat = recording
+        space_id = self._seed_space()
+        start = self.client.post("/api/v1/chat", json={"message": "Check space availability", "path_step_id": "spaces.start", "locale": "en"}).json()
+        self.assertEqual(start["mode"], "guided_path")
+        self.assertEqual(start["active_path_step"], "spaces.availability")
+        token = start["session_id"]
+        bad = self.client.post("/api/v1/chat", json={"session_id": token, "message": "tomorrow", "path_step_id": "spaces.availability"}).json()
+        self.assertEqual(bad["active_path_step"], "spaces.availability")
+        available = self.client.post("/api/v1/chat", json={
+            "session_id": token, "message": "2026-11-12 09:00 to 2026-11-12 12:00", "path_step_id": "spaces.availability",
+        }).json()
+        self.assertEqual(available["path_actions"][0]["data"], {
+            "space_id": space_id, "space_name": "L'Espace@CCIFJ", "start_date": "2026-11-12 09:00", "end_date": "2026-11-12 12:00",
+        })
+        details = self.client.post("/api/v1/chat", json={
+            "session_id": token, "message": "Continue", "path_step_id": "spaces.booking_details",
+            "path_context": available["path_actions"][0]["data"],
+        }).json()
+        self.assertEqual(details["active_path_step"], "spaces.submit")
+        self.assertEqual(details["path_context"]["space_id"], space_id)
+        guest_submit = self.client.post("/api/v1/chat", json={
+            "session_id": token, "message": "Board meeting, 10 people", "path_step_id": "spaces.submit", "path_context": details["path_context"],
+        }).json()
+        self.assertIn("sign in", guest_submit["reply"])
+        self.assertEqual(calls, [])
+        history = self.client.get(f"/api/v1/sessions/{token}/messages").json()
+        self.assertEqual(len(history["messages"]), 10)
+        self.assertEqual(history["turn_status"], "ready")
+        self.assertEqual(self.client.post("/api/v1/chat", json={"message": "x", "path_step_id": "unknown.step"}).status_code, 400)
+        missing = self.client.post("/api/v1/chat", json={"message": "x", "path_step_id": "spaces.booking_details", "path_context": {"space_id": "1"}})
+        self.assertEqual(missing.status_code, 400)
+
+    def test_space_submit_hands_structured_request_to_agent(self):
+        from concierge.api.agent_backend import agent_inputs
+        seen = []
+        original = self.backend.chat
+        async def recording(*args):
+            seen.append(dict(agent_inputs.get()))
+            return await original(*args)
+        self.backend.chat = recording
+        account = self.client.post("/api/v1/auth/register", json={"name": "Booker", "email": "booker@example.com", "password": "password123"}).json()
+        context = {"space_id": 1, "space_name": "Room", "start_date": "2026-11-12 09:00", "end_date": "2026-11-12 12:00"}
+        result = self.client.post("/api/v1/chat", json={"message": "Board meeting, 10 people", "path_step_id": "spaces.submit", "path_context": context},
+                                  headers={"Authorization": "Bearer " + account["access_token"]})
+        self.assertEqual(result.status_code, 200)
+        self.assertIn("book_space", seen[0]["agent_message"])
+        self.assertIn("expected_attendees=10", seen[0]["agent_message"])
+
+    def test_attachment_context_and_agent_state_persist_across_turns(self):
+        from unittest.mock import patch
+        from concierge.api.agent_backend import agent_inputs
+        seen = []
+        async def recording(history, user_id, thread_id):
+            seen.append(dict(agent_inputs.get()))
+            return {"reply": "Read", "attachment_count": len(agent_inputs.get()["context"]), "agent_state": {"out_of_scope_count": len(seen)}}
+        self.backend.chat = recording
+        def fake_extract(item):
+            return {"id": item["name"], "name": item["name"], "mime_type": item["mime_type"], "text": "Invoice total 5000 JPY"}
+        upload = {"name": "invoice.png", "mime_type": "image/png", "data_base64": "aGVsbG8="}
+        with patch("concierge.api.chat.extract_attachment", fake_extract):
+            first = self.client.post("/api/v1/chat", json={"message": "What is this?", "attachments": [upload]}).json()
+            self.assertEqual(first["attachment_count"], 1)
+            token = first["session_id"]
+            second = self.client.post("/api/v1/chat", json={"session_id": token, "message": "And the total?"}).json()
+            self.assertEqual(second["attachment_count"], 1)
+            self.assertEqual(seen[1]["context"][0]["text"], "Invoice total 5000 JPY")
+            self.assertEqual(seen[1]["out_of_scope_count"], 1)
+            # Re-sending the same file does not count twice; a fifth distinct file is refused.
+            self.client.post("/api/v1/chat", json={"session_id": token, "message": "again", "attachments": [upload]})
+            self.assertEqual(len(seen[2]["context"]), 1)
+            others = [{**upload, "name": f"page{i}.png"} for i in range(4)]
+            too_many = self.client.post("/api/v1/chat", json={"session_id": token, "message": "more", "attachments": others})
+            self.assertEqual(too_many.status_code, 413)
+        self.assertEqual(self.client.get(f"/api/v1/sessions/{token}/messages").json()["turn_status"], "ready")
+        unsupported = self.client.post("/api/v1/chat", json={"message": "x", "attachments": [{**upload, "mime_type": "text/plain"}]})
+        self.assertEqual(unsupported.status_code, 400)
+
+    def test_stream_progress_is_localized(self):
+        from concierge.api.agent_backend import response_events
+        async def progress_reply(*args):
+            response_events.get().put_nowait({"type": "progress", "messages": ["Checking our events database…"]})
+            return {"reply": "Done"}
+        self.backend.chat = progress_reply
+        result = self.client.post("/api/v1/chat/stream", json={"message": "events", "locale": "fr"})
+        self.assertIn("Le concierge CCIFJ examine votre demande", result.text)
+        self.assertIn("Checking our events database", result.text)
+
+
+class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from concierge.api.agent_backend import AgentBackend
+        self.backend = AgentBackend.__new__(AgentBackend)
+        self.backend.pending = lambda result: [dict(item) for item in result.get("__interrupt__", [])]
+
+    async def test_reply_is_limited_to_the_current_turn(self):
+        from langchain_core.messages import AIMessage, HumanMessage
+        result = {"messages": [HumanMessage("old"), AIMessage("Old answer"), HumanMessage("new"), AIMessage("")]}
+        with self.assertRaises(RuntimeError):
+            await self.backend.format_result(result)
+
+    async def test_intent_path_actions_scope_state_and_guest_approvals(self):
+        from langchain_core.messages import AIMessage, HumanMessage
+        from concierge.api.agent_backend import response_locale
+        result = {
+            "messages": [HumanMessage("Any events?"), AIMessage("See https://www.ccifj.or.jp/en/events.html")],
+            "plan": {"tasks": [{"target": "events"}, {"target": "events"}]},
+            "suggested_questions": ["a", "b", "c", "d"], "out_of_scope_count": 2, "context": [{"id": "x"}],
+        }
+        formatted = await self.backend.format_result(result)
+        self.assertEqual(formatted["intent"], {"code": "events"})
+        self.assertEqual(formatted["suggested_questions"], ["a", "b", "c"])
+        self.assertEqual(formatted["path_actions"][0]["id"], "events.upcoming")
+        self.assertEqual(formatted["agent_state"], {"out_of_scope_count": 2})
+        self.assertEqual(formatted["attachment_count"], 1)
+        self.assertEqual(formatted["sources"][0]["url"], "https://www.ccifj.or.jp/en/events.html")
+        token = response_locale.set("ja")
+        try:
+            guest = await self.backend.format_result({**result, "__interrupt__": [{"interrupt_id": "i", "action_requests": [{"name": "book_space", "args": {}}]}]}, guest=True)
+        finally:
+            response_locale.reset(token)
+        self.assertEqual(guest["pending_approvals"], [])
+        self.assertIn("ログイン", guest["reply"])
+
+
+class ProgressTrackerTest(unittest.TestCase):
+    def test_parallel_workers_and_tools(self):
+        from concierge.api.progress import ProgressTracker
+        tracker = ProgressTracker("en")
+        node = lambda name, event, run: {"event": event, "run_id": run, "metadata": {"langgraph_node": name}}
+        self.assertIsNone(tracker.update(node("orchestrator_node", "on_chain_start", "o")))
+        self.assertEqual(tracker.update(node("events_node", "on_chain_start", "1")), ["Our Events Agent is finding relevant events for you…"])
+        self.assertEqual(tracker.update(node("general_node", "on_chain_start", "2")), ["Our Events and Business Support Agents are working in parallel…"])
+        tool = tracker.update({"event": "on_tool_start", "name": "search_vectordb", "run_id": "t", "metadata": {}})
+        self.assertEqual(tool[0], "Searching CCIFJ website and knowledge base information…")
+        self.assertIsNone(tracker.update({"event": "on_tool_start", "name": "internal_helper", "run_id": "u", "metadata": {}}))
+
 
 class PresentationTest(unittest.IsolatedAsyncioTestCase):
     async def test_api_language_renderer_streams_selected_language_without_tools(self):

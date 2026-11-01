@@ -353,6 +353,18 @@ async def book_event_ticket(
     )
 
 
+def get_time():
+    pass
+
+def avil_space():
+    pass
+
+def cancel_Space():
+    pass
+
+def cancel_event():
+    pass
+
 @tool
 async def book_space(
     start_date: str,

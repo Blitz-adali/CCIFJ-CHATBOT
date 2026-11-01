@@ -2,7 +2,7 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException, Response
 
-from concierge.auth.dependencies import DatabaseSession
+from concierge.auth.dependencies import CurrentUser, DatabaseSession
 from concierge.auth.security import DUMMY_PASSWORD_HASH, create_token, hash_password, verify_password
 from concierge.config import get_settings
 from concierge.db.relationaldb import crud
@@ -41,3 +41,11 @@ async def login(body: LoginRequest, session: DatabaseSession, response: Response
             headers={"WWW-Authenticate": "Bearer"},
         )
     return token_response(record[0], response)
+
+
+@router.get("/me", response_model=UserResponse)
+async def current_user(user: CurrentUser, response: Response):
+    if user is None:
+        raise HTTPException(status_code=401, detail="Log in to view your account.", headers={"WWW-Authenticate": "Bearer"})
+    response.headers["Cache-Control"] = "no-store"
+    return UserResponse.model_validate(user)

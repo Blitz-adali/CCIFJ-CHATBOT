@@ -15,8 +15,8 @@ try:
         llm = ChatOllama(model=model_name, temperature=0)
         llm_routing = ChatOllama(model=router_model_name, temperature=0, think=False, keep_alive=0)
     else:
-        llm = ChatOpenAI(model=model_name, temperature=0)
-        llm_routing = ChatOpenAI(model=router_model_name, temperature=0)
+        llm = ChatOpenAI(model=model_name)
+        llm_routing = ChatOpenAI(model=router_model_name)
 except:
     llm = ChatOllama(model=model_name, temperature=0)
     llm_routing = ChatOllama(model=router_model_name, temperature=0, think=False, keep_alive=0)

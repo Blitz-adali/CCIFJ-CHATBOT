@@ -1,5 +1,11 @@
+import json
+from pathlib import Path
+from typing import Literal
+
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
+
+from .paths import starter_paths
 
 router = APIRouter(tags=["health"])
 
@@ -15,11 +21,12 @@ async def status():
 
 
 @router.get("/suggestions")
-async def suggestions():
-    # Same catalog used by agents, without importing or initializing models.
-    import json
-    from pathlib import Path
-
-    catalog = Path(__file__).resolve().parents[1] / "data" / "predefined_qa.json"
-    entries = json.loads(catalog.read_text(encoding="utf-8"))
-    return {"suggested_questions": [entry["question"] for entry in entries]}
+async def suggestions(locale: Literal["en", "fr", "ja"] = "en"):
+    """Starter questions and guided journeys, without initializing models."""
+    data = Path(__file__).resolve().parents[1] / "data"
+    entries = json.loads((data / "predefined_qa.json").read_text(encoding="utf-8"))
+    questions = [entry["question"] for entry in entries]
+    if locale != "en":
+        localized = json.loads((data / "predefined_qa_i18n.json").read_text(encoding="utf-8")).get(locale, {})
+        questions = [localized.get(question, {}).get("question", question) for question in questions]
+    return {"suggested_questions": questions, "starter_paths": starter_paths(locale)}

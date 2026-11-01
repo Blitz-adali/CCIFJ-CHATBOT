@@ -10,7 +10,10 @@ from concierge.auth.dependencies import CurrentUser, DatabaseSession
 from concierge.config import get_settings
 from concierge.db.relationaldb import crud
 from concierge.db.relationaldb.models import MessageRole
-from .agent_backend import ApprovalStateUnavailable, get_agent_backend, response_locale, response_events
+from .agent_backend import ApprovalStateUnavailable, agent_inputs, get_agent_backend, response_locale, response_events
+from .attachments import MAX_FILES_PER_CONVERSATION, extract_attachment
+from .paths import run_path_step, space_booking_agent_message
+from .progress import initial_label
 from .schemas import ApprovalRequest, ChatRequest, ChatResponse
 from .session_access import authorize_session, pending_turn, session_token, session_turn, active_turns, turn_status, normalize_approvals
 
@@ -32,20 +35,28 @@ async def agent_backend(session: DatabaseSession):
 Backend = Annotated[object, Depends(agent_backend)]
 
 
-def reply_metadata(body, thread_id):
+def reply_metadata(body, thread_id, extra=()):
     metadata = [{
         "type": "pending_approval", "thread_id": thread_id,
         "approvals": body.pending_approvals,
     }] if body.pending_approvals else []
+    metadata.extend(extra)
     metadata.append({"type": "api_response", "response": body.model_dump(mode="json")})
     return metadata
 
 
+def _kept_metadata(row):
+    """Agent state stored beside a reply survives presentation rewrites."""
+    return [item for item in row.tool_calls or [] if item.get("type") == "agent_state"]
+
+
 async def save_reply(session, chat, token, result, thread_id):
     result = dict(result)
+    agent_state = result.pop("agent_state", None)
+    extra = [{"type": "agent_state", **agent_state}] if agent_state else []
     result["pending_approvals"] = normalize_approvals(result.get("pending_approvals"))
     body = ChatResponse(session_id=token, **result)
-    row = await crud.add_message(session, chat.session_id, MessageRole.assistant, body.reply, reply_metadata(body, thread_id))
+    row = await crud.add_message(session, chat.session_id, MessageRole.assistant, body.reply, reply_metadata(body, thread_id, extra))
     # add_message refreshes the row after its commit, opening another read transaction.
     await session.commit()
     return body, row
@@ -73,7 +84,7 @@ async def present_saved_reply(session, backend, body, row, thread_id, locale):
         # update cannot remove the raw reply committed before presentation.
         try:
             row.content = rendered.reply
-            row.tool_calls = reply_metadata(rendered, thread_id)
+            row.tool_calls = reply_metadata(rendered, thread_id, _kept_metadata(row))
             session.add(row)
             await session.commit()
         except Exception:
@@ -85,11 +96,34 @@ async def present_saved_reply(session, backend, body, row, thread_id, locale):
         response_locale.reset(locale_token)
 
 
+async def extract_uploads(uploads):
+    """Extract text from uploaded files off the event loop (may raise 4xx/503)."""
+    return list(await asyncio.gather(*(
+        asyncio.to_thread(extract_attachment, upload.model_dump()) for upload in uploads
+    )))
+
+
+def conversation_state(metadata_rows):
+    """Uploaded file text and the latest agent state saved in a conversation."""
+    files, state = [], {}
+    for metadata in metadata_rows:
+        for item in metadata:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "attachment_context":
+                files.extend(entry for entry in item.get("items") or [] if isinstance(entry, dict))
+            elif item.get("type") == "agent_state":
+                state = item
+    return files, state
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest, session: DatabaseSession, user: CurrentUser,
     backend: Backend, response: Response,
 ):
+    # File extraction is CPU-bound and can reject a request; do it before any writes.
+    uploaded = await extract_uploads(body.attachments) if body.attachments else []
     token = body.session_id
     if token:
         conversation = await authorize_session(token, user, session)
@@ -112,7 +146,30 @@ async def chat(
                 conversation = await crud.claim_chat_session(session, conversation.session_id, user.user_id)
             except ValueError as exc:
                 raise HTTPException(status_code=404, detail="Session not found.") from exc
-        message = await crud.add_message(session, conversation.session_id, MessageRole.user, body.message, [{"type": "api_turn_state", "status": "processing"}])
+        files, state = conversation_state(await crud.list_message_metadata(session, conversation.session_id))
+        if body.path_step_id and not body.attachments:
+            direct = await run_path_step(body, user, session)
+            if direct is not None:
+                # Guided steps are fixed, read-only lookups: no agent, no presentation pass.
+                await crud.add_message(session, conversation.session_id, MessageRole.user, body.message)
+                direct.update(request_id=body.request_id, attachment_count=len(files))
+                result, _ = await save_reply(session, conversation, token, direct, None)
+                response.headers["Cache-Control"] = "no-store"
+                return result
+        agent_message = space_booking_agent_message(body) if body.path_step_id == "spaces.submit" else None
+        known = {item.get("id") for item in files}
+        new_files = []
+        for item in uploaded:
+            if item["id"] not in known:
+                known.add(item["id"])
+                new_files.append(item)
+        files += new_files
+        if len(files) > MAX_FILES_PER_CONVERSATION:
+            raise HTTPException(status_code=413, detail="A conversation can contain at most four attached files. Start a new conversation to add more.")
+        user_metadata = [{"type": "api_turn_state", "status": "processing"}]
+        if new_files:
+            user_metadata.append({"type": "attachment_context", "items": new_files})
+        message = await crud.add_message(session, conversation.session_id, MessageRole.user, body.message, user_metadata)
         history = await crud.get_history(session, conversation.session_id, limit=100)
         thread_id = f"api:session:{conversation.session_id}:turn:{message.message_id}"
         # Snapshot the data needed by the agent and release its read transaction.
@@ -120,6 +177,10 @@ async def chat(
         await session.commit()
         active_turns.add(conversation.session_id)
         locale_token = response_locale.set(body.locale)
+        inputs_token = agent_inputs.set({
+            "context": files, "agent_message": agent_message,
+            "out_of_scope_count": state.get("out_of_scope_count", 0),
+        })
         try:
             async with asyncio.timeout(get_settings().agent_timeout_seconds):
                 result = await backend.chat(history, user_id, thread_id)
@@ -144,6 +205,7 @@ async def chat(
         finally:
             active_turns.discard(conversation.session_id)
             response_locale.reset(locale_token)
+            agent_inputs.reset(inputs_token)
         result = await present_saved_reply(session, backend, result, saved, thread_id, body.locale)
         response.headers["Cache-Control"] = "no-store"
         return result
@@ -201,15 +263,20 @@ async def turn_events(body, session, user, backend):
     task = asyncio.create_task(chat(body, session, user, backend, Response()))
     response_events.reset(event_token)
     try:
-        yield {"type": "progress", "message": "Processing your request…"}
+        last_progress = {"type": "progress", "messages": [initial_label(body.locale)]}
+        yield last_progress
         heartbeat = asyncio.get_running_loop().time()
         while not task.done():
             try:
                 event = await asyncio.wait_for(events.get(), timeout=0.25)
+                if event.get("type") == "progress":
+                    last_progress = event
+                    heartbeat = asyncio.get_running_loop().time()
                 yield event
             except TimeoutError:
                 if asyncio.get_running_loop().time() - heartbeat >= 10:
-                    yield {"type": "progress", "message": "Still working on your request…"}
+                    # Keep-alive that preserves the current progress label.
+                    yield last_progress
                     heartbeat = asyncio.get_running_loop().time()
         while not events.empty():
             yield events.get_nowait()

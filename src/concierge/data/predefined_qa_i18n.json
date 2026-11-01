@@ -1,0 +1,126 @@
+{
+  "fr": {
+    "What events are coming up at CCIFJ?": {
+      "question": "Quels sont les prochains événements de la CCIFJ ?",
+      "answer": "La CCIFJ organise régulièrement des sommets professionnels (mobilité, énergie, santé, aéronautique), des galas, des soirées de réseautage et des ateliers. Pour consulter le calendrier à jour, demandez-moi la liste des événements ou visitez ccifj.or.jp."
+    },
+    "How do I become a CCIFJ member?": {
+      "question": "Comment devenir membre de la CCIFJ ?",
+      "answer": "Pour adhérer à la CCIFJ, remplissez le formulaire en ligne : https://survey.ccife.net/232729?lang=en. L’adhésion est ouverte aux entreprises françaises et internationales présentes au Japon. Choisissez entre les catégories Bienfaiteur, Active, Startup ou Non-résident selon le profil de votre entreprise."
+    },
+    "What are the CCIFJ membership fees?": {
+      "question": "Quels sont les tarifs d’adhésion à la CCIFJ ?",
+      "answer": "La CCIFJ propose quatre catégories d’adhésion avec une cotisation annuelle en yens :\n- **Bienfaiteur** : catégorie supérieure pour les grands partenaires stratégiques.\n- **Active** : adhésion d’entreprise standard.\n- **Startup** : tarif réduit pour les jeunes entreprises.\n- **Non-résident** : pour les entreprises établies hors du Japon.\nPour connaître le montant exact, demandez-moi le tarif d’une catégorie précise."
+    },
+    "What are the benefits of CCIFJ membership?": {
+      "question": "Quels sont les avantages d’une adhésion à la CCIFJ ?",
+      "answer": "Les membres de la CCIFJ bénéficient notamment de l’accès à un annuaire de plus de 650 entreprises, d’invitations à des événements et sommets professionnels, d’une visibilité dans les médias et newsletters de la CCIFJ, ainsi que de services d’appui aux entreprises et d’aide au recrutement."
+    },
+    "How can I book a ticket for a CCIFJ event?": {
+      "question": "Comment réserver un billet pour un événement de la CCIFJ ?",
+      "answer": "Indiquez l’événement auquel vous souhaitez participer et le nombre de billets. Pour effectuer une réservation, vous devrez être connecté, confirmer la réservation et fournir le nom et l’adresse e-mail de chaque participant."
+    },
+    "Can I rent a meeting room or event space at CCIFJ?": {
+      "question": "Puis-je louer une salle de réunion ou un espace événementiel à la CCIFJ ?",
+      "answer": "Oui. La CCIFJ propose L’Espace@CCIFJ, une salle modulable pour événements et conférences à Nihonbashi, Tokyo. Elle peut accueillir des séminaires, présentations d’entreprise, cocktails et réunions de conseil. Indiquez les dates souhaitées pour vérifier les disponibilités."
+    },
+    "How can I set up a company in Japan through CCIFJ?": {
+      "question": "Comment créer une entreprise au Japon avec l’aide de la CCIFJ ?",
+      "answer": "L’équipe Appui aux entreprises de la CCIFJ accompagne les entreprises françaises et européennes pour la création d’entreprise, la domiciliation et les centres d’affaires, les études de marché et la récupération de TVA. Écrivez à appui.entreprises@ccifj.or.jp ou remplissez le formulaire de demande d’accompagnement commercial."
+    },
+    "How do I post a job offer or find candidates through CCIFJ?": {
+      "question": "Comment publier une offre d’emploi ou trouver des candidats avec la CCIFJ ?",
+      "answer": "Le département Emploi et Formation de la CCIFJ traite les offres d’emploi et le recrutement. Contactez Nicolas CHAUVET à n.chauvet@ccifj.or.jp. Les candidats peuvent également déposer leur CV dans la base de données de la CCIFJ au moyen du formulaire d’inscription."
+    },
+    "How can I become a speaker at a CCIFJ event?": {
+      "question": "Comment intervenir comme conférencier lors d’un événement de la CCIFJ ?",
+      "answer": "Pour vous renseigner sur les possibilités d’intervention lors d’événements ou de conférences de la CCIFJ, contactez Elena SUZUKI, responsable des événements, à e.suzuki@ccifj.or.jp ou au 03-4500-6606."
+    },
+    "How can I sponsor a CCIFJ event?": {
+      "question": "Comment sponsoriser un événement de la CCIFJ ?",
+      "answer": "Pour connaître les possibilités de sponsoring, contactez :\n- **Marie OZAKI** (directrice générale, responsable des événements) : m.ozaki@ccifj.or.jp\n- **Elena SUZUKI** (responsable des événements) : e.suzuki@ccifj.or.jp"
+    },
+    "How do I subscribe to the CCIFJ newsletter?": {
+      "question": "Comment m’abonner à la newsletter de la CCIFJ ?",
+      "answer": "Je peux vous aider à vous inscrire aux newsletters de la CCIFJ. Elles comprennent les actualités de la Chambre et des entreprises, les annonces de formations et les nouveaux épisodes du podcast @StudioCCIFJ. Indiquez votre adresse e-mail et la newsletter souhaitée."
+    },
+    "Where is the CCIFJ office located?": {
+      "question": "Où se trouve le bureau de la CCIFJ ?",
+      "answer": "La CCIFJ se trouve à Nihonbashi, à Tokyo, au Japon. Pour obtenir l’adresse exacte et un itinéraire, consultez ccifj.or.jp ou demandez-moi de rechercher ces informations."
+    },
+    "How can I search for French companies in Japan?": {
+      "question": "Comment rechercher des entreprises françaises au Japon ?",
+      "answer": "Vous pouvez rechercher parmi les plus de 650 entreprises de l’annuaire des membres de la CCIFJ par secteur (par exemple informatique, énergie, luxe ou aéronautique) ou par région (par exemple Tokyo ou Kansai). Indiquez le secteur ou la région qui vous intéresse."
+    },
+    "How do I submit corporate news to CCIFJ?": {
+      "question": "Comment transmettre une actualité d’entreprise à la CCIFJ ?",
+      "answer": "Pour proposer une actualité d’entreprise ou un communiqué de presse aux médias de la CCIFJ, contactez le service Communication à communication@ccifj.or.jp."
+    },
+    "What is CCIFJ?": {
+      "question": "Qu’est-ce que la CCIFJ ?",
+      "answer": "La CCIFJ (Chambre de Commerce et d’Industrie France Japon) est la Chambre de commerce et d’industrie française au Japon. Elle met en relation les entreprises françaises et japonaises et rassemble plus de 650 entreprises membres."
+    }
+  },
+  "ja": {
+    "What events are coming up at CCIFJ?": {
+      "question": "CCIFJの今後のイベントを教えてください",
+      "answer": "CCIFJでは、モビリティ、エネルギー、ヘルスケア、航空宇宙分野のビジネスサミット、ガラディナー、交流会、専門ワークショップなどを定期的に開催しています。最新の予定は、イベント一覧を尋ねるか ccifj.or.jp をご確認ください。"
+    },
+    "How do I become a CCIFJ member?": {
+      "question": "CCIFJの会員になるにはどうすればよいですか？",
+      "answer": "CCIFJへの入会は、オンライン申請フォームからお申し込みいただけます：https://survey.ccife.net/232729?lang=en。日本で事業を行うフランス企業および海外企業が対象です。企業の状況に応じて、Benefactor、Active、Startup、Non-Residentの会員区分をお選びください。"
+    },
+    "What are the CCIFJ membership fees?": {
+      "question": "CCIFJの会費はいくらですか？",
+      "answer": "CCIFJには、年会費が日本円で設定された4つの会員区分があります。\n- **Benefactor**：大規模な戦略的パートナー向けの上位区分\n- **Active**：標準的な法人会員\n- **Startup**：設立初期の企業向けの割引区分\n- **Non-Resident**：日本国外に拠点を置く企業向け\n正確な金額については、希望する区分を指定してお尋ねください。"
+    },
+    "What are the benefits of CCIFJ membership?": {
+      "question": "CCIFJ会員にはどのようなメリットがありますか？",
+      "answer": "CCIFJ会員は、650社以上の会員企業ディレクトリへのアクセス、ビジネスイベントやサミットへの招待、CCIFJのメディアやニュースレターでの紹介、事業支援サービス（市場参入、住所貸し、VAT還付など）、人事・採用支援を利用できます。"
+    },
+    "How can I book a ticket for a CCIFJ event?": {
+      "question": "CCIFJのイベントチケットを予約するには？",
+      "answer": "参加したいイベント名とチケット枚数をお知らせください。予約手続きにはログインが必要です。また、予約の確定後、参加者全員の氏名とメールアドレスを登録します。"
+    },
+    "Can I rent a meeting room or event space at CCIFJ?": {
+      "question": "CCIFJの会議室やイベントスペースを借りられますか？",
+      "answer": "はい。CCIFJは東京・日本橋にある多目的イベント・会議室「L’Espace@CCIFJ」を提供しています。セミナー、企業プレゼンテーション、交流会、役員会などにご利用いただけます。希望日をお知らせいただければ空き状況を確認します。"
+    },
+    "How can I set up a company in Japan through CCIFJ?": {
+      "question": "CCIFJを通じて日本で会社を設立するには？",
+      "answer": "CCIFJの企業支援チーム（Appui aux Entreprises）は、フランスおよび欧州企業向けに、会社設立、住所貸し・ビジネスセンター、市場調査、VAT還付などを支援しています。appui.entreprises@ccifj.or.jp へ連絡するか、事業開発問い合わせフォームをご利用ください。"
+    },
+    "How do I post a job offer or find candidates through CCIFJ?": {
+      "question": "CCIFJを通じて求人を掲載したり候補者を探したりするには？",
+      "answer": "CCIFJの雇用・研修部門が求人掲載と採用を担当しています。Nicolas CHAUVET（n.chauvet@ccifj.or.jp）までお問い合わせください。求職者は、CCIFJのCVデータベース登録フォームから履歴書を登録できます。"
+    },
+    "How can I become a speaker at a CCIFJ event?": {
+      "question": "CCIFJのイベントで講演するにはどうすればよいですか？",
+      "answer": "CCIFJのイベントや会議での登壇については、イベント担当のElena SUZUKIまでお問い合わせください。メールは e.suzuki@ccifj.or.jp、電話は 03-4500-6606 です。"
+    },
+    "How can I sponsor a CCIFJ event?": {
+      "question": "CCIFJのイベントに協賛するには？",
+      "answer": "協賛については、以下までお問い合わせください。\n- **Marie OZAKI**（マネージングディレクター、イベント責任者）：m.ozaki@ccifj.or.jp\n- **Elena SUZUKI**（イベント担当）：e.suzuki@ccifj.or.jp"
+    },
+    "How do I subscribe to the CCIFJ newsletter?": {
+      "question": "CCIFJのニュースレターに登録するには？",
+      "answer": "CCIFJのニュースレターへの登録をお手伝いできます。会員向けのお知らせや企業ニュース、研修案内、@StudioCCIFJポッドキャストの新着情報があります。メールアドレスと希望するニュースレターの種類をお知らせください。"
+    },
+    "Where is the CCIFJ office located?": {
+      "question": "CCIFJのオフィスはどこにありますか？",
+      "answer": "CCIFJのオフィスは日本の東京・日本橋にあります。詳しい住所や道順は ccifj.or.jp をご確認いただくか、ナレッジベースでの検索をお申し付けください。"
+    },
+    "How can I search for French companies in Japan?": {
+      "question": "日本にあるフランス企業を検索するには？",
+      "answer": "CCIFJの650社以上の会員企業ディレクトリを、業種（IT、エネルギー、高級品、航空宇宙など）または地域（東京、関西など）で検索できます。ご希望の業種や地域をお知らせください。"
+    },
+    "How do I submit corporate news to CCIFJ?": {
+      "question": "企業ニュースをCCIFJに送るには？",
+      "answer": "企業ニュースやプレスリリースの掲載については、CCIFJ広報部（communication@ccifj.or.jp）までお問い合わせください。"
+    },
+    "What is CCIFJ?": {
+      "question": "CCIFJとは何ですか？",
+      "answer": "CCIFJ（Chambre de Commerce et d’Industrie France Japon）は、在日フランス商工会議所です。フランスと日本の企業をつなぐ二国間ビジネスプラットフォームとして、650社以上の会員企業を支援しています。"
+    }
+  }
+}
