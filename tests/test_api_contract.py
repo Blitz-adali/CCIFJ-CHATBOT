@@ -4,6 +4,10 @@ import tempfile
 import unittest
 
 os.environ.setdefault("CCIFJ_AUTH_SECRET", "test-secret-for-contract-checks-only-123456789")
+os.environ.setdefault("model_type", "qwen")
+os.environ.setdefault("model_name", "test-model")
+os.environ.setdefault("router_model_name", "test-model")
+os.environ.setdefault("COHERE_API_KEY", "test-cohere-key")
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
