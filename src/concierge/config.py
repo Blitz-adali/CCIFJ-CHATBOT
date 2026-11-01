@@ -28,6 +28,8 @@ def get_settings() -> Settings:
         raise RuntimeError("Set CCIFJ_AUTH_SECRET to a private random value of at least 32 bytes.")
     return Settings(
         auth_secret=secret,
+        # Slow local models (for example CPU Ollama) may need a longer agent turn limit.
+        agent_timeout_seconds=int(os.getenv("CCIFJ_AGENT_TIMEOUT_SECONDS", "180")),
         cors_origins=tuple(
             origin.strip() for origin in os.getenv("CCIFJ_CORS_ORIGINS", "").split(",")
             if origin.strip()
