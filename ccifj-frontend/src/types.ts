@@ -17,6 +17,14 @@ export interface PathAction {
   data?: Record<string, unknown>;
 }
 
+/** Agent-proposed button; clicking sends `prompt` as an ordinary user message. */
+export interface NextAction {
+  id: string;
+  label: string;
+  prompt: string;
+  event_id?: number;
+}
+
 export interface ChatIntent {
   code: string;
   confidence?: number;
@@ -95,6 +103,7 @@ export interface ChatResponse {
   warnings?: string[];
   pending_approvals?: PendingApproval[];
   path_actions?: PathAction[];
+  next_actions?: NextAction[];
   active_path_step?: string | null;
   path_context?: Record<string, unknown>;
   request_id?: string;

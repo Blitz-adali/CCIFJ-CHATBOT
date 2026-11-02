@@ -1,7 +1,7 @@
 [project]
 name = "42asia-hackathon"
 version = "0.1.0"
-description = "Add your description here"
+description = "Concierge chatbot to support CCIFJ website"
 readme = "README.md"
 authors = [
     { name = "Sara Ammourh", email = "saraammourh814@gmail.com" }

@@ -1,7 +1,7 @@
-import { ArrowUpRight } from 'lucide-react';
+import { ArrowUpRight, LogIn } from 'lucide-react';
 import { getCopy } from './i18n';
 import type { Locale } from './types';
-import type { PathAction } from './types';
+import type { NextAction, PathAction } from './types';
 
 export function FollowUpQuestions({
   questions = [],
@@ -10,6 +10,8 @@ export function FollowUpQuestions({
   onSelect,
   pathActions = [],
   onSelectPath,
+  nextActions = [],
+  onSelectAction,
 }: {
   questions?: string[];
   locale: Locale;
@@ -17,14 +19,22 @@ export function FollowUpQuestions({
   onSelect: (question: string) => void;
   pathActions?: PathAction[];
   onSelectPath?: (action: PathAction) => void;
+  nextActions?: NextAction[];
+  onSelectAction?: (action: NextAction) => void;
 }) {
   const uniqueQuestions = [...new Set(questions.map(question => question.trim()).filter(Boolean))].slice(0, 3);
-  if (!uniqueQuestions.length && !pathActions.length) return null;
+  const actions = nextActions.filter(action => action.label?.trim() && (action.id === 'auth.login' || action.prompt?.trim())).slice(0, 2);
+  if (!uniqueQuestions.length && !pathActions.length && !actions.length) return null;
 
   return (
     <section className="response-section follow-up-section" aria-label={getCopy(locale).suggestedQuestions}>
       <div className="section-label"><span aria-hidden="true">✦</span>{getCopy(locale).suggestedQuestions}</div>
       <div className="follow-up-list">
+        {actions.map((action, index) => (
+          <button key={`next:${action.id}:${action.event_id ?? index}`} type="button" disabled={disabled} onClick={() => onSelectAction?.(action)}>
+            <span>{action.label}</span>{action.id === 'auth.login' ? <LogIn size={15} aria-hidden="true" /> : <ArrowUpRight size={15} aria-hidden="true" />}
+          </button>
+        ))}
         {uniqueQuestions.map(question => (
           <button key={question} type="button" disabled={disabled} onClick={() => onSelect(question)}>
             <span>{question}</span><ArrowUpRight size={15} aria-hidden="true" />
