@@ -174,12 +174,20 @@ async def chat(
         thread_id = f"api:session:{conversation.session_id}:turn:{message.message_id}"
         # Snapshot the data needed by the agent and release its read transaction.
         user_id = conversation.user_id
+        # Reload every turn so a booking made earlier in the conversation shows up.
+        try:
+            user_context = await crud.load_user_context(session, user_id)
+        except Exception:
+            # The agent still answers without a profile; it just isn't personalized.
+            logger.exception("Could not load the user context for session %s", conversation.session_id)
+            user_context = None
         await session.commit()
         active_turns.add(conversation.session_id)
         locale_token = response_locale.set(body.locale)
         inputs_token = agent_inputs.set({
             "context": files, "agent_message": agent_message,
             "out_of_scope_count": state.get("out_of_scope_count", 0),
+            "user_context": user_context,
         })
         try:
             async with asyncio.timeout(get_settings().agent_timeout_seconds):

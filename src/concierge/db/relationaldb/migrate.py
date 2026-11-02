@@ -27,10 +27,15 @@ def main() -> None:
         p = sub.add_parser(action)
         p.add_argument("revision", nargs="?", default="head" if action == "upgrade" else "-1")
     sub.add_parser("current")
+    sub.add_parser("seed-demo", help="Create demo member and non-member accounts.")
     p = sub.add_parser("revision")
     p.add_argument("-m", "--message", required=True)
     p.add_argument("--autogenerate", action="store_true")
     args = parser.parse_args()
+    if args.action == "seed-demo":
+        from .seed import main as seed_main
+        seed_main()
+        return
     config = migration_config()
     if args.action == "revision":
         command.revision(config, message=args.message, autogenerate=args.autogenerate)

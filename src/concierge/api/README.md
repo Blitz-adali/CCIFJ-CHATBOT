@@ -219,6 +219,18 @@ Agent answers also include `path_actions` that offer these journeys when the
 conversation is about events or spaces, and `intent.code` with the routed
 specialist domains.
 
+### Next actions
+
+For signed-in users, every agent turn loads the user's profile (membership,
+upcoming bookings and space reservations, newsletter status) and passes it to
+the agent as `user_context`. Agent answers include up to two `next_actions`,
+`{"id", "label", "prompt", "event_id"?}`, with `id` one of `event.view`,
+`event.book`, `events.browse`, `space.book`, `membership.join`,
+`membership.benefits`, `newsletter.subscribe`, `contact.staff`, or
+`auth.login`. Send `prompt` back as an ordinary chat message, not as
+`path_step_id`. `auth.login` opens sign-in instead. `next_actions` is empty
+while an approval is pending.
+
 ### Attachments
 
 Chat requests accept up to four `attachments` per request

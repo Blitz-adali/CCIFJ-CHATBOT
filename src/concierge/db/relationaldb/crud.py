@@ -12,6 +12,7 @@ from .models import (
     Booking,
     BookingStatus,
     ChatSession,
+    Belongs,
     Event,
     EventLanguage,
     Member,
@@ -727,3 +728,95 @@ async def add_subscription(
             return False
         raise
     return True
+
+
+# ---------- User context (agent personalization) ----------
+
+def _schedule_text(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def _amount_text(amount) -> str:
+    return str(int(amount)) if amount == amount.to_integral_value() else str(amount)
+
+
+async def load_user_context(session: AsyncSession, user_id: Optional[int]) -> Optional[dict]:
+    """The signed-in user's profile in the shape the agent reads, or None for guests.
+
+    Membership uses the user's first linked company. Bookings and reservations are
+    upcoming confirmed rows in Japan time, soonest first.
+    """
+    if user_id is None:
+        return None
+    user = await session.get(User, user_id)
+    if user is None:
+        return None
+    now = _now()
+
+    result = await session.exec(
+        select(Member, MemberCategory)
+        .join(Belongs, col(Belongs.member_id) == col(Member.member_id))
+        .join(MemberCategory, col(Member.category_id) == col(MemberCategory.category_id), isouter=True)
+        .where(Belongs.user_id == user_id)
+        .order_by(col(Member.member_id))
+    )
+    row = result.first()
+    membership = None
+    if row is not None:
+        member, category = row
+        membership = {
+            "company": member.name,
+            "tier": category.category_name if category else None,
+            "annual_price": _amount_text(category.annual_price) if category else None,
+            "currency": category.currency if category else None,
+        }
+
+    result = await session.exec(
+        select(Event)
+        .join(Booking, col(Booking.event_id) == col(Event.event_id))
+        .where(
+            Booking.user_id == user_id,
+            Booking.status == BookingStatus.confirmed,
+            col(Event.start_at) >= now,
+        )
+        .order_by(col(Event.start_at))
+        .limit(5)
+    )
+    bookings = [
+        {"event_id": event.event_id, "title": event.title, "start_at": _schedule_text(event.start_at)}
+        for event in result.all()
+    ]
+
+    result = await session.exec(
+        select(SpaceReservation)
+        .where(
+            SpaceReservation.user_id == user_id,
+            SpaceReservation.status == ReservationStatus.confirmed,
+            col(SpaceReservation.end_at) >= now,
+        )
+        .order_by(col(SpaceReservation.start_at))
+        .limit(3)
+    )
+    reservations = [
+        {
+            "reservation_id": item.reservation_id,
+            "title": item.title,
+            "start_at": _schedule_text(item.start_at),
+            "end_at": _schedule_text(item.end_at),
+        }
+        for item in result.all()
+    ]
+
+    result = await session.exec(
+        select(Subscription.user_email)
+        .where(Subscription.user_email == _normalize_subscription_email(user.email))
+        .limit(1)
+    )
+    return {
+        "name": user.name,
+        "email": user.email,
+        "membership": membership,
+        "upcoming_bookings": bookings,
+        "upcoming_space_reservations": reservations,
+        "newsletter_subscribed": result.first() is not None,
+    }

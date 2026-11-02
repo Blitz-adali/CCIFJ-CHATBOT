@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 response_locale = ContextVar("api_response_locale", default="en")
 response_events = ContextVar("api_response_events", default=None)
-# Per-turn extras: {"context": [...], "agent_message": str | None, "out_of_scope_count": int}
+# Per-turn extras: {"context": [...], "agent_message": str | None, "out_of_scope_count": int,
+# "user_context": dict | None}
 agent_inputs = ContextVar("api_agent_inputs", default=None)
 
 LOGIN_REQUIRED = {
@@ -61,8 +62,30 @@ APPROVAL_PROMPTS = {
 }
 
 
+NEXT_ACTION_IDS = {
+    "event.view", "event.book", "events.browse", "space.book", "membership.join",
+    "membership.benefits", "newsletter.subscribe", "contact.staff", "auth.login",
+}
+
+
 class ApprovalStateUnavailable(Exception):
     pass
+
+
+def next_actions(result) -> list[dict]:
+    """Proactive buttons from the agent; the client sends each prompt as a user message."""
+    actions = []
+    for action in result.get("next_actions") or []:
+        if not isinstance(action, dict) or action.get("id") not in NEXT_ACTION_IDS:
+            continue
+        label, prompt = action.get("label"), action.get("prompt")
+        if not isinstance(label, str) or not label.strip() or not isinstance(prompt, str) or not prompt.strip():
+            continue
+        item = {"id": action["id"], "label": label.strip(), "prompt": prompt.strip()}
+        if isinstance(action.get("event_id"), int):
+            item["event_id"] = action["event_id"]
+        actions.append(item)
+    return actions[:2]
 
 
 def _text(content) -> str:
@@ -145,6 +168,7 @@ class AgentBackend:
             "user_id": str(user_id) if user_id is not None else None,
             "context": list(inputs.get("context") or []),
             "out_of_scope_count": int(inputs.get("out_of_scope_count") or 0),
+            "user_context": inputs.get("user_context"),
         }
         config = self.config(thread_id)
         queue = response_events.get()
@@ -208,6 +232,8 @@ class AgentBackend:
 
         locale = response_locale.get()
         approvals = self.pending(result)
+        # A pending approval (even a guest's dropped one) must be answered first.
+        actions_for_turn = [] if approvals else next_actions(result)
         messages = result.get("messages", [])
         # Only consider this turn: history contains earlier assistant replies.
         latest_human = next(
@@ -245,6 +271,7 @@ class AgentBackend:
             "suggested_questions": suggested, "warnings": warnings,
             "intent": {"code": intent} if intent else None,
             "path_actions": path_actions_for(user_text, reply, suggested, locale),
+            "next_actions": actions_for_turn,
             "attachment_count": len(result.get("context") or []),
             "agent_state": {"out_of_scope_count": int(result.get("out_of_scope_count") or 0)},
         }
