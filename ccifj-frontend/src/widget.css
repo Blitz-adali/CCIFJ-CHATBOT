@@ -68,7 +68,7 @@
 .widget-thread > [role=log] { width: min(100%,var(--chat-width)); margin: 0 auto; }
 .widget-turn { width: 100%; margin: 0 0 28px; font-size: 15px; line-height: 1.8; }
 .widget-turn.user { display: flex; flex-direction: column; align-items: flex-end; }
-.widget-bubble { overflow-wrap: anywhere; color: #244152; }
+.widget-bubble { overflow-wrap: anywhere; color: #244152; text-align: start; }
 .widget-turn.user .widget-bubble { max-width: min(85%,650px); padding: 13px 20px; border-radius: 22px 22px 5px 22px; background: #073f69; color: #fff; white-space: pre-wrap; }
 .widget-turn.assistant .widget-bubble { padding: 4px 0; }
 .widget-bubble a { color: #00669b; text-decoration: underline; text-underline-offset: 3px; }
@@ -108,11 +108,17 @@
 .section-label { display: flex; align-items: center; gap: 6px; margin-bottom: 9px; color: #73838d; font-size: 11px; font-weight: 600; }
 .section-label > span { color: #e50046; }
 .action-list, .follow-up-list { display: grid; gap: 8px; }
-.action-card, .follow-up-list button { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid #d8dfde; border-radius: 13px; background: #faf8f4; color: #174965; text-align: left; font-size: 13px; }
+.action-card, .follow-up-list button { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid #d8dfde; border-radius: 13px; background: #faf8f4; color: #174965; text-align: start; font-size: 13px; }
 .action-card:hover, .follow-up-list button:hover:not(:disabled) { border-color: #8caaba; background: #fffdf9; }
 .action-heading { font-size: 13px; font-weight: 600; }
 .action-content p { margin: 4px 0 0; color: #6c808a; font-size: 12px; line-height: 1.5; }
 .follow-up-list button svg { flex: none; color: #a24f67; }
+/* "Do something" buttons stand out; "ask something" questions read as lighter links. */
+.follow-up-list button.next-action { border-color: #073f69; background: #073f69; color: #fff; font-weight: 600; }
+.follow-up-list button.next-action:hover:not(:disabled) { border-color: #0b5288; background: #0b5288; }
+.follow-up-list button.next-action svg { color: #fff; }
+.follow-up-list button.follow-up-question { padding: 8px 4px; border-color: transparent; background: transparent; color: #00669b; }
+.follow-up-list button.follow-up-question:hover:not(:disabled) { border-color: transparent; background: transparent; text-decoration: underline; text-underline-offset: 3px; }
 .widget-thinking { display: flex; align-items: center; gap: 12px; width: min(800px,100%); margin: 4px auto 20px; padding: 12px; border-radius: 13px; background: #e6e9e6; color: #486575; }
 .thinking-badge { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 11px; background: #d4e1e8; color: #07558a; }
 .thinking-copy { display: grid; flex: 1; gap: 4px; min-width: 0; }
@@ -133,7 +139,7 @@
 .answer-markdown ul, .answer-markdown ol { padding-left: 1.5em; }
 .answer-markdown li { margin: .25em 0; }
 .answer-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 12px 0; font-size: .92em; }
-.answer-markdown th, .answer-markdown td { padding: 8px; border: 1px solid #ced9dc; text-align: left; }
+.answer-markdown th, .answer-markdown td { padding: 8px; border: 1px solid #ced9dc; text-align: start; }
 .answer-markdown th { background: #e5ebec; color: #214b63; }
 .answer-markdown blockquote { margin: 12px 0; padding: 5px 13px; border-left: 3px solid #b35970; color: #607481; background: #f7f4ef; }
 .answer-markdown pre { overflow: auto; padding: 12px; border-radius: 10px; background: #e5e8e5; font-size: .9em; }

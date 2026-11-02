@@ -45,55 +45,16 @@ def reply_metadata(body, thread_id, extra=()):
     return metadata
 
 
-def _kept_metadata(row):
-    """Agent state stored beside a reply survives presentation rewrites."""
-    return [item for item in row.tool_calls or [] if item.get("type") == "agent_state"]
-
-
 async def save_reply(session, chat, token, result, thread_id):
     result = dict(result)
     agent_state = result.pop("agent_state", None)
     extra = [{"type": "agent_state", **agent_state}] if agent_state else []
     result["pending_approvals"] = normalize_approvals(result.get("pending_approvals"))
     body = ChatResponse(session_id=token, **result)
-    row = await crud.add_message(session, chat.session_id, MessageRole.assistant, body.reply, reply_metadata(body, thread_id, extra))
+    await crud.add_message(session, chat.session_id, MessageRole.assistant, body.reply, reply_metadata(body, thread_id, extra))
     # add_message refreshes the row after its commit, opening another read transaction.
     await session.commit()
-    return body, row
-
-
-async def present_saved_reply(session, backend, body, row, thread_id, locale):
-    """Presentation is optional; completed agent results are already durable."""
-    if not hasattr(backend, "present_result"):
-        return body
-    locale_token = response_locale.set(locale)
-    try:
-        try:
-            async with asyncio.timeout(30):
-                result = await backend.present_result(body.model_dump(exclude={"session_id"}))
-            rendered = ChatResponse(session_id=body.session_id, **result)
-        except Exception:
-            logger.warning("Answer presentation failed; keeping the saved agent result", exc_info=True)
-            warning = {
-                "en": "Language formatting is unavailable. The original answer is shown; no action was repeated.",
-                "fr": "La mise en forme linguistique est indisponible. La réponse originale est affichée ; aucune action n’a été répétée.",
-                "ja": "言語変換を利用できないため、元の回答を表示しています。操作は再実行されていません。",
-            }[locale]
-            rendered = body.model_copy(update={"warnings": [*body.warnings, warning]})
-        # This acquires a connection only for the short result update. A failed
-        # update cannot remove the raw reply committed before presentation.
-        try:
-            row.content = rendered.reply
-            row.tool_calls = reply_metadata(rendered, thread_id, _kept_metadata(row))
-            session.add(row)
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            logger.exception("Could not store presentation; the original result remains saved")
-            return body
-        return rendered
-    finally:
-        response_locale.reset(locale_token)
+    return body
 
 
 async def extract_uploads(uploads):
@@ -153,7 +114,7 @@ async def chat(
                 # Guided steps are fixed, read-only lookups: no agent, no presentation pass.
                 await crud.add_message(session, conversation.session_id, MessageRole.user, body.message)
                 direct.update(request_id=body.request_id, attachment_count=len(files))
-                result, _ = await save_reply(session, conversation, token, direct, None)
+                result = await save_reply(session, conversation, token, direct, None)
                 response.headers["Cache-Control"] = "no-store"
                 return result
         agent_message = space_booking_agent_message(body) if body.path_step_id == "spaces.submit" else None
@@ -193,7 +154,7 @@ async def chat(
             async with asyncio.timeout(get_settings().agent_timeout_seconds):
                 result = await backend.chat(history, user_id, thread_id)
             result["request_id"] = body.request_id
-            result, saved = await save_reply(session, conversation, token, result, thread_id)
+            result = await save_reply(session, conversation, token, result, thread_id)
         except asyncio.CancelledError:
             await crud.add_message(session, conversation.session_id, MessageRole.assistant,
                 "The connection ended. Check the request outcome before continuing.",
@@ -214,7 +175,6 @@ async def chat(
             active_turns.discard(conversation.session_id)
             response_locale.reset(locale_token)
             agent_inputs.reset(inputs_token)
-        result = await present_saved_reply(session, backend, result, saved, thread_id, body.locale)
         response.headers["Cache-Control"] = "no-store"
         return result
 
@@ -246,7 +206,7 @@ async def approve(
             async with asyncio.timeout(get_settings().agent_timeout_seconds):
                 result = await backend.resume(pending["thread_id"], body.interrupt_id, body.decision)
             result["request_id"] = body.request_id
-            result, saved = await save_reply(session, conversation, session_id, result, pending["thread_id"])
+            result = await save_reply(session, conversation, session_id, result, pending["thread_id"])
             await crud.update_message_metadata(session, latest, None)
         except ApprovalStateUnavailable as exc:
             await crud.update_message_metadata(session, latest, original_metadata)
@@ -259,7 +219,6 @@ async def approve(
         finally:
             active_turns.discard(conversation.session_id)
             response_locale.reset(locale_token)
-        result = await present_saved_reply(session, backend, result, saved, pending["thread_id"], body.locale)
         response.headers["Cache-Control"] = "no-store"
         return result
 
