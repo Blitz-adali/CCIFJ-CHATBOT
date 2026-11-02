@@ -42,9 +42,9 @@ Request (unknown fields are rejected):
 - `locale`: `en`, `fr` or `ja`.
 - `path_step_id`, `path_event_id`, `path_context`: optional guided-journey fields. Selecting a starter path or a `path_actions` button sends its `id`, `event_id` and `data`. When a response has `active_path_step`, the next free-text message continues that step with the returned `path_context` (for example the space-availability date range).
 
-The backend returns the answer as `reply`; `api.ts` normalizes it to `answer` for the UI. Other fields: `mode` (`agent` or `guided_path`), `intent`, `suggested_questions` (up to three), `sources`, `actions` (HTTPS links), `warnings`, `pending_approvals`, `path_actions`, `next_actions` (agent-proposed buttons; clicking one sends its `prompt` as a normal message, and `auth.login` opens sign-in), `active_path_step`, `path_context`, `attachment_count`, `request_id`.
+The backend returns the answer as `reply`; `api.ts` normalizes it to `answer` for the UI. Other fields: `mode` (`agent` or `guided_path`), `intent`, `suggested_questions` (in the UI locale; together with `next_actions`, at most three), `sources`, `actions` (HTTPS links), `warnings`, `pending_approvals`, `path_actions`, `next_actions` (agent-proposed buttons; clicking one sends its `prompt` as a normal message, and `auth.login` opens sign-in), `active_path_step`, `path_context`, `attachment_count`, `request_id`.
 
-The stream emits `progress` (`{"messages": [...]}` localized labels for the concierge, specialist agents and tools), `delta`, `result` (the chat response) and `error` (`status`, `message`, and possibly `outcome_unknown`).
+The stream emits `progress` (`{"messages": [...]}` localized labels for the concierge, specialist agents and tools), `delta` (reserved; not emitted today, the answer arrives in `result`), `result` (the chat response) and `error` (`status`, `message`, and possibly `outcome_unknown`).
 
 ## Authentication and approvals
 

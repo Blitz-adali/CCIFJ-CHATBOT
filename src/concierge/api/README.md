@@ -90,15 +90,17 @@ existing model environment variables and service before using `/chat`.
 Every route is also available under `/api/v1`. The React frontend uses that prefix.
 `GET /status` provides JSON process health; `GET /suggestions` reads the same
 predefined question catalog used by the agents without loading any models.
-Chat and approval decisions accept `locale` (`en`, `fr`, `ja`). The API adapter
-uses the existing configured text model, without tools, for a final presentation
-pass in that language. Neither the agent graph nor RAG code is changed.
+Chat and approval decisions accept `locale` (`en`, `fr`, `ja`), the UI language.
+The agent answers in the language of the user's message, whatever it is, and the
+API returns that answer unchanged; there is no second model call. Suggested
+questions, guided paths, and fixed texts (approval, login, warnings) use `locale`.
 
 `POST /chat/stream` accepts the same body and authorization as `/chat`, and emits
 SSE `progress`, `delta`, `result`, and `error` events. The result contains the normal chat
 response. Errors after the stream starts carry `status` and `message` in the event.
-`delta` contains public answer text chunks from the presentation pass. Internal
-agent/tool streams are not exposed.
+The answer currently arrives whole in `result`; `delta` (public answer text
+chunks) is reserved for streaming and is not emitted today. Internal agent/tool
+streams are not exposed.
 
 `WS /chat/ws` starts with a JSON authentication frame: `{}` for guests or
 `{"access_token":"<token>"}` for accounts. Wait for `{"type":"ready"}`, then send
@@ -215,9 +217,9 @@ sends the selected space, time, and the user's description to the agent,
 which prepares a `book_space` action for approval; guests are asked to sign
 in. The selected space is re-checked for availability before submission.
 
-Agent answers also include `path_actions` that offer these journeys when the
-conversation is about events or spaces, and `intent.code` with the routed
-specialist domains.
+Agent answers include `intent.code` with the routed specialist domains. Their
+`path_actions` is always empty: guided journeys start from the welcome screen's
+starter paths.
 
 ### Next actions
 
@@ -229,7 +231,9 @@ the agent as `user_context`. Agent answers include up to two `next_actions`,
 `membership.benefits`, `newsletter.subscribe`, `contact.staff`, or
 `auth.login`. Send `prompt` back as an ordinary chat message, not as
 `path_step_id`. `auth.login` opens sign-in instead. `next_actions` is empty
-while an approval is pending.
+while an approval is pending. An answer shows at most three buttons: the
+actions first, then `suggested_questions` (localized to `locale`) in the
+remaining slots.
 
 ### Attachments
 

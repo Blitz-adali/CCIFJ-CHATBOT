@@ -48,17 +48,6 @@ def starter_paths(locale: str) -> list[dict]:
     ]
 
 
-def path_actions_for(user_text: str, reply: str, suggested: list[str], locale: str) -> list[dict]:
-    """Offer guided journeys related to an agent answer."""
-    related = " ".join([user_text, reply, *suggested]).casefold()
-    actions = []
-    if any(term in related for term in ("room", "space", "meeting", "salle", "会場", "部屋")):
-        actions.append({"id": "spaces.start", "label": space_paths()["spaces.start"]["labels"][locale]})
-    if any(term in related for term in ("event", "ticket", "événement", "billet", "イベント", "チケット")):
-        actions.append({"id": "events.upcoming", "label": event_paths()["events.upcoming"]["labels"][locale]})
-    return actions
-
-
 def _guided(reply: str, intent: str, **extra) -> dict:
     return {"mode": "guided_path", "reply": reply, "intent": {"code": intent}, **extra}
 

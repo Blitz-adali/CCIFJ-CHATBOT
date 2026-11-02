@@ -222,42 +222,28 @@ class ApiContractTest(unittest.TestCase):
         self.assertEqual(history["turn_status"], "unknown")
         self.assertEqual(self.client.post("/api/v1/chat", json={"session_id": token, "message": "retry"}).status_code, 409)
 
-    def test_presentation_failure_keeps_completed_approval_and_allows_next_turn(self):
-        async def failed_presentation(result):
-            raise RuntimeError("Presentation model offline")
-        self.backend.present_result = failed_presentation
-        token = self.client.post("/api/v1/chat", json={"message": "book"}).json()["session_id"]
-        result = self.client.post(f"/api/v1/sessions/{token}/approvals", json={
-            "interrupt_id": "approval-1", "decision": "approve", "request_id": "approved-once",
-        })
-        self.assertEqual(result.status_code, 200)
-        self.assertEqual(result.json()["reply"], "Decision: approve")
-        self.assertTrue(result.json()["warnings"])
-        history = self.client.get(f"/api/v1/sessions/{token}/messages").json()
-        self.assertEqual(history["turn_status"], "ready")
-        self.assertEqual(history["pending_approvals"], [])
-        self.assertEqual(history["last_request_id"], "approved-once")
-        self.assertTrue(history["messages"][-1]["response"]["warnings"])
-        self.assertEqual(self.client.post("/api/v1/chat", json={"message": "continue", "session_id": token}).status_code, 200)
-
-    def test_agent_and_presentation_do_not_hold_database_connections(self):
+    def test_agent_does_not_hold_database_connections(self):
         original_chat, original_resume = self.backend.chat, self.backend.resume
-        presentation_connections = []
         async def checked_chat(*args):
             self.assertEqual(self.engine.pool.checkedout(), 0)
             return await original_chat(*args)
         async def checked_resume(*args):
             self.assertEqual(self.engine.pool.checkedout(), 0)
             return await original_resume(*args)
-        async def checked_presentation(result):
-            presentation_connections.append(self.engine.pool.checkedout())
-            return result
-        self.backend.chat, self.backend.resume, self.backend.present_result = checked_chat, checked_resume, checked_presentation
+        self.backend.chat, self.backend.resume = checked_chat, checked_resume
         token = self.client.post("/api/v1/chat", json={"message": "book"}).json()["session_id"]
         result = self.client.post(f"/api/v1/sessions/{token}/approvals", json={"interrupt_id": "approval-1", "decision": "reject"})
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.json()["warnings"], [])
-        self.assertEqual(presentation_connections, [0, 0])
+
+    def test_answer_is_returned_in_the_agent_language_without_rewriting(self):
+        async def arabic_reply(*args):
+            return {"reply": "مرحبا بكم في غرفة التجارة"}
+        self.backend.chat = arabic_reply
+        result = self.client.post("/api/v1/chat", json={"message": "مرحبا", "locale": "en"})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["reply"], "مرحبا بكم في غرفة التجارة")
+        self.assertEqual(result.json()["warnings"], [])
 
     def test_idle_authenticated_websockets_release_the_single_connection(self):
         from contextlib import ExitStack
@@ -272,26 +258,6 @@ class ApiContractTest(unittest.TestCase):
             self.assertEqual(response.status_code, 201)
         login = self.client.post("/api/v1/auth/login", json={"email": "idle@example.com", "password": "x" * 200})
         self.assertEqual(login.status_code, 200)
-
-    def test_disconnect_during_presentation_preserves_completed_raw_answer(self):
-        import asyncio
-        from threading import Event
-        started = Event()
-        async def waiting(result):
-            started.set()
-            await asyncio.Event().wait()
-        self.backend.present_result = waiting
-        token = self.client.post("/api/v1/sessions").json()["session_id"]
-        with self.client.websocket_connect("/api/v1/chat/ws") as socket:
-            socket.send_json({})
-            self.assertEqual(socket.receive_json()["type"], "ready")
-            socket.send_json({"session_id": token, "message": "hello", "request_id": "durable"})
-            self.assertEqual(socket.receive_json()["type"], "progress")
-            self.assertTrue(started.wait(3))
-        history = self.client.get(f"/api/v1/sessions/{token}/messages").json()
-        self.assertEqual(history["turn_status"], "ready")
-        self.assertEqual(history["last_request_id"], "durable")
-        self.assertEqual(history["messages"][-1]["content"], "Hello")
 
     def test_sse_transmits_answer_deltas_and_error_context(self):
         from concierge.api.agent_backend import response_events
@@ -435,7 +401,7 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await self.backend.format_result(result)
 
-    async def test_intent_path_actions_scope_state_and_guest_approvals(self):
+    async def test_intent_scope_state_and_guest_approvals(self):
         from langchain_core.messages import AIMessage, HumanMessage
         from concierge.api.agent_backend import response_locale
         result = {
@@ -446,7 +412,7 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         formatted = await self.backend.format_result(result)
         self.assertEqual(formatted["intent"], {"code": "events"})
         self.assertEqual(formatted["suggested_questions"], ["a", "b", "c"])
-        self.assertEqual(formatted["path_actions"][0]["id"], "events.upcoming")
+        self.assertEqual(formatted["path_actions"], [])
         self.assertEqual(formatted["agent_state"], {"out_of_scope_count": 2})
         self.assertEqual(formatted["attachment_count"], 1)
         self.assertEqual(formatted["sources"][0]["url"], "https://www.ccifj.or.jp/en/events.html")
@@ -475,8 +441,32 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
             {"id": "event.book", "label": "Book Networking Night", "prompt": "I want to book a ticket for event ID 12", "event_id": 12},
             {"id": "auth.login", "label": "Log in", "prompt": "I want to log in"},
         ])
+        self.assertEqual(formatted["suggested_questions"], [])
         pending = await self.backend.format_result({**result, "__interrupt__": [{"interrupt_id": "i", "action_requests": [{"name": "book_space", "args": {}}]}]}, guest=True)
         self.assertEqual(pending["next_actions"], [])
+
+    async def test_suggestions_use_the_ui_locale_and_fill_up_to_three_buttons(self):
+        from langchain_core.messages import AIMessage, HumanMessage
+        from concierge.api.agent_backend import response_locale
+        question = "What events are coming up at CCIFJ?"
+        result = {
+            "messages": [HumanMessage("What networking events are coming up?"), AIMessage("Networking Night is on Friday.")],
+            "next_actions": [
+                {"id": "event.book", "label": "Book", "prompt": "I want to book a ticket for event ID 12", "event_id": 12},
+                {"id": "events.browse", "label": "Browse", "prompt": "Show me more events"},
+            ],
+            "suggested_questions": [question, "Not in the catalog?"],
+        }
+        token = response_locale.set("fr")
+        try:
+            with_actions = await self.backend.format_result(result)
+            questions_only = await self.backend.format_result({**result, "next_actions": []})
+        finally:
+            response_locale.reset(token)
+        self.assertEqual(len(with_actions["next_actions"]), 2)
+        self.assertEqual(with_actions["suggested_questions"], ["Quels sont les prochains événements de la CCIFJ ?"])
+        self.assertEqual(with_actions["path_actions"], [])
+        self.assertEqual(questions_only["suggested_questions"], ["Quels sont les prochains événements de la CCIFJ ?", "Not in the catalog?"])
 
 
 class UserContextTest(unittest.IsolatedAsyncioTestCase):
@@ -542,37 +532,6 @@ class ProgressTrackerTest(unittest.TestCase):
         tool = tracker.update({"event": "on_tool_start", "name": "search_vectordb", "run_id": "t", "metadata": {}})
         self.assertEqual(tool[0], "Searching CCIFJ website and knowledge base information…")
         self.assertIsNone(tracker.update({"event": "on_tool_start", "name": "internal_helper", "run_id": "u", "metadata": {}}))
-
-
-class PresentationTest(unittest.IsolatedAsyncioTestCase):
-    async def test_api_language_renderer_streams_selected_language_without_tools(self):
-        import sys
-        from types import ModuleType, SimpleNamespace
-        from unittest.mock import patch
-        from concierge.api.agent_backend import AgentBackend, response_locale, response_events
-        import asyncio
-        class Model:
-            async def astream(self, messages):
-                self.messages = messages
-                for text in ("Bonjour ", "[CCIFJ](https://www.ccifj.or.jp/en/)"):
-                    yield SimpleNamespace(content=text)
-        model = Model()
-        module = ModuleType("concierge.agents.model")
-        module.llm = model
-        queue = asyncio.Queue()
-        locale = response_locale.set("fr")
-        events = response_events.set(queue)
-        try:
-            with patch.dict(sys.modules, {"concierge.agents.model": module}):
-                backend = AgentBackend.__new__(AgentBackend)
-                result = await backend.present_result({"reply": "Hello", "pending_approvals": [], "suggested_questions": []})
-            self.assertIn("French", model.messages[0]["content"])
-            self.assertEqual(result["sources"], [{"title": "CCIFJ", "url": "https://www.ccifj.or.jp/en/"}])
-            self.assertEqual(result["actions"][0]["type"], "external_link")
-            self.assertEqual(queue.get_nowait()["text"], "Bonjour ")
-        finally:
-            response_locale.reset(locale)
-            response_events.reset(events)
 
 
 if __name__ == "__main__":
