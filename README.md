@@ -59,6 +59,12 @@ Custom triggers and data migrations must be maintained explicitly in revisions;
 if rebuilding `space_reservation`, recreate its reservation guards afterward.
 Use `uv run concierge-db current` to inspect the installed revision.
 
+For demo personalization, `uv run concierge-db seed-demo` creates two member
+accounts and one non-member account (password `ccifj-demo-2026`). It links the
+members to member companies and gives those companies a tier when they have
+none. The first member also gets an upcoming booking and a newsletter
+subscription. Running it again changes nothing.
+
 Back up the database before deploying schema changes. Apply migrations once
 before starting server workers. Existing installations must have the original
 baseline schema; incompatible older schemas need an explicit upgrade revision.

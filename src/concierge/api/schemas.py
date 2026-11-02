@@ -52,6 +52,8 @@ class ChatResponse(SessionResponse):
     actions: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     path_actions: list[dict[str, Any]] = Field(default_factory=list)
+    # Agent-proposed buttons: {"id", "label", "prompt", "event_id"?}; sent back as plain messages.
+    next_actions: list[dict[str, Any]] = Field(default_factory=list)
     active_path_step: str | None = None
     path_context: dict[str, Any] = Field(default_factory=dict)
     attachment_count: int = 0

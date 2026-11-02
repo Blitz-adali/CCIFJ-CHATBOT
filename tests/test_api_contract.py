@@ -21,6 +21,8 @@ from concierge.db.relationaldb.session import get_session
 
 class FakeAgent:
     async def chat(self, history, user_id, thread_id):
+        from concierge.api.agent_backend import agent_inputs
+        self.user_context = (agent_inputs.get() or {}).get("user_context")
         if history[-1].content == "fail":
             raise RuntimeError("Simulated uncertain action")
         if history[-1].content == "book":
@@ -65,6 +67,27 @@ class ApiContractTest(unittest.TestCase):
     def tearDown(self):
         self.client_context.__exit__(None, None, None)
         self.directory.cleanup()
+
+    def test_user_context_is_loaded_for_each_turn(self):
+        self.client.post("/api/v1/chat", json={"message": "hi"})
+        self.assertIsNone(self.backend.user_context)
+        account = {"name": "Test", "email": "context@example.com", "password": "password123"}
+        self.client.post("/api/v1/auth/register", json=account)
+        login = self.client.post("/api/v1/auth/login", json={k: account[k] for k in ("email", "password")})
+        headers = {"Authorization": "Bearer " + login.json()["access_token"]}
+        first = self.client.post("/api/v1/chat", json={"message": "hi"}, headers=headers)
+        self.assertEqual(self.backend.user_context["email"], "context@example.com")
+        self.assertFalse(self.backend.user_context["newsletter_subscribed"])
+        self.assertEqual(first.json()["next_actions"], [])
+
+        async def subscribe():
+            from concierge.db.relationaldb import crud
+            from concierge.db.relationaldb.models import SubscriptionType
+            async with AsyncSession(self.engine, expire_on_commit=False) as session:
+                await crud.add_subscription(session, "context@example.com", SubscriptionType.newsletter)
+        self.client.portal.call(subscribe)
+        self.client.post("/api/v1/chat", json={"message": "again", "session_id": first.json()["session_id"]}, headers=headers)
+        self.assertTrue(self.backend.user_context["newsletter_subscribed"])
 
     def test_health_catalog_and_auth(self):
         self.assertEqual(self.client.get("/api/v1/health").text, "ok")
@@ -434,6 +457,78 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
             response_locale.reset(token)
         self.assertEqual(guest["pending_approvals"], [])
         self.assertIn("ログイン", guest["reply"])
+
+    async def test_next_actions_are_filtered_and_hidden_during_approvals(self):
+        from langchain_core.messages import AIMessage, HumanMessage
+        result = {
+            "messages": [HumanMessage("Any events?"), AIMessage("Networking Night is on Friday.")],
+            "next_actions": [
+                {"id": "run.sql", "label": "Unknown", "prompt": "drop"},
+                {"id": "event.book", "label": " Book Networking Night ", "prompt": "I want to book a ticket for event ID 12", "event_id": 12},
+                {"id": "membership.join", "label": "Join", "prompt": ""},
+                {"id": "auth.login", "label": "Log in", "prompt": "I want to log in"},
+                {"id": "contact.staff", "label": "Contact staff", "prompt": "Contact staff"},
+            ],
+        }
+        formatted = await self.backend.format_result(result)
+        self.assertEqual(formatted["next_actions"], [
+            {"id": "event.book", "label": "Book Networking Night", "prompt": "I want to book a ticket for event ID 12", "event_id": 12},
+            {"id": "auth.login", "label": "Log in", "prompt": "I want to log in"},
+        ])
+        pending = await self.backend.format_result({**result, "__interrupt__": [{"interrupt_id": "i", "action_requests": [{"name": "book_space", "args": {}}]}]}, guest=True)
+        self.assertEqual(pending["next_actions"], [])
+
+
+class UserContextTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.engine = create_async_engine(f"sqlite+aiosqlite:///{self.directory.name}/test.db")
+        async with self.engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+
+    async def asyncTearDown(self):
+        await self.engine.dispose()
+        self.directory.cleanup()
+
+    async def test_profile_shape_membership_and_upcoming_items(self):
+        from datetime import timedelta
+        from decimal import Decimal
+        from concierge.db.relationaldb import crud, models
+        now = crud._now().replace(second=0, microsecond=0)
+        async with AsyncSession(self.engine, expire_on_commit=False) as session:
+            self.assertIsNone(await crud.load_user_context(session, None))
+            member_user = models.User(name="Sara Martin", email="sara@example.com")
+            guest_user = models.User(name="Non Member", email="other@example.com")
+            category = models.MemberCategory(category_name="Premium", category_description="", annual_price=Decimal("250000.00"))
+            space = models.Space(name="Room A")
+            session.add_all([member_user, guest_user, category, space])
+            await session.flush()
+            company = models.Member(name="ACME KK", category_id=category.category_id)
+            events = [models.Event(title=f"Event {i}", description="", category="tech", start_at=now + timedelta(days=i, hours=1)) for i in range(-1, 7)]
+            session.add_all([company, *events])
+            await session.flush()
+            session.add(models.Belongs(user_id=member_user.user_id, member_id=company.member_id))
+            for event in events:
+                session.add(models.Booking(user_id=member_user.user_id, event_id=event.event_id))
+            session.add(models.Booking(user_id=member_user.user_id, event_id=events[1].event_id, status=models.BookingStatus.cancelled))
+            for hours in (-3, 1, 2, 3, 4):
+                session.add(models.SpaceReservation(space_id=space.space_id, user_id=member_user.user_id, title=f"Meeting {hours}",
+                    start_at=now + timedelta(hours=hours * 10), end_at=now + timedelta(hours=hours * 10 + 2)))
+            session.add(models.Subscription(user_email="sara@example.com", sub_type=models.SubscriptionType.newsletter))
+            await session.commit()
+
+            context = await crud.load_user_context(session, member_user.user_id)
+            self.assertEqual(set(context), {"name", "email", "membership", "upcoming_bookings", "upcoming_space_reservations", "newsletter_subscribed"})
+            self.assertEqual(context["membership"], {"company": "ACME KK", "tier": "Premium", "annual_price": "250000", "currency": "JPY"})
+            self.assertEqual([b["title"] for b in context["upcoming_bookings"]], ["Event 0", "Event 1", "Event 2", "Event 3", "Event 4"])
+            self.assertEqual(context["upcoming_bookings"][0]["start_at"], (now + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M"))
+            self.assertEqual([r["title"] for r in context["upcoming_space_reservations"]], ["Meeting 1", "Meeting 2", "Meeting 3"])
+            self.assertTrue(context["newsletter_subscribed"])
+
+            other = await crud.load_user_context(session, guest_user.user_id)
+            self.assertIsNone(other["membership"])
+            self.assertEqual(other["upcoming_bookings"], [])
+            self.assertFalse(other["newsletter_subscribed"])
 
 
 class ProgressTrackerTest(unittest.TestCase):

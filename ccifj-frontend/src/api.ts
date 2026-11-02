@@ -97,6 +97,7 @@ function normalizeResponse(raw: unknown): ChatResponse {
     actions: Array.isArray(body.actions) ? body.actions : [],
     warnings: Array.isArray(body.warnings) ? body.warnings : [],
     path_actions: Array.isArray(body.path_actions) ? body.path_actions : [],
+    next_actions: Array.isArray(body.next_actions) ? body.next_actions : [],
   };
 }
 
