@@ -913,7 +913,7 @@ async def submit_staff_request(
     message: str,
     sender_name: str,
     sender_email: str,
-    recipient_email: Optional[str] = None,
+    recipient_emails: Optional[list[str]] = None,
 ) -> str:
     """
     Store a message for CCIFJ staff, written together with the user.
@@ -924,9 +924,10 @@ async def submit_staff_request(
 
     Use it when:
     - No contact was found for the user's request: store a 'team_ticket' that
-      the CCIFJ team will study (leave recipient_email empty).
+      the CCIFJ team will study (leave recipient_emails empty).
     - A CCIFJ contact exists (from get_ccifj_contact): store a 'staff_email'
-      addressed to that contact (set recipient_email).
+      addressed to that contact (set recipient_emails, with every contact
+      in the draft's To line).
     - The concierge cannot complete a reasonable request itself (for example,
       registration closed before the event, booking changes, refunds).
 
@@ -938,13 +939,14 @@ async def submit_staff_request(
         message: The full message body agreed with the user.
         sender_name: The user's name.
         sender_email: The user's email address, used by staff to reply.
-        recipient_email: The CCIFJ contact's email for a 'staff_email'.
+        recipient_emails: Every CCIFJ contact email in the draft's To line,
+            for a 'staff_email'.
 
     Returns:
         The stored request reference, or what is missing.
     """
     sender_email = sender_email.strip()
-    recipient_email = (recipient_email or "").strip() or None
+    recipients = list(dict.fromkeys(email.strip() for email in recipient_emails or [] if email.strip()))
     missing = [
         label
         for label, value in (("subject", subject), ("message", message), ("sender name", sender_name))
@@ -954,12 +956,15 @@ async def submit_staff_request(
         return f"Staff request not stored: missing {', '.join(missing)}. Ask the user for it."
     if not _EMAIL_PATTERN.match(sender_email):
         return "Staff request not stored: the sender email is invalid. Ask the user for a valid email."
-    if request_type == "staff_email" and not (recipient_email and _EMAIL_PATTERN.match(recipient_email)):
-        return "Staff request not stored: a staff_email needs the CCIFJ contact's email as recipient_email."
+    if request_type == "staff_email" and not recipients:
+        return "Staff request not stored: a staff_email needs the CCIFJ contact emails as recipient_emails."
+    invalid = [email for email in recipients if not _EMAIL_PATTERN.match(email)]
+    if invalid:
+        return f"Staff request not stored: invalid recipient email(s): {', '.join(invalid)}."
 
     # Mock response until the staff_request table exists (see tickets/).
     reference = f"MOCK-{japan_now():%Y%m%d%H%M%S}"
-    recipient = recipient_email or "the CCIFJ team"
+    recipient = ", ".join(recipients) or "the CCIFJ team"
     return (
         f"Staff request stored. Reference: {reference}. "
         f"Type: {request_type}; category: {category}; addressed to {recipient}. "
