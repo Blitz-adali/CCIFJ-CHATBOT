@@ -186,6 +186,61 @@ def _validate_next_actions(actions: list[NextAction], state: dict, findings: str
     return valid[:2]
 
 
+_REFERENCED_EVENTS_PATTERN = re.compile(r"\[Event IDs from the events database this turn: ([^\]]*)\]")
+
+_BOOKING_ACTION_TEXT = {
+    "en": ("Book this event", "I want to book a ticket for {title} (event ID {id}).",
+           "Sign in to book", "I want to sign in to book {title}."),
+    "fr": ("Réserver cet événement", "Je souhaite réserver un billet pour {title} (événement ID {id}).",
+           "Se connecter pour réserver", "Je souhaite me connecter pour réserver {title}."),
+    "ja": ("このイベントを予約", "{title}（イベントID {id}）のチケットを予約したいです。",
+           "ログインして予約", "{title}を予約するためにログインしたいです。"),
+}
+
+
+async def _with_booking_action(actions: list[dict], state: dict, findings: str) -> list[dict]:
+    """When the answer covers exactly one bookable event, make sure the first button
+    is a booking step. The model sometimes offers an email or a website login
+    instead (event records carry their own contact and registration links)."""
+    if any(action["id"] in {"event.book", "auth.login"} for action in actions):
+        return actions
+    match = _REFERENCED_EVENTS_PATTERN.search(findings)
+    event_ids = {int(m) for m in re.findall(r"ID (\d+)", match.group(1))} if match else set()
+    if len(event_ids) != 1:
+        return actions
+    event_id = event_ids.pop()
+
+    from .tools import _registration_problem
+    from ..db.relationaldb import crud
+    from ..db.relationaldb.session import AsyncSessionLocal
+    try:
+        async with AsyncSessionLocal() as session:
+            event = await crud.get_event(session, event_id)
+    except Exception:
+        logger.exception("Could not check event %s for a booking action", event_id)
+        return actions
+    if event is None or _registration_problem(event):
+        return actions
+
+    book_label, book_prompt, login_label, login_prompt = _BOOKING_ACTION_TEXT.get(
+        state.get("lang"), _BOOKING_ACTION_TEXT["en"]
+    )
+    if state.get("user_id") is None:
+        action = {"id": "auth.login", "label": login_label,
+                  "prompt": login_prompt.format(title=event.title), "event_id": None}
+    else:
+        user_context = state.get("user_context") if isinstance(state.get("user_context"), dict) else {}
+        booked = {
+            booking.get("event_id") for booking in user_context.get("upcoming_bookings") or []
+            if isinstance(booking, dict)
+        }
+        if event_id in booked:
+            return actions
+        action = {"id": "event.book", "label": book_label,
+                  "prompt": book_prompt.format(title=event.title, id=event_id), "event_id": event_id}
+    return [action, *actions][:2]
+
+
 #############################
 #>>>>> Orchestrator Node <<<<#
 #############################
@@ -468,18 +523,7 @@ async def events_node(state: AgentState, config: RunnableConfig = None) -> dict:
     response_text = ""
     for msg in reversed(new_messages):
         if isinstance(msg, AIMessage) and msg.content:
-            content = msg.content
-            if isinstance(content, str):
-                response_text = content
-            elif isinstance(content, list):
-                # Some models (including Luna) return text as content blocks.
-                response_text = "\n".join(
-                    block.get("text", "")
-                    for block in content
-                    if isinstance(block, dict)
-                    and block.get("type") == "text"
-                    and isinstance(block.get("text"), str)
-                )
+            response_text = _message_text(msg.content)
             if response_text.strip():
                 break
 
@@ -500,7 +544,7 @@ async def events_node(state: AgentState, config: RunnableConfig = None) -> dict:
 
     if not response_text and new_messages:
         last_m = new_messages[-1]
-        response_text = getattr(last_m, "content", "")
+        response_text = _message_text(getattr(last_m, "content", ""))
 
     if not isinstance(response_text, str) or not response_text.strip():
         locale = state.get("lang", "en")
@@ -511,8 +555,42 @@ async def events_node(state: AgentState, config: RunnableConfig = None) -> dict:
         }.get(locale, "I can help with event tickets. Which event would you like to attend? To place a booking, I’ll need the attendee details and your confirmation.")
 
     return {
-        "worker_results": {"events": response_text},
+        "worker_results": {"events": response_text + _referenced_events(new_messages)},
     }
+
+
+def _message_text(content) -> str:
+    """Plain text of a model message. Some models (including Luna) return a list
+    of content blocks, mixing text with reasoning blocks that must not leak."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
+        )
+    return ""
+
+
+_TOOL_EVENT_PATTERN = re.compile(r"\[ID (\d+)\] ([^|\n]+)")
+
+
+def _referenced_events(messages: list) -> str:
+    """Event IDs from this turn's tool results. Worker summaries often drop the
+    IDs, and the collector needs them to propose event.view / event.book."""
+    found: dict[str, str] = {}
+    for message in messages:
+        if isinstance(message, ToolMessage) and isinstance(message.content, str):
+            for event_id, title in _TOOL_EVENT_PATTERN.findall(message.content):
+                found.setdefault(event_id, title.strip())
+    if not found:
+        return ""
+    return "\n\n[Event IDs from the events database this turn: " + "; ".join(
+        f"ID {event_id} = {title}" for event_id, title in list(found.items())[:10]
+    ) + "]"
 
 
 def _anonymous_ticket_request(messages: list) -> bool:
@@ -555,12 +633,13 @@ async def membership_node(state: AgentState, config: RunnableConfig = None) -> d
     response_text = ""
     for msg in reversed(new_messages):
         if isinstance(msg, AIMessage) and msg.content:
-            response_text = msg.content
-            break
+            response_text = _message_text(msg.content)
+            if response_text.strip():
+                break
 
     if not response_text and new_messages:
         last_m = new_messages[-1]
-        response_text = getattr(last_m, "content", "")
+        response_text = _message_text(getattr(last_m, "content", ""))
 
     return {
         "worker_results": {"membership": response_text},
@@ -591,12 +670,13 @@ async def general_node(state: AgentState, config: RunnableConfig = None) -> dict
     response_text = ""
     for msg in reversed(new_messages):
         if isinstance(msg, AIMessage) and msg.content:
-            response_text = msg.content
-            break
+            response_text = _message_text(msg.content)
+            if response_text.strip():
+                break
 
     if not response_text and new_messages:
         last_m = new_messages[-1]
-        response_text = getattr(last_m, "content", "")
+        response_text = _message_text(getattr(last_m, "content", ""))
 
     return {
         "worker_results": {"general": response_text},
@@ -660,6 +740,7 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
             if len(kept) < len(proposed):
                 # WARNING so it shows with the default logging setup.
                 logger.warning("next_actions filtered: proposed=%s kept=%s", proposed, kept)
+            next_actions = await _with_booking_action(next_actions, state, findings)
     except Exception:
         logger.exception("Structured collector synthesis failed; falling back to plain text")
 
@@ -788,7 +869,12 @@ def get_pending_approvals(result: dict) -> list[dict]:
     for interrupt_item in result.get("__interrupt__", ()):
         value = getattr(interrupt_item, "value", interrupt_item)
         interrupt_id = getattr(interrupt_item, "id", None)
-        if isinstance(value, dict):
+        if isinstance(value, dict) and "action_requests" not in value and "name" in value:
+            # Per-call approvals arrive flat ({"type": "tool_approval", "name", "args"});
+            # the API and UI read the action_requests list, so present them that way.
+            action = {"name": value["name"], "args": value.get("args") or {}}
+            pending.append({"interrupt_id": interrupt_id, **value, "action_requests": [action]})
+        elif isinstance(value, dict):
             pending.append({"interrupt_id": interrupt_id, **value})
         else:
             pending.append({"interrupt_id": interrupt_id, "value": value})

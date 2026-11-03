@@ -44,7 +44,7 @@ User ──► React chat ──► FastAPI ──► LangGraph agents ──►
 | **Contacts** | Gives the right CCIFJ person for events, speaking, sponsorship, BONJOUR FRANCE, membership, corporate news, market entry, and recruitment, and always offers to write the email together. |
 | **Staff requests** | Writes an email to a CCIFJ contact, or a ticket for the CCIFJ team when no contact fits. It revises the draft with the user and stores it after the user approves. |
 | **Newsletter** | Subscribes the user to general news, training announcements, or the @StudioCCIFJ podcast, after approval. |
-| **Files** | Reads text from attached PDFs and images, with OCR in English, French, and Japanese. |
+| **Files** | Reads attached PDFs, images (PNG, JPEG), Word documents (DOCX), and text files, with OCR in English, French, and Japanese for scans and images. Up to 4 files per conversation, 5 MB each. The text goes to the agent as context; the chat only shows the file name. |
 | **Personal touch** | Knows the date and the signed-in user's bookings, membership, and newsletter status. It can remind them of an event coming up soon or suggest one that matches their interests. |
 | **Safety** | Keeps to CCIFJ topics and refuses unrelated requests. It treats tool results and documents as data, not instructions. Every database write needs explicit approval. |
 
@@ -77,7 +77,7 @@ flowchart LR
 | Agents | LangGraph, LangChain (`create_agent`, `HumanInTheLoopMiddleware`) |
 | Models | OpenAI chat models (default), or local Qwen through Ollama |
 | Retrieval | Chroma + `intfloat/multilingual-e5-small` embeddings, BM25 (`bm25s`), Cohere `rerank-v4.0-fast` |
-| Files | pypdf, pypdfium2, Pillow, Tesseract (`eng+fra+jpn`) |
+| Files | pypdf, pypdfium2, Pillow, Tesseract (`eng+fra+jpn`), built-in DOCX and UTF-8 text reading |
 | Tracing | LangSmith (optional) |
 
 ---
@@ -232,6 +232,21 @@ sequenceDiagram
     API-->>FE: answer
 ```
 
+The approval card shows exactly what will happen before the user confirms:
+
+| Action | The card shows |
+|---|---|
+| Book tickets | Event title, date, venue, price, registration deadline, and every attendee |
+| Reserve a room | Space, start and end, title, attendees |
+| Newsletter | The email and the newsletter name |
+| Staff request | Type, To, From, Subject, and the full message |
+| Cancel | The booking or reservation that will be cancelled |
+| Change | Current → new, as one change |
+
+Event and room details come from the database, not from the model. Booking,
+room, newsletter, cancel, and change approvals need login. Guests can approve
+staff requests only.
+
 The paused state is kept in memory (`MemorySaver`), so run the API with **one
 worker**.
 
@@ -275,6 +290,13 @@ Dear Ms. Funabashi and Ms. Barges,
 ```
 ````
 
+The chat shows each draft as an email or ticket card with a Copy button. When
+the user agrees, the request is saved in the `staff_request` table (one
+`staff_request_recipient` row per contact), linked to the user (if signed in)
+and the conversation. The user gets a reference such as `SR-2026-000001`.
+Before the first draft, the concierge asks which language to write it in,
+recommending English, French, or Japanese.
+
 Requests are only stored for staff to review. No email is sent automatically.
 
 ---
@@ -305,8 +327,11 @@ always answer in the user's language.
 
 For a signed-in user, the API loads a small profile on every turn
 (`crud.load_user_context`): name, email, membership (company and tier),
-newsletter status, upcoming bookings, and upcoming room reservations. Every
-prompt also gets the current date and time in Japan and the turn number.
+newsletter status, upcoming bookings (with days until each one), upcoming room
+reservations, **interests** (the event categories they book most), and up to two
+**recommended events** (upcoming, registration open, in those categories, not
+yet booked). Every prompt also gets the current date and time in Japan and the
+turn number.
 
 The concierge uses this to:
 - avoid offering what the user already has (joining when already a member,
@@ -421,8 +446,9 @@ This creates two member accounts and one non-member account (password
 `ccifj-demo-2026`). The first member also gets an upcoming booking and a
 newsletter subscription. Running it again changes nothing.
 
-> The first message after the server starts is slower (about 12–18 s), because
-> the agent and search models load on first use. See ticket 07.
+> The API loads the agent and search models in the background when it starts
+> (about 12–18 s). `GET /status` returns `"agent_ready": true` once they are
+> loaded. A message sent before that waits for loading to finish.
 
 ---
 
@@ -456,7 +482,7 @@ Every route is available both at the root and under `/api/v1`. Full reference:
 
 | Method | Route | Purpose |
 |---|---|---|
-| `GET` | `/health`, `/status` | Health and readiness |
+| `GET` | `/health`, `/status` | Health; `/status` also reports `agent_ready` |
 | `GET` | `/suggestions?locale=` | Catalog questions and guided-path starters for the welcome screen |
 | `POST` | `/auth/register`, `/auth/login` | Create an account or sign in |
 | `GET` | `/auth/me` | Current user |
@@ -477,7 +503,8 @@ Every route is available both at the root and under `/api/v1`. Full reference:
 SQLite (`src/concierge/db/relationaldb/system.db`), with these tables:
 `user`, `user_auth`, `session`, `message`, `event`, `event_language`,
 `booking`, `ticket`, `member`, `member_category`, `belongs`, `speaker`,
-`speaks_at`, `subscription`, `contact_us`, `space`, `space_reservation`.
+`speaks_at`, `subscription`, `contact_us`, `space`, `space_reservation`,
+`staff_request`, `staff_request_recipient`.
 
 ### Schema updates
 
@@ -532,23 +559,41 @@ cd ccifj-frontend && npm test
 
 ## Current limitations and tickets
 
+### Open tickets
+
 Open work outside the agent is described in [`tickets/`](tickets/):
 
 | Ticket | Summary |
 |---|---|
-| [01](tickets/01-frontend-send-attachments-to-backend.md) | The frontend puts extracted file text into the message; it should send the files to the backend instead. |
-| [02](tickets/02-frontend-suggested-question-card-style.md) | Suggested-question buttons look like broken cards. |
-| [03](tickets/03-backend-staff-request-table-and-approval.md) | Staff requests: database table (currently a mock reference) and approvals for guests. |
-| [04](tickets/04-frontend-approval-card-details.md) | Approval cards should show every detail for space, newsletter, and staff requests. |
-| [05](tickets/05-frontend-render-email-and-ticket-drafts.md) | Show email and ticket drafts as their own card. |
-| [06](tickets/06-backend-user-context-interests.md) | Add interests and recommended events to the user profile. |
-| [07](tickets/07-backend-preload-agent-at-startup.md) | Load the agent when the server starts, to remove the first-message delay. |
-| [08](tickets/08-approval-cards-for-cancel-and-change.md) | Approval cards and messages for cancelling and changing bookings (currently generic text and raw details). |
+| [09](tickets/09-frontend-answer-paragraphs-merge.md) | Separate paragraphs in an answer show up joined on one line (`compactMarkdown` in `AnswerText.tsx` removes blank lines). |
 
-Other known limits:
+### Done
+
+Tickets 01–08 were implemented in PR #6 (backend and frontend support for the agent):
+
+| Ticket | What changed |
+|---|---|
+| 01 | Files are sent to the backend and passed to the agent as context; DOCX and text files are supported. |
+| 02 | Suggested questions show as outlined cards, different from the filled action buttons. |
+| 03 | Staff requests are stored in `staff_request` with real references; guests can approve them. |
+| 04 | Approval cards show every detail for bookings, rooms, newsletter, and staff requests. |
+| 05 | Email and ticket drafts show as their own card with a Copy button. |
+| 06 | The user profile includes interests and recommended events. |
+| 07 | The agent loads at server start; `/status` reports `agent_ready`. |
+| 08 | Approval messages and cards for cancelling and changing bookings. |
+
+### Other known limits
+- Event booking, room reservations, newsletter, cancel, and change require
+  login. Guests can browse, check availability, and send staff requests.
 - Conversation and approval state live in memory: restarting the API forgets
   paused approvals, and the API must run with one worker.
 - The concierge can't cancel or change a booking once it has started, take
   payments, or issue refunds. It offers to write to staff instead.
 - CCIFJ contacts are written into `get_ccifj_contact`; the `contact_us` table
   isn't used yet.
+- The model usually follows the conversation rules, but not always: it may
+  occasionally write a draft before asking for the language, or word buttons
+  differently. Code-level checks enforce the important parts (button rules,
+  approvals, booking step for a single event).
+- Five older frontend tests (`locale.test.tsx`, `WidgetChat.test.tsx`) fail
+  because they check site text that has since changed.
