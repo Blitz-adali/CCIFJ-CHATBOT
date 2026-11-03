@@ -1,3 +1,4 @@
+import re
 from collections import Counter
 from datetime import datetime, time
 from typing import Literal, Optional
@@ -32,6 +33,12 @@ def _get_retriever():
     if _retriever is None:
         _retriever = bm25s.BM25.load(str(INDEX_PATH), load_corpus=True)
     return _retriever
+
+
+def warm_up() -> None:
+    """Load the search models now so the first knowledge-base question does not wait."""
+    _get_embed_model()
+    _get_retriever()
 
 #################################################
 #
@@ -638,37 +645,71 @@ async def list_available_industries_and_regions() -> str:
 @tool
 def get_ccifj_contact(
     topic: Literal[
+        "events",
         "become_speaker",
         "become_sponsor",
+        "bonjour_france",
+        "membership",
         "corporate_news",
         "japanese_market_support",
         "recruitment_and_hr",
     ],
 ) -> str:
     """
-    Retrieve direct contact person details (name, title, email, phone number) 
+    Retrieve direct contact person details (name, title, email, phone number)
     for specific CCIFJ inquiries.
 
     Use this tool when the user wants to:
+    - Ask about a CCIFJ event, registration problems, or late registration.
     - Inquire about becoming a speaker at CCIFJ events or conferences.
     - Sponsor CCIFJ events, summits, or business forums.
+    - Learn about BONJOUR FRANCE, the starting point for companies that want to work in Japan.
+    - Ask about CCIFJ membership, joining, dues, or member services.
     - Share corporate news or press releases with CCIFJ media.
     - Ask questions about entering or developing in the Japanese market.
     - Inquire about recruitment, hiring, posting job offers, or HR services.
 
     Args:
         topic: The specific subject of inquiry. Must be one of:
+            - 'events': General event questions, registration issues, late registration (Elena SUZUKI).
             - 'become_speaker': Inquire about speaking at events (Elena SUZUKI).
             - 'become_sponsor': Inquire about sponsorship opportunities (Marie OZAKI & Elena SUZUKI).
-            - 'corporate_news': Submit or share corporate news with CCIFJ (Communication Dept).
+            - 'bonjour_france': BONJOUR FRANCE, the starting point for companies that want to work in Japan (Mayu HANDA).
+            - 'membership': Membership, joining, dues, and member services (Tomoyo FUNABASHI & Marianne BARGES).
+            - 'corporate_news': Submit or share corporate news with CCIFJ (Communication Dept & Marianne BARGES).
             - 'japanese_market_support': Advisory & support for French companies entering the Japanese market.
-            - 'recruitment_and_hr': Inquiries regarding job postings, recruitment, and HR support (Nicolas CHAUVET).
+            - 'recruitment_and_hr': Inquiries regarding job postings, recruitment, and HR support (Nicolas CHAUVET & Haruka KOBAYASHI).
 
     Returns:
         Verified contact details including the officer name, title, email address,
         and telephone number where available.
     """
     contacts = {
+        "events": (
+            "Contact for CCIFJ Events (registration and event questions):\n"
+            "- Name: Elena SUZUKI\n"
+            "- Role: Events Officer\n"
+            "- Phone: 03-4500-6606\n"
+            "- Email: e.suzuki@ccifj.or.jp"
+        ),
+        "bonjour_france": (
+            "Contact for BONJOUR FRANCE (starting point for companies that want to work in Japan):\n"
+            "- Name: Mayu HANDA\n"
+            "- Role: Director, BONJOUR FRANCE\n"
+            "- Phone: 03-4500-6530\n"
+            "- Email: m.handa@ccifj.or.jp"
+        ),
+        "membership": (
+            "Contacts for CCIFJ Membership:\n"
+            "1. Tomoyo FUNABASHI\n"
+            "   - Role: Membership Manager\n"
+            "   - Phone: 03-4500-6644\n"
+            "   - Email: t.funabashi@ccifj.or.jp\n"
+            "2. Marianne BARGES\n"
+            "   - Role: Membership Associate Manager & Communication Coordinator\n"
+            "   - Phone: 03-4500-6522\n"
+            "   - Email: m.barges@ccifj.or.jp"
+        ),
         "become_speaker": (
             "Contact for Event Speakers:\n"
             "- Name: Elena SUZUKI\n"
@@ -688,9 +729,13 @@ def get_ccifj_contact(
             "   - Email: e.suzuki@ccifj.or.jp"
         ),
         "corporate_news": (
-            "Contact for Sharing Corporate News:\n"
-            "- Department: Communication Department\n"
-            "- Email: communication@ccifj.or.jp"
+            "Contacts for Sharing Corporate News:\n"
+            "1. Communication Department\n"
+            "   - Email: communication@ccifj.or.jp\n"
+            "2. Marianne BARGES\n"
+            "   - Role: Membership Associate Manager & Communication Coordinator\n"
+            "   - Phone: 03-4500-6522\n"
+            "   - Email: m.barges@ccifj.or.jp"
         ),
         "japanese_market_support": (
             "Contact for Japanese Market Entry & Business Support:\n"
@@ -699,10 +744,15 @@ def get_ccifj_contact(
             "- Note: For commercial inquiries, users can also submit the Business Development Form."
         ),
         "recruitment_and_hr": (
-            "Contact for Recruitment & Job Offers:\n"
-            "- Name: Nicolas CHAUVET\n"
-            "- Department: Employment & Training Department\n"
-            "- Email: n.chauvet@ccifj.or.jp\n"
+            "Contacts for Recruitment & Job Offers (Employment & Training Department):\n"
+            "1. Nicolas CHAUVET\n"
+            "   - Role: Responsable Recrutement (Recruitment Manager)\n"
+            "   - Phone: 03-4500-6521\n"
+            "   - Email: n.chauvet@ccifj.or.jp\n"
+            "2. Haruka KOBAYASHI\n"
+            "   - Role: Recruitment Officer\n"
+            "   - Phone: 03-4500-6529\n"
+            "   - Email: h.kobayashi@ccifj.or.jp\n"
             "- Note: Job seekers can also register their resume via the CV Database form."
         ),
     }
@@ -841,6 +891,85 @@ async def subscribe_newsletter(
     return (
         f"Successfully subscribed '{email.strip()}' to {desc}. "
         f"The user will receive future updates directly at this email address."
+    )
+
+
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+@tool
+async def submit_staff_request(
+    request_type: Literal["staff_email", "team_ticket"],
+    category: Literal[
+        "events",
+        "membership",
+        "business_support",
+        "recruitment_and_hr",
+        "media_and_news",
+        "booking_change_or_refund",
+        "other",
+    ],
+    subject: str,
+    message: str,
+    sender_name: str,
+    sender_email: str,
+    recipient_emails: Optional[list[str]] = None,
+) -> str:
+    """
+    Store a message for CCIFJ staff, written together with the user.
+
+    Use this tool only after the user has reviewed the final draft (subject and
+    message) and explicitly agreed to send it. Guests may use it; a login is
+    not required.
+
+    Use it when:
+    - No contact was found for the user's request: store a 'team_ticket' that
+      the CCIFJ team will study (leave recipient_emails empty).
+    - A CCIFJ contact exists (from get_ccifj_contact): store a 'staff_email'
+      addressed to that contact (set recipient_emails, with every contact
+      in the draft's To line).
+    - The concierge cannot complete a reasonable request itself (for example,
+      registration closed before the event, booking changes, refunds).
+
+    Args:
+        request_type: 'staff_email' when addressed to a known CCIFJ contact,
+            'team_ticket' when no contact exists and the team must review it.
+        category: The subject area of the request.
+        subject: One-line subject agreed with the user.
+        message: The full message body agreed with the user.
+        sender_name: The user's name.
+        sender_email: The user's email address, used by staff to reply.
+        recipient_emails: Every CCIFJ contact email in the draft's To line,
+            for a 'staff_email'.
+
+    Returns:
+        The stored request reference, or what is missing.
+    """
+    sender_email = sender_email.strip()
+    recipients = list(dict.fromkeys(email.strip() for email in recipient_emails or [] if email.strip()))
+    missing = [
+        label
+        for label, value in (("subject", subject), ("message", message), ("sender name", sender_name))
+        if not value.strip()
+    ]
+    if missing:
+        return f"Staff request not stored: missing {', '.join(missing)}. Ask the user for it."
+    if not _EMAIL_PATTERN.match(sender_email):
+        return "Staff request not stored: the sender email is invalid. Ask the user for a valid email."
+    if request_type == "staff_email" and not recipients:
+        return "Staff request not stored: a staff_email needs the CCIFJ contact emails as recipient_emails."
+    invalid = [email for email in recipients if not _EMAIL_PATTERN.match(email)]
+    if invalid:
+        return f"Staff request not stored: invalid recipient email(s): {', '.join(invalid)}."
+
+    # Mock response until the staff_request table exists (see tickets/).
+    reference = f"MOCK-{japan_now():%Y%m%d%H%M%S}"
+    recipient = ", ".join(recipients) or "the CCIFJ team"
+    return (
+        f"Staff request stored. Reference: {reference}. "
+        f"Type: {request_type}; category: {category}; addressed to {recipient}. "
+        f"CCIFJ staff will reply to {sender_email}. "
+        "No email has been sent yet; staff review stored requests."
     )
 
 
