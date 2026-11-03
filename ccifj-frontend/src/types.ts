@@ -1,6 +1,13 @@
 export type Locale = "en" | "fr" | "ja";
 export type ApiMode = string;
 
+/** A file sent inline; the server extracts its text for the agent. */
+export interface AttachmentUpload {
+  name: string;
+  mime_type: string;
+  data_base64: string;
+}
+
 export interface ChatRequest {
   session_id: string | null;
   message: string;
@@ -8,6 +15,7 @@ export interface ChatRequest {
   path_step_id?: string;
   path_event_id?: string;
   path_context?: Record<string, unknown>;
+  attachments?: AttachmentUpload[];
 }
 
 export interface PathAction {

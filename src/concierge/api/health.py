@@ -3,6 +3,7 @@ from typing import Literal
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
+from .agent_backend import agent_ready
 from .catalog import catalog_questions
 from .paths import starter_paths
 
@@ -16,7 +17,8 @@ async def health() -> str:
 
 @router.get("/status")
 async def status():
-    return {"status": "ok", "mode": "live"}
+    # agent_ready turns true once startup warm-up has loaded the agent and models.
+    return {"status": "ok", "mode": "live", "agent_ready": agent_ready()}
 
 
 @router.get("/suggestions")

@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 from typing import Optional, Sequence
+from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy import func, update
@@ -23,7 +24,11 @@ from .models import (
     Space,
     SpaceReservation,
     Speaker,
+    StaffRequest,
+    StaffRequestRecipient,
+    StaffRequestType,
     SpeaksAt,
+    ContactUs,
     Subscription,
     SubscriptionType,
     Ticket,
@@ -744,7 +749,9 @@ async def load_user_context(session: AsyncSession, user_id: Optional[int]) -> Op
     """The signed-in user's profile in the shape the agent reads, or None for guests.
 
     Membership uses the user's first linked company. Bookings and reservations are
-    upcoming confirmed rows in Japan time, soonest first.
+    upcoming confirmed rows in Japan time, soonest first. Interests are the event
+    categories the user books most; recommended events are open, unbooked events
+    in those categories (or simply the next open events without booking history).
     """
     if user_id is None:
         return None
@@ -783,7 +790,49 @@ async def load_user_context(session: AsyncSession, user_id: Optional[int]) -> Op
         .limit(5)
     )
     bookings = [
-        {"event_id": event.event_id, "title": event.title, "start_at": _schedule_text(event.start_at)}
+        {
+            "event_id": event.event_id,
+            "title": event.title,
+            "start_at": _schedule_text(event.start_at),
+            "category": event.category,
+            "location": event.location,
+            "days_until": (event.start_at.date() - now.date()).days,
+        }
+        for event in result.all()
+    ]
+
+    # Past and upcoming confirmed bookings; ties go to the most recently attended category.
+    result = await session.exec(
+        select(Event.category)
+        .join(Booking, col(Booking.event_id) == col(Event.event_id))
+        .where(Booking.user_id == user_id, Booking.status == BookingStatus.confirmed)
+        .group_by(col(Event.category))
+        .order_by(func.count().desc(), func.max(Event.start_at).desc())
+        .limit(3)
+    )
+    interests = list(result.all())
+
+    booked = (
+        select(Booking.event_id)
+        .where(Booking.user_id == user_id, Booking.status == BookingStatus.confirmed)
+    )
+    stmt = select(Event).where(
+        col(Event.start_at) > now,
+        (col(Event.reg_deadline).is_(None)) | (col(Event.reg_deadline) > now),
+        col(Event.event_id).not_in(booked),
+    )
+    if interests:
+        stmt = stmt.where(col(Event.category).in_(interests))
+    result = await session.exec(stmt.order_by(col(Event.start_at)).limit(2))
+    recommended = [
+        {
+            "event_id": event.event_id,
+            "title": event.title,
+            "category": event.category,
+            "start_at": _schedule_text(event.start_at),
+            "reg_deadline": _schedule_text(event.reg_deadline) if event.reg_deadline else None,
+            "location": event.location,
+        }
         for event in result.all()
     ]
 
@@ -819,4 +868,74 @@ async def load_user_context(session: AsyncSession, user_id: Optional[int]) -> Op
         "upcoming_bookings": bookings,
         "upcoming_space_reservations": reservations,
         "newsletter_subscribed": result.first() is not None,
+        "interests": interests,
+        "recommended_events": recommended,
     }
+
+
+# ---------- Staff requests ----------
+
+async def add_staff_request(
+    session: AsyncSession,
+    *,
+    request_type: StaffRequestType,
+    category: str,
+    subject: str,
+    message: str,
+    sender_name: str,
+    sender_email: str,
+    recipient_emails: Sequence[str] = (),
+    user_id: Optional[int] = None,
+    session_id: Optional[int] = None,
+) -> StaffRequest:
+    """Store a request for CCIFJ staff with one recipient row per address. Sends nothing."""
+    request_type = StaffRequestType(request_type)
+    recipients = list(dict.fromkeys(email.strip().casefold() for email in recipient_emails if email.strip()))
+    if request_type == StaffRequestType.staff_email and not recipients:
+        raise ValueError("A staff email needs at least one recipient.")
+    if request_type == StaffRequestType.team_ticket and recipients:
+        raise ValueError("A team ticket has no recipients.")
+
+    request = StaffRequest(
+        # Unique placeholder; the readable reference needs the generated ID.
+        reference=f"pending-{uuid4().hex[:24]}",
+        request_type=request_type,
+        category=category,
+        subject=subject.strip(),
+        message=message,
+        sender_name=sender_name.strip(),
+        sender_email=sender_email.strip(),
+        user_id=user_id,
+        session_id=session_id,
+    )
+    try:
+        session.add(request)
+        await session.flush()
+        request.reference = f"SR-{japan_now().year}-{request.request_id:06d}"
+        contacts = {}
+        if recipients:
+            result = await session.exec(
+                select(ContactUs).where(func.lower(ContactUs.email).in_(recipients)).order_by(col(ContactUs.contact_id))
+            )
+            for contact in result.all():
+                contacts.setdefault(contact.email.casefold(), contact.contact_id)
+        for email in recipients:
+            session.add(StaffRequestRecipient(request_id=request.request_id, email=email, contact_id=contacts.get(email)))
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    await session.refresh(request)
+    return request
+
+
+async def get_staff_request(session: AsyncSession, reference: str) -> Optional[StaffRequest]:
+    result = await session.exec(select(StaffRequest).where(StaffRequest.reference == reference.strip()))
+    return result.first()
+
+
+async def list_staff_request_recipients(session: AsyncSession, request_id: int) -> Sequence[StaffRequestRecipient]:
+    result = await session.exec(
+        select(StaffRequestRecipient).where(StaffRequestRecipient.request_id == request_id).order_by(StaffRequestRecipient.email)
+    )
+    return result.all()

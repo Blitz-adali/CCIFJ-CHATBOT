@@ -24,4 +24,17 @@ describe('compact answer',()=>{
   expect(html).toContain('>CCIFJ</a>');
   expect(html).not.toContain('<script>');
  });
+ it('renders email and ticket drafts as cards and leaves other code fences alone',()=>{
+  const email=renderToStaticMarkup(<AnswerText locale="fr" text={'Voici le brouillon :\n\n```email\nTo: Elena SUZUKI <e.suzuki@ccifj.or.jp>\nFrom: Jane Doe <jane@example.com>\nSubject: Late registration\n\nDear Ms Suzuki,\nThank you.\n```\n\n```python\nprint(1)\n```'}/>);
+  expect(email).toContain('Brouillon d’e-mail');
+  expect(email).toContain('Elena SUZUKI &lt;e.suzuki@ccifj.or.jp&gt;');
+  expect(email).toContain('Late registration');
+  expect(email).toContain('Dear Ms Suzuki,\nThank you.');
+  expect(email).toContain('Copier');
+  expect(email).toContain('<pre><code class="language-python">');
+  const ticket=renderToStaticMarkup(<AnswerText text={'```ticket\nSubject: Refund\n\nPlease help'}/>);
+  expect(ticket).toContain('Ticket for CCIFJ team');
+  expect(ticket).toContain('is-drafting');
+  expect(ticket).toContain('Drafting…');
+ });
 });

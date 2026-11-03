@@ -8,7 +8,10 @@ thread and never replays writes.
 """
 
 import logging
+import re
+import threading
 from contextvars import ContextVar
+from datetime import datetime, time
 from functools import lru_cache
 
 from .catalog import localized_question
@@ -54,6 +57,31 @@ APPROVAL_PROMPTS = {
         "fr": "Vérifiez les détails de l’inscription à la newsletter dans la carte ci-dessous. La confirmation abonnera votre compte.",
         "ja": "下のニュースレター登録カードをご確認ください。確定するとアカウントが登録されます。",
     },
+    "submit_staff_request": {
+        "en": "Please review your message to CCIFJ staff below. Confirming will store it for the team; no email is sent automatically.",
+        "fr": "Vérifiez ci-dessous votre message au personnel de la CCIFJ. La confirmation l’enregistrera pour l’équipe ; aucun e-mail n’est envoyé automatiquement.",
+        "ja": "下のCCIFJスタッフへのメッセージをご確認ください。確定するとチーム向けに保存されます。メールは自動送信されません。",
+    },
+    "cancel_event_booking": {
+        "en": "Please check the booking below. Confirming will cancel it and all its tickets.",
+        "fr": "Vérifiez la réservation ci-dessous. La confirmation l’annulera, ainsi que tous ses billets.",
+        "ja": "下の予約をご確認ください。確定すると、この予約とすべてのチケットがキャンセルされます。",
+    },
+    "cancel_space_reservation": {
+        "en": "Please check the reservation below. Confirming will cancel it.",
+        "fr": "Vérifiez la réservation ci-dessous. La confirmation l’annulera.",
+        "ja": "下の予約をご確認ください。確定するとキャンセルされます。",
+    },
+    "change_event_booking": {
+        "en": "Please check the changes to your booking below. Confirming will update it.",
+        "fr": "Vérifiez ci-dessous les modifications de votre réservation. La confirmation la mettra à jour.",
+        "ja": "下の予約の変更内容をご確認ください。確定すると予約が更新されます。",
+    },
+    "change_space_reservation": {
+        "en": "Please check the changes to your reservation below. Confirming will update it.",
+        "fr": "Vérifiez ci-dessous les modifications de votre réservation. La confirmation la mettra à jour.",
+        "ja": "下の予約の変更内容をご確認ください。確定すると予約が更新されます。",
+    },
     None: {
         "en": "Please review the details in the action card below. Confirm only if you want this action to proceed.",
         "fr": "Vérifiez les détails dans la carte ci-dessous. Confirmez uniquement si vous souhaitez poursuivre cette action.",
@@ -61,6 +89,14 @@ APPROVAL_PROMPTS = {
     },
 }
 
+
+# Approvals a guest may answer; every other write tool needs an account.
+GUEST_APPROVAL_TOOLS = {"submit_staff_request"}
+NEWSLETTER_NAMES = {
+    "general_news": "CCIFJ General Corporate News",
+    "training_announcements": "CCIFJ Training & Workshops Announcements",
+    "podcast_studio_ccifj": "@StudioCCIFJ Podcast Newsletter",
+}
 
 NEXT_ACTION_IDS = {
     "event.view", "event.book", "events.browse", "space.book", "membership.join",
@@ -99,41 +135,168 @@ def _text(content) -> str:
 
 
 def approval_prompt(approvals, locale):
-    names = {
+    names = _action_names(approvals)
+    key = next((name for name in APPROVAL_PROMPTS if name is not None and name in names), None)
+    return APPROVAL_PROMPTS[key][locale]
+
+
+def _action_names(approvals):
+    return {
         str(action.get("name", ""))
         for item in approvals
         for action in item.get("action_requests", [])
         if isinstance(action, dict)
     }
-    key = next((name for name in ("book_event_ticket", "book_space", "subscribe_newsletter") if name in names), None)
-    return APPROVAL_PROMPTS[key][locale]
 
 
-async def enrich_ticket_approvals(approvals):
-    """Add event title/date/location to ticket approvals for the review card."""
+def _iso(value):
+    return value.isoformat() if value else None
+
+
+def _amount(value):
+    return str(value) if value is not None else None
+
+
+def _ref_id(reference):
+    """'CCIFJ-EVT-00012', '#12' or '12' -> 12, using the agent's rule (last digit group)."""
+    digits = re.findall(r"\d+", str(reference or ""))
+    return int(digits[-1]) if digits else None
+
+
+def _schedule(text, end_of_day=False):
+    """The agent's 'YYYY-MM-DD HH:MM' / 'YYYY-MM-DD' schedule argument as a datetime, or None."""
+    try:
+        value = datetime.fromisoformat(str(text).strip())
+    except (TypeError, ValueError):
+        return None
+    if end_of_day and len(str(text).strip()) == 10:
+        value = datetime.combine(value.date(), time.max)
+    return value
+
+
+def _event_card(event):
+    return {
+        "event_id": event.event_id,
+        "event_title": event.title,
+        "event_start": _iso(event.start_at),
+        "event_end": _iso(event.end_at),
+        "event_location": event.location,
+    }
+
+
+def _people(attendees):
+    people = []
+    for person in attendees or []:
+        if isinstance(person, dict):
+            people.append({key: person.get(key) for key in ("name", "email", "telephone")})
+    return people
+
+
+def _reservation_card(reservation, space):
+    return {
+        "reservation_id": reservation.reservation_id,
+        "space_name": space.name if space else None,
+        "title": reservation.title,
+        "start_at": _iso(reservation.start_at),
+        "end_at": _iso(reservation.end_at),
+        "expected_attendees": reservation.expected_attendees,
+    }
+
+
+async def _enrichment(db, name, args, user_id):
+    """Extra, read-only card fields for one pending action, or {} when nothing applies.
+
+    Bookings and reservations are only described when they belong to ``user_id``.
+    """
     from concierge.db.relationaldb import crud
+
+    if name == "book_event_ticket":
+        event = await crud.get_event(db, _ref_id(args.get("event_id")) or 0)
+        if event is None:
+            return {}
+        return {
+            **_event_card(event),
+            "price": _amount(event.price),
+            "member_price": _amount(event.member_price),
+            "non_member_price": _amount(event.non_member_price),
+            "currency": event.currency,
+            "reg_deadline": _iso(event.reg_deadline),
+            "ticket_count": len(_people(args.get("attendees"))),
+        }
+    if name == "book_space":
+        spaces = await crud.list_spaces(db)
+        wanted = str(args.get("space_name") or "").casefold()
+        space = next((s for s in spaces if s.name.casefold() == wanted), None)
+        start, end = _schedule(args.get("start_date")), _schedule(args.get("end_date"), end_of_day=True)
+        extra = {"start_at": _iso(start), "end_at": _iso(end)}
+        if space is not None:
+            # The space table has no location column; its description says where it is.
+            extra |= {"space_name": space.name, "space_capacity": space.capacity, "space_description": space.description}
+        return extra
+    if name == "subscribe_newsletter":
+        kind = args.get("newsletter_type") or "general_news"
+        return {"newsletter_name": NEWSLETTER_NAMES.get(kind, kind)}
+    if user_id is None:
+        return {}
+    if name in {"cancel_event_booking", "change_event_booking"}:
+        booking = await crud.get_booking(db, _ref_id(args.get("booking_reference")) or 0)
+        if booking is None or booking.user_id != user_id:
+            return {}
+        event = await crud.get_event(db, booking.event_id)
+        tickets = await crud.get_booking_tickets(db, user_id, booking.booking_id)
+        current = {
+            "booking_id": booking.booking_id,
+            **(_event_card(event) if event else {"event_id": booking.event_id}),
+            "attendees": [{"name": t.name, "email": t.email, "telephone": t.telephone} for t in tickets],
+        }
+        if name == "cancel_event_booking":
+            return current
+        target = event
+        new_event_id = args.get("new_event_id")
+        if new_event_id not in (None, ""):
+            target = await crud.get_event(db, _ref_id(new_event_id) or 0)
+        new = {
+            **(_event_card(target) if target else {"event_id": new_event_id}),
+            "attendees": _people(args.get("attendees")) or current["attendees"],
+        }
+        return {"current": current, "new": new}
+    if name in {"cancel_space_reservation", "change_space_reservation"}:
+        reservation = await crud.get_reservation(db, _ref_id(args.get("reservation_reference")) or 0)
+        if reservation is None or reservation.user_id != user_id:
+            return {}
+        current = _reservation_card(reservation, await crud.get_space(db, reservation.space_id))
+        if name == "cancel_space_reservation":
+            return current
+        new = dict(current)
+        if args.get("new_start_date"):
+            new["start_at"] = _iso(_schedule(args["new_start_date"]))
+        if args.get("new_end_date"):
+            new["end_at"] = _iso(_schedule(args["new_end_date"], end_of_day=True))
+        if args.get("new_title"):
+            new["title"] = str(args["new_title"]).strip()
+        if args.get("new_expected_attendees") is not None:
+            new["expected_attendees"] = args["new_expected_attendees"]
+        return {"current": current, "new": new}
+    return {}
+
+
+async def enrich_approvals(approvals, user_id=None):
+    """Add what each pending action will save or change, for the review card."""
     from concierge.db.relationaldb.session import AsyncSessionLocal
 
     for item in approvals:
         for action in item.get("action_requests", []):
-            if not isinstance(action, dict) or action.get("name") != "book_event_ticket":
-                continue
-            args = action.get("args")
-            if not isinstance(args, dict):
+            if not isinstance(action, dict) or not isinstance(action.get("args"), dict):
                 continue
             try:
                 async with AsyncSessionLocal() as db_session:
-                    event = await crud.get_event(db_session, int(args.get("event_id")))
-                if event is not None:
-                    action["args"] = {
-                        **args,
-                        "event_title": event.title,
-                        "event_start": event.start_at.isoformat() if event.start_at else None,
-                        "event_location": event.location,
-                    }
+                    extra = await _enrichment(db_session, action.get("name"), action["args"], user_id)
             except Exception:
-                # The approval card can still show the event ID.
-                logger.exception("Could not load event details for a pending ticket approval")
+                # The card can still show the agent's own arguments.
+                logger.exception("Could not load details for a pending %s approval", action.get("name"))
+                continue
+            if extra:
+                action["args"] = {**action["args"], **extra}
 
 
 class AgentBackend:
@@ -218,14 +381,14 @@ class AgentBackend:
                     break
         warnings = []
         if approvals:
-            if guest:
+            if guest and not _action_names(approvals) <= GUEST_APPROVAL_TOOLS:
                 # Booking tools require an account; drop the interrupted thread
                 # instead of leaving the guest conversation blocked on it.
                 reply = LOGIN_REQUIRED[locale]
                 approvals = []
                 warnings.append(LOGIN_WARNING[locale])
             else:
-                await enrich_ticket_approvals(approvals)
+                await enrich_approvals(approvals, None if guest else _ref_id(result.get("user_id")))
                 reply = approval_prompt(approvals, locale)
                 warnings.append(APPROVAL_WARNING[locale])
         if not reply:
@@ -250,6 +413,30 @@ class AgentBackend:
         }
 
 
+_backend_lock = threading.Lock()
+_agent_ready = threading.Event()
+
+
 @lru_cache
-def get_agent_backend() -> AgentBackend:
+def _build_agent_backend() -> AgentBackend:
     return AgentBackend()
+
+
+def get_agent_backend() -> AgentBackend:
+    # One load even when startup warm-up and a first request race for it.
+    with _backend_lock:
+        return _build_agent_backend()
+
+
+def warm_agent() -> None:
+    """Build the agent graph and load the search models (blocking; run in a thread)."""
+    get_agent_backend()
+    from concierge.agents import warm_up
+
+    warm_up()
+    _agent_ready.set()
+    logger.info("Agent warm-up finished; the agent is ready")
+
+
+def agent_ready() -> bool:
+    return _agent_ready.is_set()
