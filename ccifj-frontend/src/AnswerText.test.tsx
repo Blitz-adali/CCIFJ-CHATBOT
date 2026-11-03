@@ -24,6 +24,14 @@ describe('compact answer',()=>{
   expect(html).toContain('>CCIFJ</a>');
   expect(html).not.toContain('<script>');
  });
+ it('keeps paragraphs separated by a blank line as separate paragraphs',()=>{
+  expect(renderToStaticMarkup(<AnswerText text={'First paragraph.\n\nSecond paragraph.'}/>))
+   .toBe('<div class="answer-markdown"><p>First paragraph.</p>\n<p>Second paragraph.</p></div>');
+  const contacts=renderToStaticMarkup(<AnswerText text={'**Tomoyo Funabashi**  \nMembership Manager  \nPhone: +81 3-4500-6644\n\n\n**Marianne Barges**  \nPhone: +81 3-4500-6522\n\nI can help you draft an email to either of them.'}/>);
+  expect(contacts.match(/<p>/g)).toHaveLength(3);
+  expect(contacts).not.toContain('6644 Marianne');
+  expect(contacts).not.toContain('6522 I can help');
+ });
  it('renders email and ticket drafts as cards and leaves other code fences alone',()=>{
   const email=renderToStaticMarkup(<AnswerText locale="fr" text={'Voici le brouillon :\n\n```email\nTo: Elena SUZUKI <e.suzuki@ccifj.or.jp>\nFrom: Jane Doe <jane@example.com>\nSubject: Late registration\n\nDear Ms Suzuki,\nThank you.\n```\n\n```python\nprint(1)\n```'}/>);
   expect(email).toContain('Brouillon d’e-mail');
