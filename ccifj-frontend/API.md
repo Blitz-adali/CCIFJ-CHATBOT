@@ -40,9 +40,10 @@ Request (unknown fields are rejected):
 
 - `session_id`: `null` for a new conversation; afterwards send the returned value unchanged. Session IDs are signed opaque strings; keep them private.
 - `locale`: `en`, `fr` or `ja`.
+- `attachments`: optional `[{name, mime_type, data_base64}]` files (see below).
 - `path_step_id`, `path_event_id`, `path_context`: optional guided-journey fields. Selecting a starter path or a `path_actions` button sends its `id`, `event_id` and `data`. When a response has `active_path_step`, the next free-text message continues that step with the returned `path_context` (for example the space-availability date range).
 
-The backend returns the answer as `reply`; `api.ts` normalizes it to `answer` for the UI. Other fields: `mode` (`agent` or `guided_path`), `intent`, `suggested_questions` (in the UI locale; together with `next_actions`, at most three), `sources`, `actions` (HTTPS links), `warnings`, `pending_approvals`, `path_actions`, `next_actions` (agent-proposed buttons; clicking one sends its `prompt` as a normal message, and `auth.login` opens sign-in), `active_path_step`, `path_context`, `attachment_count`, `request_id`.
+The backend returns the answer as `reply`; `api.ts` normalizes it to `answer` for the UI. Other fields: `mode` (`agent` or `guided_path`), `intent`, `suggested_questions` (in the UI locale; together with `next_actions`, at most three), `sources`, `actions` (HTTPS links), `warnings`, `pending_approvals` (rendered as one card per action: ticket, space, newsletter, staff request, cancel, and change cards showing current → new; guests may approve staff requests only), `path_actions`, `next_actions` (agent-proposed buttons; clicking one sends its `prompt` as a normal message, and `auth.login` opens sign-in), `active_path_step`, `path_context`, `attachment_count`, `request_id`.
 
 The stream emits `progress` (`{"messages": [...]}` localized labels for the concierge, specialist agents and tools), `delta` (reserved; not emitted today, the answer arrives in `result`), `result` (the chat response) and `error` (`status`, `message`, and possibly `outcome_unknown`).
 
@@ -60,7 +61,7 @@ If a turn fails, times out, or is cancelled, the server cannot be sure whether a
 
 ## Attachments and edited messages
 
-Images, PDFs, DOCX and text files are read in the browser (OCR for images and scanned PDF pages, loaded from public CDNs); the extracted text is appended to the chat message and the original file is not uploaded. The backend also accepts PDF/PNG/JPEG uploads with server-side OCR through the `attachments` request field (see the API reference), which this widget does not currently use. Editing a sent prompt resubmits a correction in the same session.
+Attached files (PDF, PNG, JPEG, DOCX, TXT, MD, CSV, JSON, XML, HTML; up to 4 per conversation, 5 MB each) are sent base64-encoded in the `attachments` request field. The server extracts their text (OCR for images and scanned PDF pages) and keeps it as context for the rest of the conversation; the user's message stays exactly as typed, and the bubble shows the file names as chips. If the server has no Tesseract, its 503 message is shown. Editing a sent prompt resubmits a correction in the same session.
 
 ## Conversation history in the frontend
 

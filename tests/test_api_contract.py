@@ -375,7 +375,7 @@ class ApiContractTest(unittest.TestCase):
             too_many = self.client.post("/api/v1/chat", json={"session_id": token, "message": "more", "attachments": others})
             self.assertEqual(too_many.status_code, 413)
         self.assertEqual(self.client.get(f"/api/v1/sessions/{token}/messages").json()["turn_status"], "ready")
-        unsupported = self.client.post("/api/v1/chat", json={"message": "x", "attachments": [{**upload, "mime_type": "text/plain"}]})
+        unsupported = self.client.post("/api/v1/chat", json={"message": "x", "attachments": [{**upload, "mime_type": "application/zip"}]})
         self.assertEqual(unsupported.status_code, 400)
 
     def test_stream_progress_is_localized(self):
@@ -508,7 +508,7 @@ class UserContextTest(unittest.IsolatedAsyncioTestCase):
             await session.commit()
 
             context = await crud.load_user_context(session, member_user.user_id)
-            self.assertEqual(set(context), {"name", "email", "membership", "upcoming_bookings", "upcoming_space_reservations", "newsletter_subscribed"})
+            self.assertEqual(set(context), {"name", "email", "membership", "upcoming_bookings", "upcoming_space_reservations", "newsletter_subscribed", "interests", "recommended_events"})
             self.assertEqual(context["membership"], {"company": "ACME KK", "tier": "Premium", "annual_price": "250000", "currency": "JPY"})
             self.assertEqual([b["title"] for b in context["upcoming_bookings"]], ["Event 0", "Event 1", "Event 2", "Event 3", "Event 4"])
             self.assertEqual(context["upcoming_bookings"][0]["start_at"], (now + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M"))

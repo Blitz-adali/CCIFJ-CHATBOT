@@ -149,6 +149,14 @@ def _reservation_ref(reservation_id: int) -> str:
     return f"CCIFJ-SPC-{reservation_id:05d}"
 
 
+def _chat_session_id(runtime) -> Optional[int]:
+    """The API chat session from the graph thread ID ('api:session:<id>:turn:<n>')."""
+    config = getattr(runtime, "config", None) or {}
+    thread_id = str((config.get("configurable") or {}).get("thread_id") or "")
+    match = re.match(r"api:session:(\d+):", thread_id)
+    return int(match.group(1)) if match else None
+
+
 def _ref_id(reference: str) -> Optional[int]:
     """Accept 'CCIFJ-EVT-00012', '#12' or '12' and return 12."""
     digits = re.findall(r"\d+", str(reference))
@@ -1465,6 +1473,7 @@ async def submit_staff_request(
     sender_name: str,
     sender_email: str,
     recipient_emails: Optional[list[str]] = None,
+    runtime: ToolRuntime = None,
 ) -> str:
     """
     Store a message for CCIFJ staff, written together with the user.
@@ -1492,6 +1501,7 @@ async def submit_staff_request(
         sender_email: The user's email address, used by staff to reply.
         recipient_emails: Every CCIFJ contact email in the draft's To line,
             for a 'staff_email'.
+        runtime: Injected ToolRuntime providing access to the current graph state.
 
     Returns:
         The stored request reference, or what is missing.
@@ -1513,8 +1523,43 @@ async def submit_staff_request(
     if invalid:
         return f"Staff request not stored: invalid recipient email(s): {', '.join(invalid)}."
 
-    # Mock response until the staff_request table exists (see tickets/).
-    reference = f"MOCK-{japan_now():%Y%m%d%H%M%S}"
+    if request_type == "team_ticket":
+        recipients = []
+
+    try:
+        async with AsyncSessionLocal() as session:
+            stored = await crud.add_staff_request(
+                session,
+                request_type=request_type,
+                category=category,
+                subject=subject,
+                message=message,
+                sender_name=sender_name,
+                sender_email=sender_email,
+                recipient_emails=recipients,
+                user_id=_get_user_id(runtime),
+                session_id=_chat_session_id(runtime),
+            )
+            reference = stored.reference
+    except ValueError as exc:
+        return f"Staff request not stored: {exc}"
+    except Exception:
+        return (
+            "The staff request may have been stored, but saving could not be confirmed. "
+            "Do not retry automatically; tell the user to contact CCIFJ if they get no reply."
+        )
+
+    try:
+        async with AsyncSessionLocal() as verify_session:
+            saved = await crud.get_staff_request(verify_session, reference)
+    except Exception:
+        saved = None
+    if saved is None:
+        return (
+            f"The staff request may have been stored as {reference}, but it could not be verified. "
+            "Do not retry automatically; tell the user to contact CCIFJ if they get no reply."
+        )
+
     recipient = ", ".join(recipients) or "the CCIFJ team"
     return (
         f"Staff request stored. Reference: {reference}. "

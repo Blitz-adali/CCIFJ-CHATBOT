@@ -34,6 +34,17 @@ class BookingStatus(str, Enum):
     cancelled = "cancelled"
 
 
+class StaffRequestType(str, Enum):
+    staff_email = "staff_email"  # addressed to known CCIFJ contacts
+    team_ticket = "team_ticket"  # no contact exists; the CCIFJ team reviews it
+
+
+class StaffRequestStatus(str, Enum):
+    new = "new"
+    in_review = "in_review"
+    closed = "closed"
+
+
 class MessageRole(str, Enum):
     user = "user"
     assistant = "assistant"
@@ -256,3 +267,34 @@ class SpaceReservation(SQLModel, table=True):
     status: ReservationStatus = Field(default=ReservationStatus.confirmed)
     created_at: NaiveDatetime = Field(default_factory=utcnow)
     updated_at: NaiveDatetime = updated_at_field()
+
+
+# ---------- Staff requests ----------
+# Stored for CCIFJ staff to read; nothing is emailed automatically.
+
+
+class StaffRequest(SQLModel, table=True):
+    __tablename__ = "staff_request"
+
+    request_id: Optional[int] = Field(default=None, primary_key=True)
+    reference: str = Field(max_length=32, unique=True)  # e.g. "SR-2026-000123", shown to the user
+    request_type: StaffRequestType
+    category: str = Field(max_length=50)
+    subject: str = Field(max_length=255)
+    message: str
+    sender_name: str = Field(max_length=100)
+    sender_email: str = Field(max_length=255)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.user_id", index=True)  # None = guest
+    session_id: Optional[int] = Field(default=None, foreign_key="session.session_id", index=True)
+    status: StaffRequestStatus = Field(default=StaffRequestStatus.new)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = updated_at_field()
+
+
+class StaffRequestRecipient(SQLModel, table=True):
+    __tablename__ = "staff_request_recipient"
+
+    request_id: int = Field(foreign_key="staff_request.request_id", primary_key=True)
+    email: str = Field(max_length=255, primary_key=True)
+    # Set when the address matches a contact_us row; contacts are also hard-coded in the agent.
+    contact_id: Optional[int] = Field(default=None, foreign_key="contact_us.contact_id")

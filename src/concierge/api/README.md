@@ -74,7 +74,26 @@ Authorization: Bearer <access_token>
 Use `"reject"` to decline. The response has the same shape as `/chat`; further
 approvals may be required. New chat messages return 409 until outstanding
 approvals are resolved. Guests retain `user_id=None` in agent state, so the
-existing booking tools reject unauthenticated booking attempts.
+existing booking tools reject unauthenticated booking attempts. Guests may only
+answer `submit_staff_request` approvals (omit `Authorization`; the session token
+proves ownership); any other approval for a guest is replaced by a login prompt.
+
+Before an approval is returned, the API adds card fields to the action's `args`
+(read-only lookups, and only for the signed-in user's own records):
+
+| Action | Added fields |
+|---|---|
+| `book_event_ticket` | `event_title`, `event_start`, `event_end`, `event_location`, `price`, `member_price`, `non_member_price`, `currency`, `reg_deadline`, `ticket_count` |
+| `book_space` | `start_at`, `end_at`, and when the space is known `space_name`, `space_capacity`, `space_description` (the space table has no location column) |
+| `subscribe_newsletter` | `newsletter_name` |
+| `submit_staff_request` | none; the arguments already hold the full draft |
+| `cancel_event_booking` | `booking_id`, the event fields above, `attendees` |
+| `cancel_space_reservation` | `reservation_id`, `space_name`, `title`, `start_at`, `end_at`, `expected_attendees` |
+| `change_event_booking` / `change_space_reservation` | `current` and `new`, each with the cancel fields above; unchanged values are copied into `new` |
+
+A change is one action: show it as current → new, never as a cancellation and a
+new booking. Approved staff requests are stored in `staff_request` (reference
+`SR-<year>-<id>`, recipients in `staff_request_recipient`); no email is sent.
 
 Run one Uvicorn worker. Normal turns restore context from SQL history, including
 after a restart, but the existing agent's interrupted approvals are process-local.
@@ -88,7 +107,9 @@ existing model environment variables and service before using `/chat`.
 ## Frontend and live transports
 
 Every route is also available under `/api/v1`. The React frontend uses that prefix.
-`GET /status` provides JSON process health; `GET /suggestions` reads the same
+`GET /status` provides JSON process health, with `agent_ready` turning true once
+the agent and search models finish loading in the background at startup (`/health`
+answers immediately either way); `GET /suggestions` reads the same
 predefined question catalog used by the agents without loading any models.
 Chat and approval decisions accept `locale` (`en`, `fr`, `ja`), the UI language.
 The agent answers in the language of the user's message, whatever it is, and the
@@ -238,9 +259,10 @@ remaining slots.
 ### Attachments
 
 Chat requests accept up to four `attachments` per request
-(`{"name", "mime_type", "data_base64"}`): PDF, PNG, or JPEG, 5 MB each, PDFs up
-to 20 pages. Text is extracted on the server; images and scan-only PDF pages
-are OCRed with Tesseract (`eng+fra+jpn`). Install the Tesseract executable and
+(`{"name", "mime_type", "data_base64"}`): PDF, PNG, JPEG, DOCX, or UTF-8 text
+(TXT, MD, CSV, JSON, XML, HTML), 5 MB each, PDFs up to 20 pages. Text is
+extracted on the server (HTML without scripts and styles); images and scan-only
+PDF pages are OCRed with Tesseract (`eng+fra+jpn`). Install the Tesseract executable and
 those language packs on the API host; without them, image OCR returns 503.
 Extracted text (12,000 characters per file) stays available to the agent for
 the rest of the conversation, up to four distinct files, as untrusted

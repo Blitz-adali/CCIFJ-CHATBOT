@@ -8,6 +8,8 @@ export interface SavedTurn {
   error?: boolean;
   cancelled?: boolean;
   retry?: string;
+  /** Names of files attached to a user message (their text stays on the server). */
+  files?: string[];
 }
 
 export interface SavedConversation {
