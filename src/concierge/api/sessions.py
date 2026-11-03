@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from concierge.auth.dependencies import CurrentUser, DatabaseSession
+from concierge.auth.security import read_token
 from concierge.db.relationaldb import crud
 from .schemas import HistoryResponse, MessageResponse, ReconcileRequest, SessionResponse
 from .session_access import authorize_session, pending_turn, session_token, session_turn, turn_status, normalize_approvals
@@ -58,6 +59,26 @@ async def claim(session_id: str, session: DatabaseSession, user: CurrentUser, re
                 raise HTTPException(status_code=404, detail="Session not found.") from exc
     response.headers["Cache-Control"] = "no-store"
     return SessionResponse(session_id=session_id)
+
+
+@router.post("/{session_id}/discard", status_code=204)
+async def discard(session_id: str, session: DatabaseSession):
+    """Delete a guest conversation when its page closes.
+
+    Sent by navigator.sendBeacon, so there is no body and no auth header. The token is the capability;
+    a conversation that has an owner is never deleted, and an unknown or expired token is a no-op.
+    """
+    try:
+        chat_id = read_token(session_id, "session")
+    except ValueError:
+        return Response(status_code=204)
+    chat = await crud.get_chat_session(session, chat_id)
+    await session.commit()
+    if chat is not None and chat.user_id is None:
+        # Wait for a running turn (or a login claim) so the delete never races it.
+        async with session_turn(chat_id):
+            await crud.delete_guest_session(session, chat_id)
+    return Response(status_code=204)
 
 
 @router.post("/{session_id}/reconcile", response_model=SessionResponse)

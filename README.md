@@ -506,6 +506,11 @@ SQLite (`src/concierge/db/relationaldb/system.db`), with these tables:
 `speaks_at`, `subscription`, `contact_us`, `space`, `space_reservation`,
 `staff_request`, `staff_request_recipient`.
 
+Guest sessions are deleted when the guest closes the app, and a guest's chat is
+assigned to them as soon as they log in. See
+[`src/concierge/db/README.md`](src/concierge/db/README.md) for the session
+lifecycle and a changelog of database behavior changes.
+
 ### Schema updates
 
 Run `uv run concierge-db upgrade` before starting the application, including
