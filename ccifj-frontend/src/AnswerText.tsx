@@ -61,13 +61,10 @@ function compactMarkdown(text: string) {
     }
 
     if (!codeFence && !line.trim()) {
+      // Collapse a run of blank lines into one: dropping it would merge two paragraphs.
       let next = index + 1;
       while (next < lines.length && !lines[next].trim()) next += 1;
-      const previousLine = compacted[compacted.length - 1] ?? '';
-      const nextLine = lines[next] ?? '';
-      const startsBlock = /^(\s{0,3}(#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|```|~~~|\|))/.test(nextLine);
-      const followsBlock = /^(\s{0,3}(#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|```|~~~|\|))/.test(previousLine);
-      if (startsBlock || followsBlock) compacted.push('');
+      if (compacted.length && next < lines.length) compacted.push('');
       index = next - 1;
       continue;
     }

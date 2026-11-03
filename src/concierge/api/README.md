@@ -151,6 +151,13 @@ PYTHONPATH=src uv run --with httpx python -m unittest discover -s tests -v
 
 `POST /sessions/{session_id}/claim` requires authentication and attaches a guest
 conversation to the current user, retaining its history and pending approval thread.
+The frontend calls it as soon as a guest logs in, so the chat is kept even if no
+new message is sent.
+
+`POST /sessions/{session_id}/discard` takes no body or auth and returns 204. It
+deletes a guest conversation (sent by the page's `pagehide` beacon) and does
+nothing for an owned session or an invalid token. See `db/README.md` for the
+full session lifecycle.
 History now includes `turn_status` (`ready`, `processing`, `unknown`),
 `last_request_id`, and saved public response metadata on assistant messages.
 Optional `request_id` on chat/approval bodies is returned with the completed response

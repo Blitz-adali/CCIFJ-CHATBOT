@@ -1,6 +1,6 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {Send,X,ArrowUpRight,Sparkles,Square,Paperclip,Pencil,FileText,PanelLeftOpen,PanelLeftClose,SquarePen,MessageCircle,LogIn,CalendarDays,UsersRound,BriefcaseBusiness} from 'lucide-react';
-import {sendChatStream,getStarterPaths,resolveApproval,reconcileSession,ApiError} from './api';
+import {sendChatStream,getStarterPaths,resolveApproval,reconcileSession,claimSession,discardGuestSession,ApiError} from './api';
 import {AnswerText} from './AnswerText';
 import {NextActions} from './NextActions';
 import {FollowUpQuestions} from './FollowUpQuestions';
@@ -32,6 +32,8 @@ export function WidgetChat({initialLocale,locale:controlledLocale,initialDraft='
   const activeRequest=useRef<AbortController|null>(null);
   const priorAuthState=useRef(isAuthenticated);
   const priorHistoryUserId=useRef(historyUserId);
+  // Bumped whenever the open conversation is dropped, so late responses for it are ignored.
+  const conversationEpoch=useRef(0);
   const historyToggle=useRef<HTMLButtonElement>(null);
   const historyPanelId=useId();
   const input=useRef<HTMLTextAreaElement>(null),fileInput=useRef<HTMLInputElement>(null),end=useRef<HTMLDivElement>(null);
@@ -52,7 +54,30 @@ export function WidgetChat({initialLocale,locale:controlledLocale,initialDraft='
     const timer=window.setInterval(()=>setProgressIndex(index=>(index+1)%progressMessages.length),2600);
     return()=>window.clearInterval(timer);
   },[progressMessages]);
-  useEffect(()=>{if(priorAuthState.current!==isAuthenticated||priorHistoryUserId.current!==historyUserId){activeRequest.current?.abort();session.current=null;setTurns([]);setDraft('');setFiles([]);setEditId(null);setActivePath(null);setErrorNote('');setOutcomeCheck(false);priorAuthState.current=isAuthenticated;priorHistoryUserId.current=historyUserId;}},[isAuthenticated,historyUserId]);
+  function dropConversation(){conversationEpoch.current++;activeRequest.current?.abort();session.current=null;setTurns([]);setDraft('');setFiles([]);setEditId(null);setActivePath(null);setErrorNote('');setOutcomeCheck(false);}
+  async function claimConversation(sessionId:string){
+    try{await claimSession(sessionId);}
+    catch(error){
+      // The guest chat expired on the server: start fresh, as before login kept chats.
+      if(error instanceof ApiError&&error.status===404&&session.current===sessionId&&!pending.current)dropConversation();
+      // Other failures keep the chat; the next message claims it on the server.
+    }
+  }
+  useEffect(()=>{
+    if(priorAuthState.current===isAuthenticated&&priorHistoryUserId.current===historyUserId)return;
+    const signedIn=!priorAuthState.current&&isAuthenticated&&historyUserId!==null;
+    priorAuthState.current=isAuthenticated;priorHistoryUserId.current=historyUserId;
+    // Logging in keeps the open guest chat and assigns it to the user right away.
+    if(signedIn){if(session.current)void claimConversation(session.current);return;}
+    dropConversation();
+  },[isAuthenticated,historyUserId]);
+  useEffect(()=>{
+    // Guest chats are temporary: delete them on the server when the page closes.
+    // A page kept in the back/forward cache may return, so it is left to the server's expiry sweep.
+    const close=(event:PageTransitionEvent)=>{if(!event.persisted&&!priorAuthState.current&&session.current)discardGuestSession(session.current);};
+    window.addEventListener('pagehide',close);
+    return()=>window.removeEventListener('pagehide',close);
+  },[]);
   useEffect(()=>{setHistory(readConversationHistory(historyUserId));},[historyUserId]);
   useEffect(()=>{
     if(!session.current||!turns.some(turn=>turn.role==='user'))return;
@@ -87,8 +112,8 @@ export function WidgetChat({initialLocale,locale:controlledLocale,initialDraft='
   },[]);
   async function ask(text:string,append=true,path?:{id:string;event_id?:string;data?:Record<string,unknown>},attachments:File[]=[],replaceId:number|null=null){
     let message=text.trim();if((!message&&!attachments.length)||pending.current||outcomeCheck)return;
-    const requestOwner=historyUserId,requestAuth=isAuthenticated;
-    const sameOwner=()=>priorHistoryUserId.current===requestOwner&&priorAuthState.current===requestAuth;
+    const requestEpoch=conversationEpoch.current,requestAuth=isAuthenticated;
+    const sameOwner=()=>conversationEpoch.current===requestEpoch;
     setErrorNote('');
     pending.current=true;
     // Files go to the server as attachments; their text never joins the typed message.
@@ -111,6 +136,8 @@ export function WidgetChat({initialLocale,locale:controlledLocale,initialDraft='
       const response=await sendChatStream({message:requestMessage,locale:promptLocale,session_id:session.current,...(pathStepId?{path_step_id:pathStepId}:{}),...(path?.event_id?{path_event_id:path.event_id}:{}),...(pathContext?{path_context:pathContext}:{}),...(uploads.length?{attachments:uploads}:{})},setProgressMessages,controller.signal);
       if(!sameOwner())return;
       session.current=response.session_id??session.current;
+      // The user logged in while this guest message was running: claim the chat it created.
+      if(!requestAuth&&priorAuthState.current&&session.current)void claimConversation(session.current);
       setActivePath(response.active_path_step?{id:response.active_path_step,context:response.path_context??pathContext??{}}:null);
       setTurns(old=>[...old,{id:++nextId.current,role:'assistant',text:response.answer,response}]);
     }catch(error){

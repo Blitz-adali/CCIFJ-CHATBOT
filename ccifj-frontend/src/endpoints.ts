@@ -5,6 +5,8 @@ export const API_ENDPOINTS = {
   chat: '/api/v1/chat',     // POST: { session_id, message, locale }
   chatStream: '/api/v1/chat/stream',
   approval: (sessionId: string) => `/api/v1/sessions/${encodeURIComponent(sessionId)}/approvals`,
+  claim: (sessionId: string) => `/api/v1/sessions/${encodeURIComponent(sessionId)}/claim`,
+  discard: (sessionId: string) => `/api/v1/sessions/${encodeURIComponent(sessionId)}/discard`,
   reconcile: (sessionId: string) => `/api/v1/sessions/${encodeURIComponent(sessionId)}/reconcile`,
   login: '/api/v1/auth/login',
   register: '/api/v1/auth/register',

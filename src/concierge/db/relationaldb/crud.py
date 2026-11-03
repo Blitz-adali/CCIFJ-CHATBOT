@@ -4,7 +4,7 @@ from typing import Optional, Sequence
 from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy import func, update
+from sqlalchemy import delete, func, update
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from .datetimes import japan_now, japan_naive
@@ -314,6 +314,37 @@ async def claim_chat_session(session: AsyncSession, session_id: int, user_id: in
     if chat is None or chat.user_id != user_id:
         raise ValueError("This session is not available for your account.")
     return chat
+
+
+async def _delete_guest_sessions(session: AsyncSession, guest_sessions) -> int:
+    """Delete guest sessions (a subquery of ids) with their messages; owned sessions are never matched."""
+    ids = select(ChatSession.session_id).where(
+        col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None)
+    )
+    # Staff keep any request a guest sent; it just loses the link to the deleted chat.
+    await session.exec(
+        update(StaffRequest).where(col(StaffRequest.session_id).in_(ids)).values(session_id=None)
+    )
+    await session.exec(delete(Message).where(col(Message.session_id).in_(ids)))
+    result = await session.exec(
+        delete(ChatSession).where(col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None))
+    )
+    await session.commit()
+    return result.rowcount or 0
+
+
+async def delete_guest_session(session: AsyncSession, session_id: int) -> bool:
+    """Delete one anonymous conversation; a session that has an owner is left untouched."""
+    return await _delete_guest_sessions(
+        session, select(ChatSession.session_id).where(ChatSession.session_id == session_id)
+    ) > 0
+
+
+async def delete_guest_sessions_created_before(session: AsyncSession, cutoff: datetime) -> int:
+    """Delete anonymous conversations created before ``cutoff`` (their tokens have expired)."""
+    return await _delete_guest_sessions(
+        session, select(ChatSession.session_id).where(ChatSession.created_at < cutoff)
+    )
 
 
 async def list_session_messages(

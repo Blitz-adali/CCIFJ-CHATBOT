@@ -274,6 +274,22 @@ export async function reconcileSession(sessionId: string): Promise<void> {
   });
 }
 
+/** Attach the open guest conversation to the signed-in user so it is kept without a new message. */
+export async function claimSession(sessionId: string): Promise<void> {
+  // keepalive lets the claim finish if the user closes the page right after logging in.
+  await requestJson(API_ENDPOINTS.claim(sessionId), { method: "POST", keepalive: true });
+}
+
+/** Ask the server to delete a guest conversation as the page closes. The server ignores owned sessions. */
+export function discardGuestSession(sessionId: string): void {
+  const url = `${baseUrl}${API_ENDPOINTS.discard(sessionId)}`;
+  try {
+    // A beacon without a body is a simple request: no CORS preflight, and it survives page unload.
+    if (navigator.sendBeacon?.(url)) return;
+  } catch { /* Fall back to fetch below. */ }
+  try { void fetch(url, { method: "POST", keepalive: true }).catch(() => undefined); } catch { /* Best effort only. */ }
+}
+
 export async function getApiStatus(): Promise<ApiStatusResponse> {
   return requestJson<ApiStatusResponse>(API_ENDPOINTS.status, { method: "GET" }, 6000);
 }
