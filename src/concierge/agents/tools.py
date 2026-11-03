@@ -1,6 +1,6 @@
 import re
 from collections import Counter
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Literal, Optional
 
 from langchain_core.tools import tool
@@ -12,7 +12,13 @@ from sentence_transformers import SentenceTransformer
 import bm25s
 
 from ..db.relationaldb import crud
-from ..db.relationaldb.models import SubscriptionType
+from ..db.relationaldb.models import (
+    Booking,
+    BookingStatus,
+    ReservationStatus,
+    SpaceReservation,
+    SubscriptionType,
+)
 from ..db.relationaldb.session import AsyncSessionLocal
 from ..db.relationaldb.datetimes import japan_now
 
@@ -125,6 +131,68 @@ def _event_line(event) -> str:
 
 def _norm(text: str) -> str:
     return "".join(ch for ch in text.lower() if ch.isalnum())
+
+
+def _find_space(spaces, space_name: str):
+    wanted = _norm(space_name)
+    return next(
+        (s for s in spaces if _norm(s.name) in wanted or wanted in _norm(s.name)),
+        None,
+    )
+
+
+def _booking_ref(booking_id: int) -> str:
+    return f"CCIFJ-EVT-{booking_id:05d}"
+
+
+def _reservation_ref(reservation_id: int) -> str:
+    return f"CCIFJ-SPC-{reservation_id:05d}"
+
+
+def _ref_id(reference: str) -> Optional[int]:
+    """Accept 'CCIFJ-EVT-00012', '#12' or '12' and return 12."""
+    digits = re.findall(r"\d+", str(reference))
+    return int(digits[-1]) if digits else None
+
+
+def _event_window(event) -> tuple[Optional[datetime], Optional[datetime]]:
+    """An event's time range; an unknown end is treated as the start time."""
+    if event.start_at is None:
+        return None, None
+    return event.start_at, event.end_at or event.start_at
+
+
+def _overlaps(start_a, end_a, start_b, end_b) -> bool:
+    # A zero-length range (unknown end) still counts as one minute.
+    end_a = max(end_a, start_a + timedelta(minutes=1))
+    end_b = max(end_b, start_b + timedelta(minutes=1))
+    return start_a < end_b and start_b < end_a
+
+
+def _registration_problem(event) -> Optional[str]:
+    """Why the event can't be booked right now, or None. Mirrors crud.book_event."""
+    now = _now()
+    if event.start_at is not None and event.start_at <= now:
+        return "the event has already started or taken place"
+    closing_at = event.reg_deadline if event.reg_deadline is not None else event.end_at
+    if closing_at is not None and now >= closing_at:
+        return f"registration closed on {_when(closing_at)}"
+    return None
+
+
+async def _restore_status(model, row_id: int, status) -> bool:
+    """Put a cancelled booking or reservation back after a failed change."""
+    try:
+        async with AsyncSessionLocal() as session:
+            row = await session.get(model, row_id)
+            if row is None:
+                return False
+            row.status = status
+            session.add(row)
+            await session.commit()
+            return True
+    except Exception:
+        return False
 
 
 class AttendeeInfo(BaseModel):
@@ -360,18 +428,6 @@ async def book_event_ticket(
     )
 
 
-def get_time():
-    pass
-
-def avil_space():
-    pass
-
-def cancel_Space():
-    pass
-
-def cancel_event():
-    pass
-
 @tool
 async def book_space(
     start_date: str,
@@ -435,11 +491,7 @@ async def book_space(
         if not spaces:
             return "Reservation failed: no spaces are available for reservation yet."
 
-        wanted = _norm(space_name)
-        space = next(
-            (s for s in spaces if _norm(s.name) in wanted or wanted in _norm(s.name)),
-            None,
-        )
+        space = _find_space(spaces, space_name)
         if space is None:
             available = ", ".join(s.name for s in spaces)
             return f"Reservation failed: unknown space '{space_name}'. Available spaces: {available}."
@@ -502,6 +554,505 @@ async def book_space(
         f"To: {_when(saved_reservation.end_at)} (duration {minutes // 60} h {minutes % 60:02d} min)\n"
         f"Title: {saved_reservation.title} ({'public' if saved_reservation.is_public else 'private'})\n"
         f"Status: {saved_reservation.status.value.upper()}"
+    )
+
+
+#################################################
+#
+# 1b. The user's bookings and reservations
+#
+#################################################
+
+@tool
+async def get_my_bookings(
+    include_past: bool = False,
+    include_cancelled: bool = False,
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    List the logged-in user's event bookings with their references and attendees.
+
+    Use this tool when the user asks what they have booked or registered for,
+    wants a booking reference, or before cancelling or changing a booking.
+
+    Args:
+        include_past: Also list bookings for events that have already started.
+        include_cancelled: Also list cancelled bookings.
+        runtime: Injected ToolRuntime providing access to the current graph state.
+
+    Returns:
+        One block per booking: reference, status, event, date, venue, and attendees.
+    """
+    user_id = _get_user_id(runtime)
+    if user_id is None:
+        return "You must be logged in to see your bookings."
+
+    now = _now()
+    async with AsyncSessionLocal() as session:
+        rows = await crud.list_user_bookings(session, user_id, include_cancelled=include_cancelled)
+        rows = [
+            (booking, event) for booking, event in rows
+            if include_past or event.start_at is None or event.start_at > now
+        ]
+        blocks = []
+        for booking, event in rows:
+            tickets = await crud.get_booking_tickets(session, user_id, booking.booking_id)
+            people = ", ".join(f"{t.name} <{t.email}>" for t in tickets) or "none"
+            blocks.append(
+                f"{_booking_ref(booking.booking_id)} | {booking.status.value.upper()}\n"
+                f"  Event: {_event_line(event)}\n"
+                f"  Attendees ({len(tickets)}): {people}"
+            )
+    if not blocks:
+        return "No bookings found for this account with these filters."
+    return "\n".join(blocks)
+
+
+@tool
+async def get_my_space_reservations(
+    include_past: bool = False,
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    List the logged-in user's confirmed space reservations (such as L'Espace@CCIFJ).
+
+    Use this tool when the user asks whether or when they reserved a room, wants
+    a reservation reference, or before cancelling or changing a reservation.
+
+    Args:
+        include_past: Also list reservations that have already ended.
+        runtime: Injected ToolRuntime providing access to the current graph state.
+
+    Returns:
+        One line per reservation: reference, space, dates, title, and attendees.
+    """
+    user_id = _get_user_id(runtime)
+    if user_id is None:
+        return "You must be logged in to see your space reservations."
+
+    async with AsyncSessionLocal() as session:
+        rows = await crud.list_user_reservations(session, user_id, upcoming_only=not include_past)
+    if not rows:
+        return "No confirmed space reservations found for this account."
+    return "\n".join(
+        f"{_reservation_ref(r.reservation_id)} | {space.name} | {_when(r.start_at)} -> {_when(r.end_at)} "
+        f"| {r.title} ({'public' if r.is_public else 'private'})"
+        f"{f' | {r.expected_attendees} attendees' if r.expected_attendees else ''}"
+        for r, space in rows
+    )
+
+
+@tool
+async def check_space_availability(
+    start_date: str,
+    end_date: str,
+    space_name: str = "L'Espace@CCIFJ",
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Check whether a CCIFJ space is free for a time range, and suggest free slots.
+
+    Use this tool before collecting reservation details, and whenever the user
+    asks if or when a space is free. Guests may use it.
+
+    Args:
+        start_date: Range start (YYYY-MM-DD or YYYY-MM-DD HH:MM). A date alone means 00:00.
+        end_date: Range end (YYYY-MM-DD or YYYY-MM-DD HH:MM). A date alone means the end of that day.
+        space_name: The space to check. Defaults to "L'Espace@CCIFJ".
+        runtime: Injected ToolRuntime providing access to the current graph state.
+
+    Returns:
+        FREE or TAKEN for the range, the reserved times inside it, the free gaps,
+        and the next free slot of the same length when the range is taken.
+    """
+    try:
+        start = _parse_datetime(start_date)
+        end = _parse_datetime(end_date, end_of_day=True)
+    except ValueError:
+        return "Invalid date. Use YYYY-MM-DD or YYYY-MM-DD HH:MM."
+    if end <= start:
+        return "The end must be after the start."
+    user_id = _get_user_id(runtime)
+
+    async with AsyncSessionLocal() as session:
+        spaces = await crud.list_spaces(session)
+        space = _find_space(spaces, space_name) if spaces else None
+        if space is None:
+            available = ", ".join(s.name for s in spaces) or "none"
+            return f"Unknown space '{space_name}'. Available spaces: {available}."
+        taken = list(await crud.list_space_reservations(session, space.space_id, start, end))
+        # Look ahead two weeks for the next free slot of the same length.
+        horizon = list(await crud.list_space_reservations(
+            session, space.space_id, start, end + timedelta(days=14)
+        ))
+
+    capacity = f" (capacity {space.capacity})" if space.capacity else ""
+    past_note = " Note: part of this range is in the past." if start <= _now() else ""
+    if not taken:
+        return f"FREE: {space.name}{capacity} has no reservations from {_when(start)} to {_when(end)}.{past_note}"
+
+    def label(r) -> str:
+        if user_id is not None and r.user_id == user_id:
+            return f"your reservation {_reservation_ref(r.reservation_id)} '{r.title}'"
+        # Never reveal the titles of other people's private reservations.
+        return f"public event '{r.title}'" if r.is_public else "reserved"
+
+    lines = [f"TAKEN: {space.name}{capacity} is not free for the whole range {_when(start)} to {_when(end)}.{past_note}",
+             "Reserved times in this range:"]
+    lines += [f"- {_when(r.start_at)} -> {_when(r.end_at)} ({label(r)})" for r in taken]
+
+    gaps, cursor = [], start
+    for r in sorted(taken, key=lambda r: r.start_at):
+        if r.start_at > cursor:
+            gaps.append((cursor, r.start_at))
+        cursor = max(cursor, r.end_at)
+    if cursor < end:
+        gaps.append((cursor, end))
+    if gaps:
+        lines.append("Free gaps in this range:")
+        lines += [f"- {_when(a)} -> {_when(b)}" for a, b in gaps]
+
+    length, cursor = end - start, start
+    for r in sorted(horizon, key=lambda r: r.start_at):
+        if r.start_at - cursor >= length:
+            break
+        cursor = max(cursor, r.end_at)
+    lines.append(f"Next free slot of the same length: {_when(cursor)} -> {_when(cursor + length)}.")
+    return "\n".join(lines)
+
+
+@tool
+async def check_event_booking(
+    event_id: str,
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Check whether the user can book an event before collecting attendee details.
+
+    Checks that the event exists, has not started, and that registration is still
+    open. For a logged-in user, also checks for an existing booking of this event
+    and for time clashes with their other bookings and space reservations.
+    Guests may use it (login and clash checks are then skipped).
+
+    Args:
+        event_id: The event to check.
+        runtime: Injected ToolRuntime providing access to the current graph state.
+
+    Returns:
+        CAN BOOK or CANNOT BOOK with the reason, plus any clash warnings.
+    """
+    eid = _to_int(event_id)
+    if eid is None:
+        return "CANNOT BOOK: invalid event ID."
+    user_id = _get_user_id(runtime)
+
+    async with AsyncSessionLocal() as session:
+        event = await crud.get_event(session, eid)
+        if event is None:
+            return f"CANNOT BOOK: no event with ID {eid} exists."
+        bookings = await crud.list_user_bookings(session, user_id) if user_id is not None else []
+        reservations = await crud.list_user_reservations(session, user_id) if user_id is not None else []
+
+    summary = f"Event: {_event_line(event)} | Registration deadline: {_when(event.reg_deadline, 'none stated')}"
+    problem = _registration_problem(event)
+    if problem:
+        return f"CANNOT BOOK: {problem}.\n{summary}"
+    existing = next((b for b, e in bookings if e.event_id == eid), None)
+    if existing is not None:
+        return (
+            f"CANNOT BOOK: the user already has a confirmed booking for this event "
+            f"({_booking_ref(existing.booking_id)}). To change its attendees, use change_event_booking.\n{summary}"
+        )
+
+    warnings = []
+    start, end = _event_window(event)
+    if start is not None:
+        for booking, other in bookings:
+            o_start, o_end = _event_window(other)
+            if o_start is not None and _overlaps(start, end, o_start, o_end):
+                warnings.append(f"- Overlaps the user's booking {_booking_ref(booking.booking_id)}: {other.title} ({_when(o_start)})")
+        for r, space in reservations:
+            if _overlaps(start, end, r.start_at, r.end_at):
+                warnings.append(f"- Overlaps the user's reservation {_reservation_ref(r.reservation_id)} at {space.name} ({_when(r.start_at)} -> {_when(r.end_at)})")
+
+    login_note = "" if user_id is not None else "\nThe user is not logged in: booking requires login."
+    clash_note = ("\nSchedule clashes (tell the user; they may still book):\n" + "\n".join(warnings)) if warnings else ""
+    return f"CAN BOOK.\n{summary}{login_note}{clash_note}"
+
+
+@tool
+async def cancel_event_booking(
+    booking_reference: str,
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Cancel one of the user's event bookings (the whole booking, all its tickets).
+
+    Allowed until the event starts. Use get_my_bookings first to find the
+    reference, and call this only after the user explicitly confirms.
+
+    Args:
+        booking_reference: The booking reference, e.g. 'CCIFJ-EVT-00012' or '12'.
+        runtime: Injected ToolRuntime providing access to the current graph state.
+
+    Returns:
+        Confirmation of the cancellation, or why it could not be cancelled.
+    """
+    user_id = _get_user_id(runtime)
+    if user_id is None:
+        return "Cancellation failed: you must be logged in."
+    booking_id = _ref_id(booking_reference)
+    if booking_id is None:
+        return "Cancellation failed: invalid booking reference."
+
+    async with AsyncSessionLocal() as session:
+        try:
+            booking = await crud.cancel_booking(session, user_id, booking_id)
+        except ValueError as exc:
+            return f"Cancellation failed: {exc}"
+        event = await crud.get_event(session, booking.event_id)
+
+    try:
+        async with AsyncSessionLocal() as verify_session:
+            saved = await crud.get_booking(verify_session, booking_id)
+    except Exception:
+        return "The booking may have been cancelled, but this could not be verified. Do not retry; check the booking first."
+    if saved is None or saved.status != BookingStatus.cancelled:
+        return "The cancellation could not be verified. Do not retry; check the booking first."
+    return (
+        f"Booking cancelled: {_booking_ref(booking_id)}\n"
+        f"Event: {event.title if event else 'unknown'} ({_when(event.start_at) if event else 'date unknown'})\n"
+        "All tickets on this booking are cancelled. No payment was involved."
+    )
+
+
+@tool
+async def cancel_space_reservation(
+    reservation_reference: str,
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Cancel one of the user's space reservations.
+
+    Allowed until the reservation starts. Use get_my_space_reservations first to
+    find the reference, and call this only after the user explicitly confirms.
+
+    Args:
+        reservation_reference: The reservation reference, e.g. 'CCIFJ-SPC-00003' or '3'.
+        runtime: Injected ToolRuntime providing access to the current graph state.
+
+    Returns:
+        Confirmation of the cancellation, or why it could not be cancelled.
+    """
+    user_id = _get_user_id(runtime)
+    if user_id is None:
+        return "Cancellation failed: you must be logged in."
+    reservation_id = _ref_id(reservation_reference)
+    if reservation_id is None:
+        return "Cancellation failed: invalid reservation reference."
+
+    async with AsyncSessionLocal() as session:
+        try:
+            reservation = await crud.cancel_reservation(session, user_id, reservation_id)
+        except ValueError as exc:
+            return f"Cancellation failed: {exc}"
+        space = await crud.get_space(session, reservation.space_id)
+
+    try:
+        async with AsyncSessionLocal() as verify_session:
+            saved = await crud.get_reservation(verify_session, reservation_id)
+    except Exception:
+        return "The reservation may have been cancelled, but this could not be verified. Do not retry; check it first."
+    if saved is None or saved.status != ReservationStatus.cancelled:
+        return "The cancellation could not be verified. Do not retry; check the reservation first."
+    return (
+        f"Space reservation cancelled: {_reservation_ref(reservation_id)}\n"
+        f"Space: {space.name if space else 'unknown'} | {_when(saved.start_at)} -> {_when(saved.end_at)} | {saved.title}"
+    )
+
+
+@tool
+async def change_event_booking(
+    booking_reference: str,
+    new_event_id: Optional[str] = None,
+    attendees: Optional[list[AttendeeInfo]] = None,
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Change one of the user's event bookings in a single step: move it to another
+    event and/or replace its attendee list (add or remove people).
+
+    Behind the scenes the old booking is cancelled and a new one is created; if
+    the new booking fails, the old booking is restored. Present the result to the
+    user as a change. Call only after the user explicitly confirms the change.
+
+    Args:
+        booking_reference: The booking to change, e.g. 'CCIFJ-EVT-00012' or '12'.
+        new_event_id: The event to move the booking to. Omit to keep the same event.
+        attendees: The complete new attendee list (name, email, optional telephone).
+            Omit to keep the current attendees.
+        runtime: Injected ToolRuntime providing access to the current graph state.
+
+    Returns:
+        The new booking reference and summary, or why the change was not made.
+    """
+    user_id = _get_user_id(runtime)
+    if user_id is None:
+        return "Change failed: you must be logged in."
+    booking_id = _ref_id(booking_reference)
+    if booking_id is None:
+        return "Change failed: invalid booking reference."
+
+    async with AsyncSessionLocal() as session:
+        booking = await crud.get_booking(session, booking_id)
+        if booking is None or booking.user_id != user_id:
+            return "Change failed: no booking with that reference was found for your account."
+        if booking.status != BookingStatus.confirmed:
+            return "Change failed: this booking is already cancelled. Book again instead."
+        old_event = await crud.get_event(session, booking.event_id)
+        target_id = _to_int(new_event_id) if new_event_id else booking.event_id
+        if target_id is None:
+            return "Change failed: invalid new event ID."
+        target = await crud.get_event(session, target_id)
+        if target is None:
+            return f"Change failed: no event with ID {target_id} exists."
+        if old_event is not None and old_event.start_at is not None and old_event.start_at <= _now():
+            return "Change failed: the booked event has already started."
+        problem = _registration_problem(target)
+        if problem:
+            return f"Change failed: {problem} for '{target.title}'. The original booking is unchanged."
+        if target_id != booking.event_id:
+            other = next((b for b, e in await crud.list_user_bookings(session, user_id) if e.event_id == target_id), None)
+            if other is not None:
+                return f"Change failed: the user already has a booking for that event ({_booking_ref(other.booking_id)})."
+        if attendees:
+            people = [a.model_dump() if hasattr(a, "model_dump") else dict(a) for a in attendees]
+        else:
+            tickets = await crud.get_booking_tickets(session, user_id, booking_id)
+            people = [{"name": t.name, "email": t.email, "telephone": t.telephone} for t in tickets]
+        if not people:
+            return "Change failed: the booking needs at least one attendee. To drop everyone, cancel the booking."
+        if target_id == booking.event_id and not attendees:
+            return "Nothing to change: give a new event or a new attendee list."
+
+        try:
+            await crud.cancel_booking(session, user_id, booking_id)
+        except ValueError as exc:
+            return f"Change failed: {exc}"
+
+    try:
+        async with AsyncSessionLocal() as session:
+            new_booking = await crud.book_event(session, user_id, target_id, people)
+    except Exception as exc:
+        restored = await _restore_status(Booking, booking_id, BookingStatus.confirmed)
+        reason = str(exc).rstrip(".") if isinstance(exc, ValueError) else "the new booking could not be saved"
+        if restored:
+            return f"Change failed: {reason}. The original booking {_booking_ref(booking_id)} is still active."
+        return (
+            f"Change failed: {reason}, and the original booking {_booking_ref(booking_id)} could not be "
+            "restored automatically. Do not retry; tell the user to contact CCIFJ events staff."
+        )
+
+    names = ", ".join(person["name"] for person in people)
+    return (
+        "Booking changed.\n"
+        f"New reference: {_booking_ref(new_booking.booking_id)} (replaces {_booking_ref(booking_id)})\n"
+        f"Event: {target.title} ({_when(target.start_at)}, {target.location or 'location unknown'})\n"
+        f"Tickets: {len(people)} ({names})\n"
+        "This is a registration only; no payment was taken."
+    )
+
+
+@tool
+async def change_space_reservation(
+    reservation_reference: str,
+    new_start_date: Optional[str] = None,
+    new_end_date: Optional[str] = None,
+    new_title: Optional[str] = None,
+    new_expected_attendees: Optional[int] = None,
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Change one of the user's space reservations in a single step (new dates,
+    title, or number of attendees).
+
+    Behind the scenes the old reservation is cancelled and a new one is created;
+    if the new one fails, the old reservation is restored. Check the new dates
+    with check_space_availability first. Present the result to the user as a
+    change. Call only after the user explicitly confirms the change.
+
+    Args:
+        reservation_reference: The reservation to change, e.g. 'CCIFJ-SPC-00003' or '3'.
+        new_start_date: New start (YYYY-MM-DD or YYYY-MM-DD HH:MM). Omit to keep it.
+        new_end_date: New end (YYYY-MM-DD or YYYY-MM-DD HH:MM). Omit to keep it.
+        new_title: New title or purpose. Omit to keep it.
+        new_expected_attendees: New number of attendees. Omit to keep it.
+        runtime: Injected ToolRuntime providing access to the current graph state.
+
+    Returns:
+        The new reservation reference and summary, or why the change was not made.
+    """
+    user_id = _get_user_id(runtime)
+    if user_id is None:
+        return "Change failed: you must be logged in."
+    reservation_id = _ref_id(reservation_reference)
+    if reservation_id is None:
+        return "Change failed: invalid reservation reference."
+
+    async with AsyncSessionLocal() as session:
+        old = await crud.get_reservation(session, reservation_id)
+        if old is None or old.user_id != user_id:
+            return "Change failed: no reservation with that reference was found for your account."
+        if old.status != ReservationStatus.confirmed:
+            return "Change failed: this reservation is already cancelled. Reserve again instead."
+        if old.start_at <= _now():
+            return "Change failed: this reservation has already started."
+        try:
+            start = _parse_datetime(new_start_date) if new_start_date else old.start_at
+            end = _parse_datetime(new_end_date, end_of_day=True) if new_end_date else old.end_at
+        except ValueError:
+            return "Change failed: invalid date. Use YYYY-MM-DD or YYYY-MM-DD HH:MM."
+        title = (new_title or old.title).strip()
+        expected = new_expected_attendees if new_expected_attendees is not None else old.expected_attendees
+        if (start, end, title, expected) == (old.start_at, old.end_at, old.title, old.expected_attendees):
+            return "Nothing to change: give new dates, a new title, or a new number of attendees."
+        if end <= start or start <= _now():
+            return "Change failed: the new time must be in the future and end after it starts."
+        conflicts = [
+            r for r in await crud.find_space_conflicts(session, old.space_id, start, end)
+            if r.reservation_id != reservation_id
+        ]
+        if conflicts:
+            return "Change failed: the new time overlaps another reservation. Use check_space_availability to find a free slot. The original reservation is unchanged."
+        space = await crud.get_space(session, old.space_id)
+        try:
+            await crud.cancel_reservation(session, user_id, reservation_id)
+        except ValueError as exc:
+            return f"Change failed: {exc}"
+
+    try:
+        async with AsyncSessionLocal() as session:
+            new = await crud.create_reservation(
+                session, user_id, old.space_id, title, start, end,
+                is_public=old.is_public, expected_attendees=expected,
+                notes=old.notes, event_id=old.event_id,
+            )
+    except Exception as exc:
+        restored = await _restore_status(SpaceReservation, reservation_id, ReservationStatus.confirmed)
+        reason = str(exc).rstrip(".") if isinstance(exc, ValueError) else "the new reservation could not be saved"
+        if restored:
+            return f"Change failed: {reason}. The original reservation {_reservation_ref(reservation_id)} is still active."
+        return (
+            f"Change failed: {reason}, and the original reservation {_reservation_ref(reservation_id)} could not be "
+            "restored automatically. Do not retry; tell the user to contact CCIFJ staff."
+        )
+
+    return (
+        "Space reservation changed.\n"
+        f"New reference: {_reservation_ref(new.reservation_id)} (replaces {_reservation_ref(reservation_id)})\n"
+        f"Space: {space.name if space else 'unknown'}\n"
+        f"From: {_when(new.start_at)}\nTo: {_when(new.end_at)}\n"
+        f"Title: {new.title}{f' | {new.expected_attendees} attendees' if new.expected_attendees else ''}"
     )
 
 
