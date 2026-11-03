@@ -34,6 +34,12 @@ def _get_retriever():
         _retriever = bm25s.BM25.load(str(INDEX_PATH), load_corpus=True)
     return _retriever
 
+
+def warm_up() -> None:
+    """Load the search models now so the first knowledge-base question does not wait."""
+    _get_embed_model()
+    _get_retriever()
+
 #################################################
 #
 # Helpers (database-backed tools)
