@@ -153,7 +153,8 @@ class ApprovalCardTest(DatabaseTest):
         self.assertIn("personnel de la CCIFJ", staff["reply"])
         booking = await self.format("book_space", {"space_name": "Room"}, guest=True)
         self.assertEqual(booking["pending_approvals"], [])
-        self.assertIn("signed-in account", booking["reply"])
+        self.assertIn("sign in", booking["reply"])
+        self.assertNotIn("new conversation", booking["reply"])
 
     async def test_booking_and_space_cards(self):
         event, space = await self.add(

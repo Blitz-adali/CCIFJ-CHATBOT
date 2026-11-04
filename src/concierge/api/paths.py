@@ -164,9 +164,9 @@ async def run_path_step(body, user, session) -> dict | None:
         return _guided(reply, "space_booking", active_path_step="spaces.submit", path_context=context)
     elif step == "spaces.submit" and user is None:
         reply = {
-            "en": "Please sign in before creating a space reservation. After signing in, start a new conversation and choose the space booking path again.",
-            "fr": "Connectez-vous avant de créer une réservation d’espace. Après connexion, démarrez une nouvelle conversation et choisissez à nouveau le parcours de réservation.",
-            "ja": "会場を予約するにはログインしてください。ログイン後、新しい会話を開始して予約手順を選び直してください。",
+            "en": "Please sign in before creating a space reservation. Your conversation is kept: once you are signed in, choose the space booking step again right here.",
+            "fr": "Connectez-vous avant de créer une réservation d’espace. Votre conversation est conservée : une fois connecté, choisissez à nouveau l’étape de réservation ici même.",
+            "ja": "会場を予約するにはログインしてください。会話はそのまま残りますので、ログイン後にここで予約手順を選び直してください。",
         }[locale]
         return _guided(reply, "space_booking")
     elif step == "spaces.submit":

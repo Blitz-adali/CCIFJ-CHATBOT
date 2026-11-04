@@ -72,6 +72,7 @@ membership_agent = create_agent(
         t.list_available_industries_and_regions,
         t.get_official_form,
         t.get_ccifj_contact,
+        t.search_vectordb,
         t.return_to_main_menu,
     ],
     state_schema=ConciergeAgentState,

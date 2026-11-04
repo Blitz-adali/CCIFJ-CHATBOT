@@ -1,11 +1,25 @@
 from .config import EMBED_MODEL_NAME, COHERE_API_KEY, COHERE_RERANK_MODEL
 import cohere
+import threading
 from typing import Literal
 from chromadb.api.models.Collection import Collection
 from sentence_transformers import (SentenceTransformer)
 from .index_init import create_collection
 from transformers import AutoTokenizer
 import bm25s
+
+_collection: Collection | None = None
+_collection_lock = threading.Lock()
+
+
+def get_collection() -> Collection:
+    """Open the Chroma collection once per process. Creating a client for every
+    search crashes when the agent runs two searches in parallel."""
+    global _collection
+    with _collection_lock:
+        if _collection is None:
+            _collection = create_collection(overwrite=False)
+        return _collection
 
 
 
@@ -27,7 +41,7 @@ def search(retriever: bm25s.BM25, model: SentenceTransformer, query: str, origin
         return ["hybrid_n can't be greater than original_n"]
     if (reranked_n >= hybrid_n):
         return ["reranked_n can't be equal to or greater than hybrid_n"]
-    collection = create_collection(overwrite=False)
+    collection = get_collection()
     results1 = semantic_search(query, collection=collection, model=model, limit=original_n)
     results2 = lexical_search(retriever, query, limit=original_n)
 

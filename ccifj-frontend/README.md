@@ -20,7 +20,7 @@ npm run dev
 
 Open **http://127.0.0.1:5173/**. The Vite proxy forwards `/api` to http://127.0.0.1:8000. There are no simulated answers.
 
-The welcome screen and suggestion matching read the shared question catalogs from `../src/concierge/data/` (`predefined_qa.json`, `predefined_qa_i18n.json`), so run Vite from this folder inside the repository.
+The welcome screen's fallback starter questions read the shared catalogs from `../src/concierge/data/` (`predefined_qa.json`, `predefined_qa_i18n.json`), so run Vite from this folder inside the repository. Questions under an answer are written by the agent; there are no pre-written answers.
 
 ## Configure the API
 

@@ -23,8 +23,8 @@ export function FollowUpQuestions({
   onSelectAction?: (action: NextAction) => void;
 }) {
   const actions = nextActions.filter(action => action.label?.trim() && (action.id === 'auth.login' || action.prompt?.trim())).slice(0, 2);
-  // At most three buttons: actions first, then questions in the remaining slots.
-  const uniqueQuestions = [...new Set(questions.map(question => question.trim()).filter(Boolean))].slice(0, 3 - actions.length);
+  // Actions first, then questions: three buttons in all, but always room for two questions.
+  const uniqueQuestions = [...new Set(questions.map(question => question.trim()).filter(Boolean))].slice(0, Math.max(2, 3 - actions.length));
   if (!uniqueQuestions.length && !pathActions.length && !actions.length) return null;
 
   return (

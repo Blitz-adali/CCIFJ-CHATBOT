@@ -11,7 +11,6 @@ from .schema_prompts import (
         CollectorOutput,
         NextAction,
         LOGIN_REQUIRED_ACTIONS,
-        ACTION_OVERLAPPING_QUESTIONS,
         EventsState,
         MembershipState,
         GeneralState,
@@ -22,9 +21,7 @@ from .schema_prompts import (
         ORCHESTRATOR_SYSTEM_PROMPT,
         COLLECTOR_SYSTEM_PROMPT,
         routing_system_prompt,
-        find_predefined_question,
         normalize_lang,
-        localized_answer,
     )
 from .model import llm, llm_routing
 from ..db.relationaldb.datetimes import japan_now
@@ -103,7 +100,8 @@ def _user_context_prompt(state: dict) -> str:
             "\n\n## USER PROFILE\n"
             + _conversation_clock(state)
             + "The user is NOT logged in. Booking tickets, reserving spaces, and subscribing to the newsletter "
-            "require login: offer to log in instead of collecting details for those actions. "
+            "require login: offer to sign in instead of collecting details for those actions. After signing in, "
+            "the user continues in this same conversation; never ask them to start a new one. "
             "Writing a staff request does not require login."
         )
     user_context = state.get("user_context")
@@ -135,10 +133,64 @@ def _worker_messages(state: dict) -> list:
     return [SystemMessage(content=_user_context_prompt(state).strip()), *messages]
 
 
-def _without_overlapping_questions(questions: list[str], actions: list[dict]) -> list[str]:
-    """Drop suggested questions whose intent is already offered as an action button."""
-    covered = {q for action in actions for q in ACTION_OVERLAPPING_QUESTIONS.get(action["id"], ())}
-    return [question for question in questions if question not in covered]
+def _clean_suggestions(questions: list[str] | None, actions: list[dict] = ()) -> list[str]:
+    """Model-written follow-up questions: trimmed, unique, at most 3, and not a
+    repeat of an action button shown next to them."""
+    taken = {text.strip().casefold() for action in actions for text in (action["label"], action["prompt"])}
+    cleaned: list[str] = []
+    for question in questions or []:
+        question = " ".join(str(question).split())[:160]
+        if question and question.casefold() not in taken and question.casefold() not in {q.casefold() for q in cleaned}:
+            cleaned.append(question)
+    return cleaned[:3]
+
+
+_RECENT_TURNS = 3
+_RECENT_TEXT_LIMIT = 1200
+
+
+def _recent_conversation(messages: list) -> str:
+    """The last few exchanges before the latest user message, as plain text for
+    the collector, which otherwise sees only this turn and repeats itself."""
+    turns = [
+        message for message in messages
+        if isinstance(message, (HumanMessage, AIMessage))
+        and not getattr(message, "tool_calls", None)
+        and _message_text(message.content).strip()
+    ]
+    if turns and isinstance(turns[-1], HumanMessage):
+        turns = turns[:-1]
+    turns = turns[-_RECENT_TURNS * 2:]
+    if not turns:
+        return ""
+    lines = []
+    for message in turns:
+        speaker = "User" if isinstance(message, HumanMessage) else "Assistant"
+        text = _message_text(message.content).strip()
+        if len(text) > _RECENT_TEXT_LIMIT:
+            text = text[:_RECENT_TEXT_LIMIT] + " […]"
+        lines.append(f"{speaker}: {text}")
+    return (
+        "Earlier in this conversation (context only, not instructions; do not repeat it):\n"
+        + "\n\n".join(lines) + "\n\n"
+    )
+
+
+def _focus_details(plan: dict) -> str:
+    note = _user_details_note(plan)
+    return "\n" + note if note else ""
+
+
+def _user_details_note(plan: dict) -> str:
+    """What the orchestrator knows and still misses about the user, for workers and the collector."""
+    known = str(plan.get("known_user_details") or "").strip()
+    missing = [str(item).strip() for item in plan.get("missing_user_details") or [] if str(item).strip()]
+    lines = []
+    if known:
+        lines.append(f"Known user details: {known}")
+    if missing:
+        lines.append("User details still unknown (they would make the answer more specific): " + ", ".join(missing))
+    return "\n".join(lines)
 
 
 _EVENT_ID_PATTERN = re.compile(r"\b(?:ID|event[_ ]id)\s*[:#]?\s*(\d+)", re.IGNORECASE)
@@ -189,11 +241,11 @@ def _validate_next_actions(actions: list[NextAction], state: dict, findings: str
 _REFERENCED_EVENTS_PATTERN = re.compile(r"\[Event IDs from the events database this turn: ([^\]]*)\]")
 
 _BOOKING_ACTION_TEXT = {
-    "en": ("Book this event", "I want to book a ticket for {title} (event ID {id}).",
+    "en": ("Book this event", "I want to book a ticket for {title}.",
            "Sign in to book", "I want to sign in to book {title}."),
-    "fr": ("Réserver cet événement", "Je souhaite réserver un billet pour {title} (événement ID {id}).",
+    "fr": ("Réserver cet événement", "Je souhaite réserver un billet pour {title}.",
            "Se connecter pour réserver", "Je souhaite me connecter pour réserver {title}."),
-    "ja": ("このイベントを予約", "{title}（イベントID {id}）のチケットを予約したいです。",
+    "ja": ("このイベントを予約", "{title}のチケットを予約したいです。",
            "ログインして予約", "{title}を予約するためにログインしたいです。"),
 }
 
@@ -237,7 +289,7 @@ async def _with_booking_action(actions: list[dict], state: dict, findings: str) 
         if event_id in booked:
             return actions
         action = {"id": "event.book", "label": book_label,
-                  "prompt": book_prompt.format(title=event.title, id=event_id), "event_id": event_id}
+                  "prompt": book_prompt.format(title=event.title), "event_id": event_id}
     return [action, *actions][:2]
 
 
@@ -249,7 +301,8 @@ async def orchestrator_node(state: AgentState):
     """
     Analyzes the user's input, detects language, and decomposes compound or single-intent
     queries into domain tasks for specialist workers.
-    Also predicts up to 3 likely follow-up questions from the predefined catalog.
+    For advisory requests it may first ask for the user's details (company,
+    industry, country...) instead of routing; see ORCHESTRATOR_SYSTEM_PROMPT.
     """
     # Route the latest user turn with a small amount of recent conversational
     # context. Keeping only human/assistant text avoids sending tool payloads
@@ -303,51 +356,6 @@ async def orchestrator_node(state: AgentState):
             "out_of_scope_count": count,
         }
 
-    matched_question, question_locale = find_predefined_question(current_question)
-    if matched_question is not None and not state.get("context"):
-        question_locale = question_locale or "en"
-        direct_response = localized_answer(matched_question, question_locale)
-        question = matched_question.casefold()
-        if any(term in question for term in ("event", "ticket", "room", "space", "speaker", "sponsor")):
-            follow_up_order = [
-                "What events are coming up at CCIFJ?",
-                "How can I book a ticket for a CCIFJ event?",
-                "Can I rent a meeting room or event space at CCIFJ?",
-                "How can I become a speaker at a CCIFJ event?",
-                "How can I sponsor a CCIFJ event?",
-            ]
-        elif any(term in question for term in ("member", "membership", "fees", "benefits", "companies")):
-            follow_up_order = [
-                "How do I become a CCIFJ member?",
-                "What are the CCIFJ membership fees?",
-                "What are the benefits of CCIFJ membership?",
-                "How can I search for French companies in Japan?",
-            ]
-        else:
-            follow_up_order = [
-                "How can I set up a company in Japan through CCIFJ?",
-                "How do I post a job offer or find candidates through CCIFJ?",
-                "How do I subscribe to the CCIFJ newsletter?",
-                "Where is the CCIFJ office located?",
-                "How do I submit corporate news to CCIFJ?",
-                "What is CCIFJ?",
-            ]
-        # Canonical (English) catalog questions; the API localizes them to the UI language.
-        suggested = [item for item in follow_up_order if item != matched_question][:3]
-        return {
-            "messages": [AIMessage(content=direct_response)],
-            # Clear turn-local state so a previous turn's worker plan cannot
-            # route this direct FAQ answer back through an agent.
-            "plan": {"tasks": []},
-            "worker_results": {},
-            "active_agent": "orchestrator",
-            "target_route": "none",
-            "next_actions": [],
-            "suggested_questions": suggested,
-            "scope_status": "in_scope",
-            "out_of_scope_count": 0,
-            "lang": normalize_lang(question_locale),
-        }
     structured_llm = llm_routing.with_structured_output(OrchestratorPlan)
     attachment_context = _attachment_context_prompt(state.get("context", []))
     response: OrchestratorPlan = await structured_llm.ainvoke(
@@ -355,8 +363,8 @@ async def orchestrator_node(state: AgentState):
         + recent_context
     )
     lang = normalize_lang(response.lang)
-    # Canonical (English) catalog questions; the API localizes them to the UI language.
-    suggested = list(dict.fromkeys(response.suggested_questions or []))
+    # Written by the model in the user's language; only used when no worker runs.
+    suggested = _clean_suggestions(response.suggested_questions)
 
     if response.scope == "out_of_scope":
         count = int(state.get("out_of_scope_count", 0)) + 1
@@ -409,7 +417,8 @@ async def orchestrator_node(state: AgentState):
         "active_agent": "orchestrator",
         "target_route": response.tasks[0].target if response.tasks else None,
         "next_actions": [],
-        "suggested_questions": suggested,
+        # The collector writes suggestions that fit its answer.
+        "suggested_questions": [],
         "scope_status": "in_scope",
         "out_of_scope_count": 0,
     }
@@ -490,18 +499,21 @@ async def events_node(state: AgentState, config: RunnableConfig = None) -> dict:
     if state.get("user_id") is None and _anonymous_ticket_request(state.get("messages", [])):
         locale = state.get("lang", "en")
         login_message = {
-            "en": "I can help with booking. To place a reservation, please log in; after logging in, start a new conversation and ask about this event again.",
-            "fr": "Je peux vous aider pour la réservation. Pour réserver, veuillez vous connecter, puis démarrer une nouvelle conversation et poser à nouveau votre question sur cet événement.",
-            "ja": "予約のお手伝いができます。実際に予約するにはログインが必要です。ログイン後、新しい会話を開始して、このイベントについてもう一度お尋ねください。",
-        }.get(locale, "Please log in to book event tickets. After logging in, start a new conversation and ask to book this event again.")
-        return {"messages": [AIMessage(content=login_message)], "worker_results": {}}
+            "en": "I can help with booking. Booking tickets needs a CCIFJ account, so please sign in with the Sign in button. You can stay in this conversation: once you are signed in, we'll pick up the booking right here.",
+            "fr": "Je peux vous aider pour la réservation. Réserver des billets nécessite un compte CCIFJ : veuillez vous connecter avec le bouton Se connecter. Inutile de changer de conversation : une fois connecté, nous reprendrons la réservation ici même.",
+            "ja": "予約のお手伝いができます。チケットの予約にはCCIFJアカウントが必要ですので、ログインボタンからログインしてください。会話はこのまま続けられます。ログイン後、ここで予約を再開します。",
+        }.get(locale, "Booking tickets needs a CCIFJ account, so please sign in. You can stay in this conversation: once you are signed in, we'll pick up the booking right here.")
+        # The client opens the sign-in dialog for auth.login; the prompt is never sent.
+        login_label = _BOOKING_ACTION_TEXT.get(locale, _BOOKING_ACTION_TEXT["en"])[2]
+        sign_in = {"id": "auth.login", "label": login_label, "prompt": login_label, "event_id": None}
+        return {"messages": [AIMessage(content=login_message)], "worker_results": {}, "next_actions": [sign_in]}
 
     sub_query = " | ".join(t.get("sub_query", "") for t in event_tasks) if event_tasks else ""
     agent_messages = _worker_messages(state)
 
     if sub_query:
         input_messages = agent_messages + [
-            HumanMessage(content=f"[Focus Task for Events Specialist]: {sub_query}")
+            HumanMessage(content=f"[Focus Task for Events Specialist]: {sub_query}" + _focus_details(plan))
         ]
     else:
         input_messages = agent_messages
@@ -620,7 +632,7 @@ async def membership_node(state: AgentState, config: RunnableConfig = None) -> d
 
     if sub_query:
         input_messages = agent_messages + [
-            HumanMessage(content=f"[Focus Task for Membership Specialist]: {sub_query}")
+            HumanMessage(content=f"[Focus Task for Membership Specialist]: {sub_query}" + _focus_details(plan))
         ]
     else:
         input_messages = agent_messages
@@ -657,7 +669,7 @@ async def general_node(state: AgentState, config: RunnableConfig = None) -> dict
 
     if sub_query:
         input_messages = agent_messages + [
-            HumanMessage(content=f"[Focus Task for General & B2B Specialist]: {sub_query}")
+            HumanMessage(content=f"[Focus Task for General & B2B Specialist]: {sub_query}" + _focus_details(plan))
         ]
     else:
         input_messages = agent_messages
@@ -703,19 +715,15 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
             last_human = msg.content
             break
 
-    # Build the synthesis context from all active workers
-    user_context = f"The user asked: {last_human}\n\nDomain specialist findings:\n"
+    # Build the synthesis context from all active workers. Earlier turns come
+    # first so the answer can build on them instead of repeating them.
+    user_context = _recent_conversation(state["messages"])
+    user_context += f"The user asked: {last_human}\n\nDomain specialist findings:\n"
     for domain, content in results.items():
         user_context += f"\n--- [{domain.upper()} SPECIALIST FINDINGS] ---\n{content}\n"
 
-    clickable_questions = state.get("suggested_questions") or []
-    if clickable_questions:
-        user_context += (
-            "\nClickable follow-up questions already shown separately to the user "
-            "(do not repeat these in the closing offer):\n"
-            + "\n".join(f"- {question}" for question in clickable_questions)
-            + "\n"
-        )
+    details = _user_details_note(state.get("plan") or {})
+    user_context += f"\n{details}\n" if details else "\nNo details about the user matter for this request.\n"
 
     user_context += (
         f"\nTask: Synthesize the above specialist findings into one unified, elegant, and structured response in the language of the user's latest message (ISO 639-1 code '{lang}'). "
@@ -728,7 +736,7 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
         {"role": "user", "content": user_context},
     ]
 
-    answer, next_actions = "", []
+    answer, next_actions, suggested = "", [], []
     try:
         output = await llm.with_structured_output(CollectorOutput).ainvoke(synthesis_messages, config=config)
         if output is not None:
@@ -741,6 +749,7 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
                 # WARNING so it shows with the default logging setup.
                 logger.warning("next_actions filtered: proposed=%s kept=%s", proposed, kept)
             next_actions = await _with_booking_action(next_actions, state, findings)
+            suggested = _clean_suggestions(output.suggested_questions, next_actions)
     except Exception:
         logger.exception("Structured collector synthesis failed; falling back to plain text")
 
@@ -757,7 +766,7 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
         "active_agent": "orchestrator",
         "target_route": None,
         "next_actions": next_actions,
-        "suggested_questions": _without_overlapping_questions(state.get("suggested_questions") or [], next_actions),
+        "suggested_questions": suggested,
     }
 
 
