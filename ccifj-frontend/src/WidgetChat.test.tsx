@@ -8,7 +8,7 @@ describe('compact concierge',()=>{
     vi.stubGlobal('window',{location:{search:'?lang=fr'}});
     const html=renderToStaticMarkup(<WidgetChat/>);
     expect(html).toContain('Bonjour ! Comment puis-je vous aider ?');
-    expect(html).toContain('aria-label="Fermer le chat"');
+    expect(html).toContain('aria-label="Nouvelle conversation"');
     expect(html).toContain('aria-label="Envoyer"');
     expect(html).toContain('id="widget-question"');
   });

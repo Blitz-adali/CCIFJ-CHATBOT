@@ -2,6 +2,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from datetime import timedelta
 from tempfile import TemporaryDirectory
 
 from fastapi import FastAPI
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from concierge.api import auth, chat, health, sessions
+from concierge.api import auth, chat, health, sessions, staff
 from concierge.api.agent_backend import response_events, response_locale
 from concierge.db.relationaldb.session import get_session
 
@@ -21,6 +22,13 @@ engine = create_async_engine(f"sqlite+aiosqlite:///{Path(workspace.name) / 'brow
 async def lifespan(app):
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+    from concierge.db.relationaldb import crud, models
+    from concierge.auth.security import hash_password
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        await crud.register_user(db, 'Demo Operator', 'operator@demo.ccifj.test', hash_password('browser-operator-password'))
+        db.add(models.Event(title='Browser Business Summit', description='An event for business connections.', category='Networking', location='Tokyo', start_at=crud._now()+timedelta(days=30), reg_deadline=crud._now()+timedelta(days=25), price=5000, member_price=3000, currency='JPY'))
+        await db.commit()
+        await crud.add_staff_request(db, request_type='team_ticket', category='business', subject='Approved market entry inquiry', message='Please help us enter the Japanese market.', sender_name='Demo Visitor', sender_email='visitor@example.com')
     yield
     await engine.dispose()
     workspace.cleanup()
@@ -56,7 +64,7 @@ class BrowserAgent:
 
 backend = BrowserAgent()
 app = FastAPI(lifespan=lifespan)
-for router in (auth.router, chat.router, health.router, sessions.router):
+for router in (auth.router, chat.router, health.router, sessions.router, staff.router):
     app.include_router(router, prefix="/api/v1")
 app.dependency_overrides[get_session] = database
 app.dependency_overrides[chat.agent_backend] = lambda: backend

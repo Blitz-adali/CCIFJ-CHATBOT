@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from secrets import token_hex
 from contextlib import aclosing
 from typing import Annotated
 
@@ -8,10 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, WebS
 
 from concierge.auth.dependencies import CurrentUser, DatabaseSession
 from concierge.config import get_settings
+from concierge.recovery import ReadOnlyTurnFailure, recovery_response
 from concierge.db.relationaldb import crud
 from concierge.db.relationaldb.models import MessageRole
 from .agent_backend import ApprovalStateUnavailable, agent_inputs, get_agent_backend, response_locale, response_events
 from .attachments import MAX_FILES_PER_CONVERSATION, extract_attachment
+from .answers import common_answer
 from .paths import run_path_step, space_booking_agent_message
 from .progress import initial_label
 from .schemas import ApprovalRequest, ChatRequest, ChatResponse
@@ -21,15 +24,19 @@ router = APIRouter(tags=["chat"])
 logger = logging.getLogger(__name__)
 
 
+class LazyBackend:
+    async def load(self):
+        try:
+            return await asyncio.to_thread(get_agent_backend)
+        except Exception as exc:
+            logger.exception("Agent initialization failed")
+            raise HTTPException(status_code=503, detail={"message": "The agent is unavailable; check server model configuration.", "outcome_unknown": False, "safe_to_retry": True}) from exc
+
+
 async def agent_backend(session: DatabaseSession):
-    """Lazy model initialization; expose a dependency for isolated API checks."""
-    # Authentication may have opened a read transaction before model loading.
+    """Guided database lookups remain available without loading any models."""
     await session.commit()
-    try:
-        return await asyncio.to_thread(get_agent_backend)
-    except Exception as exc:
-        logger.exception("Agent initialization failed")
-        raise HTTPException(status_code=503, detail={"message": "The agent is unavailable; check server model configuration.", "outcome_unknown": False, "safe_to_retry": True}) from exc
+    return LazyBackend()
 
 
 Backend = Annotated[object, Depends(agent_backend)]
@@ -78,6 +85,19 @@ def conversation_state(metadata_rows):
     return files, state
 
 
+def preserve_context(direct, state):
+    """Carry durable facts through model-free journeys; never replay tool evidence."""
+    kept = {key: value for key, value in state.items()
+            if key in {'conversation_brief', 'out_of_scope_count', 'source_urls', 'space_checks'}}
+    from concierge.source_context import source_memory
+    urls = source_memory([*(kept.get('source_urls') or []),
+                          *[event.get('source_url') for event in direct.get('events') or []]])
+    if urls:
+        kept['source_urls'] = urls
+    if kept:
+        direct['agent_state'] = kept
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest, session: DatabaseSession, user: CurrentUser,
@@ -112,11 +132,24 @@ async def chat(
             direct = await run_path_step(body, user, session)
             if direct is not None:
                 # Guided steps are fixed, read-only lookups: no agent, no presentation pass.
+                preserve_context(direct, state)
                 await crud.add_message(session, conversation.session_id, MessageRole.user, body.message)
                 direct.update(request_id=body.request_id, attachment_count=len(files))
                 result = await save_reply(session, conversation, token, direct, None)
                 response.headers["Cache-Control"] = "no-store"
                 return result
+        if not body.path_step_id and not body.attachments and not files:
+            direct = await common_answer(body.message, body.locale, session, user, state.get("conversation_brief"))
+            if direct is not None:
+                await crud.add_message(session, conversation.session_id, MessageRole.user, body.message)
+                direct.update(request_id=body.request_id, attachment_count=len(files))
+                # Preserve the existing brief across model-free read-only turns.
+                preserve_context(direct, state)
+                result = await save_reply(session, conversation, token, direct, None)
+                response.headers['Cache-Control'] = 'no-store'
+                return result
+        if isinstance(backend, LazyBackend):
+            backend = await backend.load()
         agent_message = space_booking_agent_message(body) if body.path_step_id == "spaces.submit" else None
         known = {item.get("id") for item in files}
         new_files = []
@@ -142,6 +175,10 @@ async def chat(
             # The agent still answers without a profile; it just isn't personalized.
             logger.exception("Could not load the user context for session %s", conversation.session_id)
             user_context = None
+        categories = await crud.list_member_categories(session)
+        membership_context = [{"category":c.category_name, "annual_fee":str(c.annual_price) if c.annual_price is not None else None,
+                               "currency":c.currency,"description":c.category_description,
+                               "record_updated_at":c.updated_at.isoformat()} for c in categories]
         await session.commit()
         active_turns.add(conversation.session_id)
         locale_token = response_locale.set(body.locale)
@@ -149,19 +186,31 @@ async def chat(
             "context": files, "agent_message": agent_message,
             "out_of_scope_count": state.get("out_of_scope_count", 0),
             "user_context": user_context,
+            "conversation_brief": state.get("conversation_brief", {}),
+            "membership_context": membership_context,
+            "source_urls": state.get("source_urls", []),
+            "space_checks": state.get("space_checks", []),
         })
         try:
             async with asyncio.timeout(get_settings().agent_timeout_seconds):
                 result = await backend.chat(history, user_id, thread_id)
             result["request_id"] = body.request_id
             result = await save_reply(session, conversation, token, result, thread_id)
+        except ReadOnlyTurnFailure as exc:
+            recovered = recovery_response(exc, body.locale)
+            recovered['request_id'] = body.request_id or exc.reference
+            recovered['agent_state']['out_of_scope_count'] = state.get('out_of_scope_count', 0)
+            recovered['agent_state']['source_urls'] = state.get('source_urls', [])
+            recovered['agent_state']['space_checks'] = state.get('space_checks', [])
+            result = await save_reply(session, conversation, token, recovered, None)
         except asyncio.CancelledError:
             await crud.add_message(session, conversation.session_id, MessageRole.assistant,
                 "The connection ended. Check the request outcome before continuing.",
                 [{"type": "api_turn_state", "status": "unknown"}])
             raise
         except Exception as exc:
-            logger.exception("Agent turn failed for session %s", conversation.session_id)
+            reference = token_hex(6)
+            logger.exception("Agent turn failed reference=%s session=%s", reference, conversation.session_id)
             await crud.add_message(
                 session, conversation.session_id, MessageRole.assistant,
                 "The request could not be completed. Check any bookings before retrying.",
@@ -169,6 +218,7 @@ async def chat(
             )
             raise HTTPException(status_code=502, detail={
                 "message": "The agent could not complete this request. Do not automatically retry writes.",
+                "error_code": "action_outcome_unknown", "error_reference": reference,
                 "session_id": token, "outcome_unknown": True,
             }) from exc
         finally:
@@ -198,10 +248,14 @@ async def approve(
             item.get("interrupt_id") == body.interrupt_id for item in pending["approvals"]
         ):
             raise HTTPException(status_code=409, detail="No matching pending approval.")
+        if isinstance(backend, LazyBackend):
+            backend = await backend.load()
         original_metadata = list(latest.tool_calls or [])
+        saved_evidence = next((item.get("tool_evidence") for item in original_metadata if item.get("type") == "agent_state"), None)
         await crud.update_message_metadata(session, latest, original_metadata + [{"type": "api_turn_state", "status": "processing"}])
         active_turns.add(conversation.session_id)
         locale_token = response_locale.set(body.locale)
+        evidence_token = agent_inputs.set({"tool_evidence": saved_evidence})
         try:
             async with asyncio.timeout(get_settings().agent_timeout_seconds):
                 result = await backend.resume(pending["thread_id"], body.interrupt_id, body.decision)
@@ -209,16 +263,25 @@ async def approve(
             result = await save_reply(session, conversation, session_id, result, pending["thread_id"])
             await crud.update_message_metadata(session, latest, None)
         except ApprovalStateUnavailable as exc:
-            await crud.update_message_metadata(session, latest, original_metadata)
-            raise HTTPException(status_code=409, detail="Approval state is unavailable after a restart or on another worker. No action was replayed.") from exc
+            # Release the stale approval without replaying its write tool. The
+            # user can now prepare a fresh request in this conversation.
+            await crud.update_message_metadata(session, latest, [item for item in original_metadata if item.get("type") not in {"pending_approval", "api_response", "api_turn_state"}])
+            reply = {
+                "en": "This approval expired after a server restart. No action was replayed. Check your bookings or staff request references, then ask me to prepare it again if needed.",
+                "fr": "Cette validation a expiré après un redémarrage. Aucune action n’a été relancée. Vérifiez vos réservations ou références, puis demandez-moi de préparer une nouvelle demande si nécessaire.",
+                "ja": "サーバー再起動により承認の有効期限が切れました。操作は再実行されていません。予約や問い合わせ番号を確認し、必要であれば再度ご依頼ください。",
+            }[body.locale]
+            result = await save_reply(session, conversation, session_id, {"reply": reply, "warnings": ["approval_expired"], "request_id": body.request_id}, None)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.exception("Agent approval failed for session %s", conversation.session_id)
-            raise HTTPException(status_code=502, detail={"message": "Approval could not be completed. Check the booking before retrying.", "session_id": session_id, "outcome_unknown": True}) from exc
+            reference = token_hex(6)
+            logger.exception("Agent approval failed reference=%s session=%s", reference, conversation.session_id)
+            raise HTTPException(status_code=502, detail={"message": "Approval could not be completed. Check the booking before retrying.", "error_code": "action_outcome_unknown", "error_reference": reference, "session_id": session_id, "outcome_unknown": True}) from exc
         finally:
             active_turns.discard(conversation.session_id)
             response_locale.reset(locale_token)
+            agent_inputs.reset(evidence_token)
         response.headers["Cache-Control"] = "no-store"
         return result
 

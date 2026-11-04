@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
 
+
 :root {
   font-family: 'DM Sans', Arial, sans-serif;
   color: #18374b;
@@ -85,3 +86,24 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 @media(prefers-reduced-motion:reduce) {
   *, *::before, *::after { scroll-behavior: auto!important; animation: none!important; transition: none!important; }
 }
+
+.language-control select { min-height: 40px; padding: 7px 10px; border: 1px solid #c8d2d5; border-radius: 10px; background: #fff; color: #073f69; font-weight: 600; }
+.simple-chat[hidden] { display: none; }
+.staff-inbox { width: min(100%, 1000px); height: 100%; margin: 0 auto; padding: 32px; overflow-y: auto; }
+.inbox-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.inbox-heading h1 { margin: 4px 0; color: #073f69; }
+.staff-inbox button, .inbox-filter select { min-height: 40px; padding: 9px 16px; border: 1px solid #bccdd6; border-radius: 10px; background: #fff; color: #073f69; }
+.inbox-note { max-width: 640px; line-height: 1.6; color: #526b7b; }
+.inbox-filter { display: flex; align-items: center; gap: 16px; margin: 24px 0; }
+.inbox-items { display: grid; gap: 16px; }
+.inbox-request { min-width: 0; padding: 24px; border: 1px solid #d9dfe0; border-radius: 18px; background: #fff; overflow-wrap: anywhere; }
+.inbox-request h2 { margin: 16px 0; font-size: 18px; }
+.inbox-request > p { color: #526b7b; font-size: 13px; }
+.inbox-request-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; color: #526b7b; font-size: 12px; }
+.inbox-request-meta code { color: #073f69; }
+.inbox-request-meta span { padding: 4px 10px; border-radius: 20px; background: #e9f2f4; }
+.inbox-request-meta time { margin-left: auto; }
+.inbox-request summary { margin-top: 20px; color: #00669b; cursor: pointer; }
+.inbox-message { white-space: pre-wrap; line-height: 1.7; }
+.inbox-more { margin-top: 20px; }
+@media(max-width:720px) { .staff-inbox { padding: 20px 16px; } .topbar-right { gap: 6px; } .language-control select { min-height: 36px; padding: 5px; font-size: 12px; } .inbox-request { padding: 18px; } }

@@ -17,6 +17,8 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from concierge.db.relationaldb import crud
+from concierge.db.relationaldb.datetimes import japan_now
+from .events import event_card
 
 logger = logging.getLogger(__name__)
 
@@ -66,36 +68,27 @@ async def run_path_step(body, user, session) -> dict | None:
     actions: list[dict] = []
 
     if definition["tool"] == "list_available_events":
-        from concierge.agents.tools import list_available_events, search_vectordb
-
-        output = await list_available_events.ainvoke({})
-        if not isinstance(output, str):
-            output = str(output)
-        reply = _format_event_list_markdown(output, locale)
-        for line in output.splitlines():
-            match = re.match(r"\[ID\s+([^\]]+)\]\s+(.+?)\s+\|", line)
-            if match:
-                next_step = definition["next_step"]
-                actions.append({"id": next_step, "event_id": match.group(1), "label": f"{labels[next_step]}: {match.group(2)}"})
-        if output.strip() == "No matching events were found.":
-            try:
-                knowledge = await search_vectordb.ainvoke({"query": "CCIFJ upcoming events event calendar conferences seminars networking events"})
-                if isinstance(knowledge, str) and knowledge.strip():
-                    note = {
-                        "en": "The live events database has no matching records. The related information below comes from CCIFJ website/knowledge-base content and may not reflect the current calendar.",
-                        "fr": "La base de données des événements en direct ne contient aucun résultat correspondant. Les informations ci-dessous proviennent du site ou de la base de connaissances de la CCIFJ et peuvent ne pas refléter le calendrier actuel.",
-                        "ja": "イベントのライブデータベースに一致する情報はありません。以下はCCIFJのウェブサイトまたはナレッジベースからの関連情報で、最新の予定とは異なる場合があります。",
-                    }[locale]
-                    reply = f"## Related event information\n\n{note}\n\n{knowledge.strip()}"
-            except Exception:
-                logger.exception("Vector knowledge fallback failed for the guided events path")
+        events = list(await crud.search_events(session, date_from=japan_now(), limit=10))
+        heading = {"en": "Upcoming CCIFJ events", "fr": "Événements CCIFJ à venir", "ja": "今後のCCIFJイベント"}[locale]
+        note = {"en": "Choose an event to see its details. Times are shown in Japan time (JST).", "fr": "Choisissez un événement pour en savoir plus. Les horaires sont indiqués à l’heure du Japon (JST).", "ja": "イベントを選択して詳細をご確認ください。日時は日本時間（JST）です。"}[locale]
+        empty = {"en": "No upcoming events are listed. Ask me to help you contact the events team.", "fr": "Aucun événement à venir n’est répertorié. Je peux vous aider à contacter l’équipe événements.", "ja": "現在、今後のイベントは登録されていません。イベント担当者へのお問い合わせをお手伝いできます。"}[locale]
+        return _guided(f"## {heading}\n\n{note if events else empty}", "events", events=[event_card(event) for event in events])
     elif definition["tool"] == "get_event_details" and body.path_event_id:
-        from concierge.agents.tools import get_event_details
-
-        output = await get_event_details.ainvoke({"event_id": body.path_event_id})
-        reply = _format_event_details_markdown(str(output))
-        next_step = definition["next_step"]
-        actions = [{"id": next_step, "event_id": body.path_event_id, "label": labels[next_step]}]
+        try:
+            event_id = int(body.path_event_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid event ID.") from exc
+        event = await crud.get_event(session, event_id)
+        if event is None:
+            raise HTTPException(status_code=404, detail="Event not found.")
+        languages = await crud.get_event_languages(session, event_id)
+        speakers = await crud.get_event_speakers(session, event_id)
+        reply = f"## {event.title}\n\n{event.description}"
+        if languages:
+            reply += "\n\n" + {"en": "Languages", "fr": "Langues", "ja": "言語"}[locale] + ": " + ", ".join(languages)
+        if speakers:
+            reply += "\n\n" + {"en": "Speakers", "fr": "Intervenants", "ja": "登壇者"}[locale] + ": " + ", ".join(speaker.name for speaker in speakers)
+        return _guided(reply, "events", events=[event_card(event)])
     elif step == "events.booking_info":
         reply = {
             "en": "## Booking this event\n\n1. Sign in to your CCIFJ account.\n2. Ask to book this event and tell me how many people will attend.\n3. Provide each attendee’s name and email address.\n4. Review the booking card and approve it to save the reservation.\n\nNo payment is taken through this reservation step.",

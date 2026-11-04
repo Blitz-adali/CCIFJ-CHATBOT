@@ -1,5 +1,8 @@
 import re
 from collections import Counter
+import logging
+import threading
+
 from datetime import datetime, time, timedelta
 from typing import Literal, Optional
 
@@ -8,6 +11,9 @@ from langgraph.prebuilt import ToolRuntime
 from pydantic import BaseModel
 from ..rag import search, EMBED_MODEL_NAME
 from ..rag.src.config import INDEX_PATH
+from ..rag.src.rag_search import search_passages, get_tokenizer, get_collection
+from concierge.evidence import record_passages, record_events, record_resource, record_database_source, record_warning
+from concierge.resources import membership_form, BUSINESS_INQUIRY, CV_REGISTRATION, MEMBERSHIP_FEE_SOURCE
 from sentence_transformers import SentenceTransformer
 import bm25s
 
@@ -22,29 +28,64 @@ from ..db.relationaldb.models import (
 from ..db.relationaldb.session import AsyncSessionLocal
 from ..db.relationaldb.datetimes import japan_now
 
-# Cached embedding model singleton to avoid reloading weights on every invocation
+logger = logging.getLogger(__name__)
+
+# Keep the small search encoder on CPU. Automatic accelerator selection raised
+# AcceleratorError during BERT inference on the demo host (see retrieval diagnostics).
+# The conversation model/provider is independent and keeps its configured device.
+# Cached singleton avoids reloading weights on every invocation.
 _embed_model = None
+_embed_model_lock = threading.Lock()
 
 def _get_embed_model():
     global _embed_model
     if _embed_model is None:
-        _embed_model = SentenceTransformer(EMBED_MODEL_NAME)
+        with _embed_model_lock:
+            if _embed_model is None:
+                try:
+                    _embed_model = SentenceTransformer(EMBED_MODEL_NAME, device="cpu", local_files_only=True)
+                except OSError:
+                    _embed_model = SentenceTransformer(EMBED_MODEL_NAME, device="cpu")
     return _embed_model
 
 # Cached bm25s retriever singleton to avoid reloading weights on every invocation
 _retriever = None
+_retriever_lock = threading.Lock()
 
 def _get_retriever():
     global _retriever
     if _retriever is None:
-        _retriever = bm25s.BM25.load(str(INDEX_PATH), load_corpus=True)
+        with _retriever_lock:
+            if _retriever is None:
+                _retriever = bm25s.BM25.load(str(INDEX_PATH), load_corpus=True)
     return _retriever
 
 
 def warm_up() -> None:
-    """Load the search models now so the first knowledge-base question does not wait."""
-    _get_embed_model()
-    _get_retriever()
+    """Warm independent search backends; one usable branch keeps chat available."""
+    from concierge.rag.src.diagnostics import record
+    loaded = {}
+    for stage, loader in (('embedding', _get_embed_model), ('lexical', _get_retriever)):
+        try:
+            loader()
+            record(stage)
+            loaded[stage] = True
+        except Exception as exc:
+            loaded[stage] = False
+            record(stage, exc)
+            logger.exception('Search warm-up failed stage=%s', stage)
+    # A tokenizer/Chroma issue must not prevent the keyword index warming up.
+    for stage, loader in (('tokenizer', get_tokenizer), ('semantic', get_collection)):
+        try:
+            loader()
+            loaded[stage] = True
+            record(stage)
+        except Exception as exc:
+            loaded[stage] = False
+            record(stage, exc)
+            logger.exception('Optional search warm-up failed stage=%s', stage)
+    if not loaded.get('lexical') and not (loaded.get('embedding') and loaded.get('semantic')):
+        raise RuntimeError('No search backend could be warmed')
 
 #################################################
 #
@@ -182,10 +223,22 @@ def _registration_problem(event) -> Optional[str]:
     now = _now()
     if event.start_at is not None and event.start_at <= now:
         return "the event has already started or taken place"
-    closing_at = event.reg_deadline if event.reg_deadline is not None else event.end_at
+    from concierge.source_context import effective_deadline
+    deadline = effective_deadline(event)
+    closing_at = deadline if deadline is not None else event.end_at
     if closing_at is not None and now >= closing_at:
         return f"registration closed on {_when(closing_at)}"
     return None
+
+
+def _registration_summary(event):
+    problem = _registration_problem(event)
+    if problem:
+        return 'closed: ' + problem
+    if event.reg_deadline is None:
+        return ('unconfirmed (database deadline missing; an indexed source may state a deadline, '
+                'but database booking eligibility does not verify official registration status)')
+    return 'open according to known database deadline (current ticket capacity unverified)'
 
 
 async def _restore_status(model, row_id: int, status) -> bool:
@@ -223,6 +276,11 @@ async def list_available_events(
     location: str = "",
     date_from: str = "",
     date_to: str = "",
+    max_price: Optional[float] = None,
+    currency: str = "JPY",
+    limit: int = 3,
+    registration_open_only: bool = False,
+    runtime: ToolRuntime = None,
 ) -> str:
     """
     List upcoming events, optionally filtered by name, category, location,
@@ -240,20 +298,33 @@ async def list_available_events(
         location: Optional city or venue.
         date_from: Optional earliest event date, formatted YYYY-MM-DD.
         date_to: Optional latest event date, formatted YYYY-MM-DD.
+        max_price: Optional per-attendee budget. Unknown prices do not satisfy it.
+        currency: Original price currency; defaults to JPY. Never convert without a dated rate.
+        limit: Maximum events to return, from 1 to 10; defaults to 3.
+        registration_open_only: True to exclude events with closed registration.
+        runtime: Injected authentication context; not a user-supplied membership claim.
 
     Returns:
         A list of matching events with event IDs, names, dates, locations,
         categories, and prices. Ticket availability is not tracked.
     """
     try:
-        start = _parse_date(date_from) if date_from else _now()
+        start = max(_parse_date(date_from), _now()) if date_from else _now()
         end = _parse_date(date_to, end_of_day=True) if date_to else None
     except ValueError:
         return "Invalid date. Dates must be formatted YYYY-MM-DD."
     if end and end < start:
         return "Invalid date range: date_to must not be earlier than date_from."
 
+    if not 1 <= limit <= PAGE_SIZE or max_price is not None and max_price < 0:
+        return "Invalid search constraints: limit must be 1–10 and max_price nonnegative."
+    audience = "non_member"
     async with AsyncSessionLocal() as session:
+        user_id = _get_user_id(runtime)
+        if user_id is not None:
+            profile = await crud.load_user_context(session, user_id)
+            if profile and profile.get('membership'):
+                audience = 'member'
         events = await crud.search_events(
             session,
             name=name or None,
@@ -261,20 +332,26 @@ async def list_available_events(
             location=location or None,
             date_from=start,
             date_to=end,
-            limit=PAGE_SIZE + 1,  # one extra row tells us whether more exist
+            max_price=max_price, currency=currency if max_price is not None else None,
+            price_audience=audience, registration_open_only=registration_open_only,
+            limit=limit + 1,  # one extra row tells us whether more exist
         )
 
+    if registration_open_only:
+        from concierge.source_context import effective_deadline
+        events = [e for e in events if not _registration_problem(e) and e.reg_deadline is not None]
     if not events:
         return "No matching events were found."
 
-    text = "\n".join(_event_line(e) for e in events[:PAGE_SIZE])
-    if len(events) > PAGE_SIZE:
+    record_events(e.event_id for e in events[:limit])
+    text = "\n".join(_event_line(e) + f" | Registration: {_registration_summary(e)}" for e in events[:limit])
+    if len(events) > limit:
         text += (
-            f"\n\nShowing the first {PAGE_SIZE} results; more events match. "
+            f"\n\nShowing the first {limit} results; more events match. "
             "Narrow the search (category, location or dates) to see others."
         )
     else:
-        text += f"\n\n{min(len(events), PAGE_SIZE)} matching event(s)."
+        text += f"\n\n{min(len(events), limit)} matching event(s)."
     return text
 
 
@@ -307,6 +384,13 @@ async def get_event_details(
         languages = await crud.get_event_languages(session, eid)
         speakers = await crud.get_event_speakers(session, eid)
 
+    record_events([event.event_id])
+    from concierge.source_context import matching_event, page_passage
+    snapshot = matching_event(event)
+    if snapshot:
+        passage = page_passage(snapshot["url"])
+        if passage:
+            record_passages([passage])
     lines = [
         f"[ID {event.event_id}] {event.title}",
         f"Category: {event.category}",
@@ -314,12 +398,16 @@ async def get_event_details(
         f"Starts: {_when(event.start_at)}",
         f"Ends: {_when(event.end_at)}",
         f"Registration deadline: {_when(event.reg_deadline, 'none stated')}",
+        f"Registration status: {_registration_summary(event)}",
         f"Price: {_price_text(event)}",
         f"Languages: {', '.join(languages) if languages else 'unknown'}",
         f"Contact: {event.contact or 'unknown'}",
         "Ticket availability: unknown (not tracked)",
         f"Description: {event.description}",
     ]
+    if snapshot:
+        from concierge.source_context import event_facts
+        lines.append("Indexed source: " + snapshot["url"] + event_facts(snapshot["url"]))
     if speakers:
         lines.append("Speakers:")
         for s in speakers:
@@ -694,6 +782,8 @@ async def check_space_availability(
             session, space.space_id, start, end + timedelta(days=14)
         ))
 
+    from concierge.evidence import record_space_check
+    record_space_check(space, start, end, not taken, _now())
     capacity = f" (capacity {space.capacity})" if space.capacity else ""
     past_note = " Note: part of this range is in the past." if start <= _now() else ""
     if not taken:
@@ -761,7 +851,7 @@ async def check_event_booking(
         bookings = await crud.list_user_bookings(session, user_id) if user_id is not None else []
         reservations = await crud.list_user_reservations(session, user_id) if user_id is not None else []
 
-    summary = f"Event: {_event_line(event)} | Registration deadline: {_when(event.reg_deadline, 'none stated')}"
+    summary = f"Event: {_event_line(event)} | Registration deadline: {_when(event.reg_deadline, 'none stated')} | Registration status: {_registration_summary(event)}"
     problem = _registration_problem(event)
     if problem:
         return f"CANNOT BOOK: {problem}.\n{summary}"
@@ -1092,6 +1182,8 @@ async def get_membership_tier_info(
         The requested category's official annual fee (with its currency),
         description of eligibility and benefits, or a comparative overview of all tiers.
     """
+    record_resource(MEMBERSHIP_FEE_SOURCE)
+    record_database_source("Membership annual fees", MEMBERSHIP_FEE_SOURCE, "member_category")
     def describe(c) -> str:
         return (
             f"{c.category_name}\n"
@@ -1103,7 +1195,7 @@ async def get_membership_tier_info(
         if tier_or_category_name:
             category = await crud.get_member_category(session, tier_or_category_name)
             if category is not None:
-                return describe(category)
+                return describe(category) + "\nSource: " + MEMBERSHIP_FEE_SOURCE + "\nDatabase snapshot; confirm current eligibility, taxes and rates before applying."
         categories = await crud.list_member_categories(session)
 
     if not categories:
@@ -1112,7 +1204,7 @@ async def get_membership_tier_info(
     prefix = ""
     if tier_or_category_name:
         prefix = f"No category matched '{tier_or_category_name}'. Available categories:\n\n"
-    return prefix + "\n\n".join(describe(c) for c in categories)
+    return prefix + "\n\n".join(describe(c) for c in categories) + "\nSource: " + MEMBERSHIP_FEE_SOURCE + "\nDatabase snapshot; confirm current eligibility, taxes and rates before applying."
 
 
 @tool
@@ -1347,12 +1439,8 @@ def get_official_form(
         The official URL and guidance for completing the submission.
     """
     if form_type == "membership_application":
-        membership_urls = {
-            "en": "https://survey.ccifi.net/232729?lang=en",
-            "fr": "https://survey.ccifi.net/232729?lang=fr",
-            "jp": "https://survey.ccifi.net/232729?lang=jp",
-        }
-        url = membership_urls.get(lang, membership_urls["en"])
+        url = membership_form(lang)
+        record_resource(url)
         return (
             f"CCIFJ Membership Application Form ({lang.upper()}):\n"
             f"URL: {url}\n"
@@ -1360,10 +1448,8 @@ def get_official_form(
         )
 
     elif form_type == "cv_database_registration":
-        url = (
-            "https://ccifj-emploi.mycv.tech/index.php?"
-            "langue=en&module=candidat&action=infosGeneralesCandidatVide&typepage=formulaire&idpage=a94966106b492"
-        )
+        url = CV_REGISTRATION
+        record_resource(url)
         return (
             "Candidate CV Database Registration Form:\n"
             f"URL: {url}\n"
@@ -1371,7 +1457,8 @@ def get_official_form(
         )
 
     elif form_type == "business_development_inquiry":
-        url = "https://www.ccifj.or.jp/en/commercial-support/contact-us.html"
+        url = BUSINESS_INQUIRY
+        record_resource(url)
         return (
             "Business Development & Commercial Support Inquiry Form:\n"
             f"URL: {url}\n"
@@ -1588,10 +1675,65 @@ def search_vectordb(query: str) -> str:
     Returns:
         Relevant content chunks retrieved and reranked from the knowledge database.
     """
-    model = _get_embed_model()
-    retriever = _get_retriever()
-    chunks = search(retriever, model, query, 20, 10, 5)
-    return ('\n' + "=" * 80).join(chunks)
+    model, retriever = None, None
+    try:
+        model = _get_embed_model()
+    except Exception as exc:
+        from concierge.rag.src.diagnostics import record
+        record('embedding', exc)
+        logger.exception('Embedding model unavailable for search')
+        record_warning('retrieval_semantic_unavailable')
+    try:
+        retriever = _get_retriever()
+    except Exception:
+        logger.exception('Keyword index unavailable for search')
+        record_warning('retrieval_lexical_unavailable')
+    passages = search_passages(retriever, model, query, 20, 10, 5)
+    record_passages(passages)
+    if not passages:
+        return "No relevant source passages found. Say that the knowledge base does not contain enough evidence; offer CCIFJ staff help."
+    return ('\n' + "=" * 80).join(
+        f"Source: {p['url']}\nChunk: {p['id']}\n{p['text']}" for p in passages
+    )
+
+
+@tool
+def search_indexed_events(query: str = '', location: str = '', limit: int = 5) -> str:
+    """Find future events in the local website crawl when SQL has no suitable record.
+
+    Uses structured event titles, dates and locations, without semantic search.
+    These are crawl candidates, not live bookable matches. Prices, membership
+    eligibility and ticket capacity may be unknown. Never assume they meet a budget.
+    """
+    from concierge.source_context import find_events, event_facts, page_passage
+    urls = find_events(query, _now(), location=location, limit=max(1, min(limit, 5)))
+    if not urls:
+        return 'No matching future events in the indexed website snapshot. This is not a live website check.'
+    results = []
+    for url in urls:
+        passage = page_passage(url)
+        # Keep the full page available through get_source_details, but return
+        # compact structured facts for browsing instead of every page's prose.
+        passage = {**passage, 'text': event_facts(url)}
+        record_passages([passage])
+        results.append(f"Source: {url}\n{passage['text']}")
+    return ('Indexed website candidates only. Verify price and eligibility; unknown prices do not meet a strict budget.\n'
+            + '\n'.join(results))
+
+
+@tool
+def get_source_details(url: str) -> str:
+    """Read a complete known indexed page when a search chunk omits event or service details.
+
+    Only URLs already in the local CCIFJ corpus are accepted. This does not fetch
+    the live website. Use before claiming a cited page lacks venue, price or deadline.
+    """
+    from concierge.source_context import page_passage
+    passage = page_passage(url)
+    if passage is None:
+        return 'This URL is not in the indexed corpus. Its contents are unverified; do not fetch arbitrary URLs or infer missing facts.'
+    record_passages([passage])
+    return f"Source: {url}\n{passage['text']}"
 
 
 @tool

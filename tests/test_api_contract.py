@@ -415,7 +415,9 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(formatted["path_actions"], [])
         self.assertEqual(formatted["agent_state"], {"out_of_scope_count": 2})
         self.assertEqual(formatted["attachment_count"], 1)
-        self.assertEqual(formatted["sources"][0]["url"], "https://www.ccifj.or.jp/en/events.html")
+        # Model-generated links are actions, not retrieved source evidence.
+        self.assertEqual(formatted["sources"], [])
+        self.assertEqual(formatted["actions"][0]["url"], "https://www.ccifj.or.jp/en/events.html")
         token = response_locale.set("ja")
         try:
             guest = await self.backend.format_result({**result, "__interrupt__": [{"interrupt_id": "i", "action_requests": [{"name": "book_space", "args": {}}]}]}, guest=True)

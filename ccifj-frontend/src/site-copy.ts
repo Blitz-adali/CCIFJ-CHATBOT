@@ -20,10 +20,24 @@ export const siteCopy = {
   },
 } satisfies Record<Locale, {name:string;chamber:string;language:string;title:string;subtitle:string;assistant:string;checking:string;online:string;offline:string;footer:string;skip:string}>;
 
-/** Explicit embed setting wins; otherwise use the browser's preferred language. */
+export function saveLocale(locale: Locale): void {
+  try { window.localStorage.setItem('ccifj-locale', locale); } catch { /* Storage is optional. */ }
+  // Keep explicit embed/URL language consistent with a manual selection.
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set('lang', locale);
+    window.history.replaceState(null, '', url);
+  } catch { /* Hosts may restrict history updates. */ }
+}
+
+/** Explicit URL, saved preference, then the browser's preferred language. */
 export function readLocale(): Locale {
-  const query = new URLSearchParams(window.location.search).get('lang');
+  const query = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search).get('lang');
   if (query === 'fr' || query === 'en' || query === 'ja') return query;
+  try {
+    const saved = window.localStorage.getItem('ccifj-locale');
+    if (saved === 'fr' || saved === 'en' || saved === 'ja') return saved;
+  } catch { /* Storage is optional. */ }
   const preferences = typeof navigator === 'undefined' ? [] : [...(navigator.languages ?? []), navigator.language];
   for (const preference of preferences) {
     const language = preference.toLowerCase().split(/[-_]/)[0];

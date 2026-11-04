@@ -43,6 +43,7 @@ export interface AuthUser {
   user_id: number;
   name: string;
   email: string;
+  is_staff?: boolean;
 }
 
 export interface AuthSession {
@@ -69,6 +70,36 @@ export interface ChatSource {
   snippet?: string;
   locale?: Locale | string;
   last_checked?: string;
+  chunk_ids?: string[];
+  provenance?: 'retrieved' | 'database';
+}
+
+export interface EventCardData {
+  event_id: number;
+  title: string;
+  category: string;
+  location: string | null;
+  start_at: string | null;
+  end_at: string | null;
+  reg_deadline: string | null;
+  price: string | null;
+  member_price: string | null;
+  non_member_price: string | null;
+  currency: string | null;
+  registration_open: boolean | null;
+}
+
+export interface StaffRequestItem {
+  reference: string;
+  request_type: string;
+  category: string;
+  subject: string;
+  message: string;
+  sender_name: string;
+  sender_email: string;
+  recipients: string[];
+  status: 'new' | 'in_review' | 'closed';
+  created_at: string;
 }
 
 export interface ActionChoice {
@@ -106,6 +137,7 @@ export interface ChatResponse {
   intent?: ChatIntent | null;
   requires_clarification?: boolean;
   sources?: ChatSource[];
+  events?: EventCardData[];
   actions?: ChatAction[];
   journey?: JourneyStep[];
   warnings?: string[];
@@ -122,4 +154,5 @@ export interface ApiStatusResponse {
   mode?: ApiMode;
   data_freshness?: string;
   version?: string;
+  agent_ready?: boolean;
 }

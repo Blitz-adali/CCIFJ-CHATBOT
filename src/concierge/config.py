@@ -8,10 +8,11 @@ Required:
     model_type                 "qwen" for local Ollama models; anything else uses OpenAI.
     model_name                 Main chat model name.
     router_model_name          Model used for routing.
-    COHERE_API_KEY             Needed by knowledge search (reranking).
     OPENAI_API_KEY             Only when model_type is not "qwen".
 
 Optional:
+    COHERE_API_KEY                Enables reranking; hybrid retrieval works without it.
+    CCIFJ_STAFF_USER_IDS           Existing account IDs allowed to view the staff inbox.
     trim_messages_max_token        Positive integer, default 1000.
     CCIFJ_AGENT_TIMEOUT_SECONDS    Positive integer, default 180.
     CCIFJ_CORS_ORIGINS             Comma-separated http(s) origins.
@@ -56,6 +57,7 @@ class Settings:
     agent_timeout_seconds: int = 180
     cors_origins: tuple[str, ...] = ()
     langsmith_tracing: bool = False
+    staff_user_ids: tuple[int, ...] = ()
 
     @property
     def uses_ollama(self) -> bool:
@@ -117,7 +119,20 @@ def _load_settings() -> Settings:
     if model_type and model_type.lower() != "qwen":
         _require("OPENAI_API_KEY", problems, f"Required because model_type={model_type!r} uses OpenAI.")
 
-    cohere_api_key = _require("COHERE_API_KEY", problems, "Knowledge search reranking needs it.")
+    # Hybrid retrieval remains available when reranking is not configured.
+    cohere_api_key = _get("COHERE_API_KEY")
+
+    staff_ids = []
+    for raw_id in _get("CCIFJ_STAFF_USER_IDS").split(","):
+        if not raw_id.strip():
+            continue
+        try:
+            staff_id = int(raw_id.strip())
+            if staff_id <= 0:
+                raise ValueError
+            staff_ids.append(staff_id)
+        except ValueError:
+            problems.append("CCIFJ_STAFF_USER_IDS must contain positive account IDs separated by commas.")
 
     trim_tokens = _positive_int("trim_messages_max_token", 1000, problems)
     timeout = _positive_int("CCIFJ_AGENT_TIMEOUT_SECONDS", 180, problems)
@@ -146,6 +161,7 @@ def _load_settings() -> Settings:
         agent_timeout_seconds=timeout,
         cors_origins=cors_origins,
         langsmith_tracing=tracing,
+        staff_user_ids=tuple(dict.fromkeys(staff_ids)),
     )
 
 

@@ -6,6 +6,11 @@ English, French, Japanese, or the user's own language. It can also take real
 actions, such as booking event tickets or writing a message to CCIFJ staff, but
 only after the user approves them.
 
+For the demo, staff inbox setup, evaluation commands and rehearsal sequence, see
+the [hackathon runbook](docs/HACKATHON.md).
+The [concierge behavior upgrade](docs/CONCIERGE_UPGRADE.md) explains the current
+memory, database-answer paths, event filters and version-checked conversation tests.
+
 ```text
 User ──► React chat ──► FastAPI ──► LangGraph agents ──► tools ──► SQLite · Chroma · BM25 · Cohere
 ```
@@ -84,7 +89,10 @@ flowchart LR
 
 ## How a message is answered
 
-Every message goes through one LangGraph graph (`src/concierge/agents/body.py`).
+Common read-only questions about fees, joining, booking guidance and the event
+calendar use direct database or reviewed responses without model initialization.
+Other messages use the LangGraph graph (`src/concierge/agents/body.py`). A bounded
+conversation brief carries user-supplied facts and corrections across turns.
 
 ```mermaid
 flowchart TD
@@ -108,7 +116,7 @@ flowchart TD
 1. **Orchestrator.** Detects the user's language and decides whether the request is in scope. It splits a request into tasks for one or more specialists: *"show me events and membership fees"* runs both in parallel. It also picks up to 3 likely follow-up questions from the catalog.
 2. **Shortcuts.** A question that matches one of the 15 catalog questions (in English, French, or Japanese) gets its pre-written answer straight away. Off-topic requests get a polite refusal.
 3. **Specialist agents.** Each one is a LangChain agent with its own prompt and tools (see below). It sees the recent conversation, any attached files, and the user's profile.
-4. **Collector.** Merges what the specialists found into one answer in the user's language. It formats the answer, adds at most one personal note, and proposes up to 2 next actions.
+4. **Collector.** Passes through a single specialist's final answer, or merges multiple specialists' findings into one answer. Multi-domain synthesis may propose up to 2 next actions; event booking actions remain checked against database records and authentication.
 5. **Final policy check.** A second, cheaper model call makes sure the answer stays within CCIFJ topics.
 6. **Pause.** If an agent calls a tool that writes to the database, the graph pauses and the user sees an approval card (see [Approvals](#approvals-human-in-the-loop)).
 
@@ -401,7 +409,7 @@ start.sh                 starts the whole stack with one command
 cp .env.example .env
 ```
 
-Fill in `CCIFJ_AUTH_SECRET`, `OPENAI_API_KEY`, and `COHERE_API_KEY` (see
+Fill in `CCIFJ_AUTH_SECRET` and your model credentials. `COHERE_API_KEY` is optional (see
 [Configuration](#configuration)). Generate the secret with:
 
 ```bash
@@ -463,7 +471,8 @@ Settings come from `.env` and are checked at startup (`src/concierge/config.py`)
 | `model_name` | yes | Main chat model. |
 | `router_model_name` | yes | Model for routing and the final policy check. |
 | `OPENAI_API_KEY` | with `openai` | OpenAI key. |
-| `COHERE_API_KEY` | yes | Cohere key for knowledge-base reranking. |
+| `COHERE_API_KEY` | no | Cohere reranking; missing keys or reranker failures fall back to hybrid fused results. |
+| `CCIFJ_STAFF_USER_IDS` | no | Comma-separated existing account IDs allowed to view the protected staff inbox. Empty disables access. |
 | `trim_messages_max_token` | no | Conversation history kept per turn (default 1000 tokens). |
 | `CCIFJ_AGENT_TIMEOUT_SECONDS` | no | Maximum time for one agent turn (default 180). |
 | `CCIFJ_CORS_ORIGINS` | no | Comma-separated frontend origins allowed to call the API. |
@@ -590,15 +599,25 @@ Tickets 01–08 were implemented in PR #6 (backend and frontend support for the 
 ### Other known limits
 - Event booking, room reservations, newsletter, cancel, and change require
   login. Guests can browse, check availability, and send staff requests.
-- Conversation and approval state live in memory: restarting the API forgets
-  paused approvals, and the API must run with one worker.
+- Ordinary conversation history, brief and remembered source URLs persist in SQL.
+  Paused approvals remain process-local: restarting the API forgets them, and
+  the API must run with one worker.
 - The concierge can't cancel or change a booking once it has started, take
   payments, or issue refunds. It offers to write to staff instead.
 - CCIFJ contacts are written into `get_ccifj_contact`; the `contact_us` table
   isn't used yet.
-- The model usually follows the conversation rules, but not always: it may
-  occasionally write a draft before asking for the language, or word buttons
-  differently. Code-level checks enforce the important parts (button rules,
-  approvals, booking step for a single event).
-- Five older frontend tests (`locale.test.tsx`, `WidgetChat.test.tsx`) fail
-  because they check site text that has since changed.
+- The model may still word buttons differently or require clarification.
+  Code-level checks gate initial drafts on language selection and enforce
+  approvals and the booking step for a single event.
+- Frontend locale tests reflect the current chat layout and language selector.
+- Guided event browsing and details read the database directly and show event
+  cards without waiting for model initialization. The source list uses retrieved
+  record URLs and chunk IDs rather than links inferred from model prose.
+- `GET /api/v1/ready` reports database and model readiness (503 until ready).
+- A server restart expires process-local approvals. The UI releases the stale
+  approval without replaying a write, allowing a fresh request after checking
+  existing bookings or request references.
+
+Failure handling and retest instructions: [Failure recovery](docs/FAILURE_RECOVERY.md).
+
+Latest continuity and retrieval improvements: [Final improvement pass](docs/CONCIERGE_FINAL_PASS.md).

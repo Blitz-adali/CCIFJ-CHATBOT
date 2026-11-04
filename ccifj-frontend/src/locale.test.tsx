@@ -14,9 +14,9 @@ describe('site language',()=>{
   it.each<Locale>(['en','fr','ja'])('renders the entire page and assistant in %s',locale=>{
     mockWindow(`?lang=${locale}`);
     const html=renderToStaticMarkup(<App/>);
-    expect(html).toContain(siteCopy[locale].title);
+    expect(html).toContain(siteCopy[locale].name);
     expect(html).not.toContain('topic-buttons');
-    expect(html).toContain(siteCopy[locale].footer);
+    expect(html).toContain(`aria-label="${siteCopy[locale].language}"`);
     expect(html).toContain(locale==='en'?'How can I help you today?':locale==='fr'?'Comment puis-je vous aider':'何をお手伝いできますか');
     expect((html.match(/<select/g)||[])).toHaveLength(1);
     if(locale==='en'){expect(html).not.toContain('Votre assistant');expect(html).not.toMatch(/bonjour/i);}

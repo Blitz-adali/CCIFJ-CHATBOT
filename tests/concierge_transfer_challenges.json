@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "description": "Transfer checks using new topics and phrasing, plus counterexamples where comparisons and drafting are appropriate. Scripted continuous conversations, not an automatic quality benchmark. Dates assume the current November 2026 demo clock.",
+  "rubric": {
+    "accuracy_and_grounding": 2,
+    "context_and_corrections": 2,
+    "useful_guidance": 2,
+    "clarification_and_brevity": 2,
+    "action_safety_and_honesty": 2
+  },
+  "scenarios": [
+    {
+      "id": "training_uncertainty",
+      "title": "Training advice, optional drafting and tentative dates",
+      "focus": [
+        "tentative_facts",
+        "offer_repetition",
+        "new_task"
+      ],
+      "turns": [
+        {
+          "prompt": "We are a French robotics firm exploring management training for our Japan team. What could CCIFJ help us investigate?",
+          "expectation": "Give relevant training guidance without inventing courses or collecting sender details.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We might send six people in September, but neither the number nor month is confirmed.",
+          "expectation": "Retain both uncertainties.",
+          "locale": "en"
+        },
+        {
+          "prompt": "What should we compare before choosing a course? Advice only, please.",
+          "expectation": "Answer the comparison question; do not push drafting or collect contact details.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Résume notre projet en français pour ma collègue.",
+          "expectation": "Preserve tentative headcount and date in French.",
+          "locale": "fr"
+        },
+        {
+          "prompt": "Our manager has now confirmed four participants for October.",
+          "expectation": "Replace tentative six/September with confirmed four/October.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Now I would like an inquiry draft in French. Use placeholders for sender details; do not store anything.",
+          "expectation": "Honor explicit drafting request despite earlier advice-only state; allow placeholders; no write.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Explain the choices in English and keep the French draft in French.",
+          "expectation": "Separate explanation and document languages.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Keep only the final draft and make the confirmed headcount and month explicit.",
+          "expectation": "Keep four/October confirmed and do not revive old tentative values.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "membership_advice_then_draft",
+      "title": "Membership guidance before explicit drafting",
+      "focus": [
+        "contact_collection",
+        "memory",
+        "explicit_acceptance"
+      ],
+      "turns": [
+        {
+          "prompt": "I work for a family-owned French architecture practice with no Japanese office. We are considering CCIFJ membership, not ready to apply.",
+          "expectation": "Give membership guidance without inferring eligibility or asking for application contact details.",
+          "locale": "en"
+        },
+        {
+          "prompt": "What questions should we ask internally before paying for membership?",
+          "expectation": "Provide useful decision guidance without repeated draft offers.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We may assign two colleagues to Japan next year; that is only an option.",
+          "expectation": "Retain uncertainty, do not infer residence or confirmed relocation.",
+          "locale": "en"
+        },
+        {
+          "prompt": "日本語で、今わかっていることと未確定の点を分けて説明してください。",
+          "expectation": "Separate established and tentative facts in Japanese.",
+          "locale": "ja"
+        },
+        {
+          "prompt": "Compare staying non-resident with establishing a local presence. We are asking for comparison, not deciding to relocate.",
+          "expectation": "Permit comparison; retain no-decision status and do not start incorporation or application.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Please draft a short English question to the membership team using placeholders. Do not submit it.",
+          "expectation": "Draft now that explicitly requested, without insisting on sender identity.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Remove any wording that says our colleagues will definitely move.",
+          "expectation": "Keep relocation conditional.",
+          "locale": "en"
+        },
+        {
+          "prompt": "I want advice again: what single missing fact would help decide membership fit?",
+          "expectation": "Return to advice; ask a relevant missing user fact without pushing another draft.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "budget_comparison_exception",
+      "title": "Strict budget followed by an explicit comparison exception",
+      "focus": [
+        "budget",
+        "comparison_exception",
+        "no_forced_escalation"
+      ],
+      "turns": [
+        {
+          "prompt": "We want CCIFJ support for a French industrial sensor business. Our firm service budget is EUR 2200. What can be verified to fit?",
+          "expectation": "Do not assume affordability of unpriced services.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Do not list services above that ceiling unless I ask for a comparison.",
+          "expectation": "Respect ceiling and exception.",
+          "locale": "en"
+        },
+        {
+          "prompt": "What product information should we prepare ourselves?",
+          "expectation": "Provide preparation advice without repeating excluded packages or asking for sender details.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Now compare the nearest published higher-priced market-test service, even though it exceeds our budget.",
+          "expectation": "Allow explicitly requested comparison; disclose mismatch and cite actual source.",
+          "locale": "en"
+        },
+        {
+          "prompt": "That comparison does not increase our budget or authorize a purchase.",
+          "expectation": "Keep EUR 2200 ceiling and no-consent status.",
+          "locale": "en"
+        },
+        {
+          "prompt": "En français, résume une prochaine étape qui respecte toujours notre plafond.",
+          "expectation": "Return to feasible next action under original ceiling in French.",
+          "locale": "fr"
+        },
+        {
+          "prompt": "Yes, help draft that quote request in French with placeholders. Keep your explanations in English.",
+          "expectation": "Recognize explicit drafting choice; keep French document and English explanations separate.",
+          "locale": "en"
+        },
+        {
+          "prompt": "No submission. Show only the subject line.",
+          "expectation": "Return just subject; do not store or infer approval.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "room_tentative_then_confirmed",
+      "title": "Tentative room plans and authoritative confirmation",
+      "focus": [
+        "uncertainty",
+        "confirmation",
+        "read_evidence"
+      ],
+      "turns": [
+        {
+          "prompt": "We may need a CCIFJ room for about twelve people next February. Nothing is confirmed. What should we decide first?",
+          "expectation": "Treat need and headcount as tentative; date is February 2027 given test date.",
+          "locale": "en"
+        },
+        {
+          "prompt": "A tentative option is the first Wednesday, 14:00 to 16:00 Japan time. State the date before doing anything else.",
+          "expectation": "Resolve February 3 2027 without treating a tentative plan as a booking.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Do not check availability yet; summarize the tentative option.",
+          "expectation": "Respect no-check request and retain uncertainty.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Confirmed internally: ten people, February 10, 2027, 13:00 to 15:00 Japan time. Still do not reserve it.",
+          "expectation": "Replace tentative values with confirmed requirements; internal confirmation is not tool approval.",
+          "locale": "en"
+        },
+        {
+          "prompt": "You can check availability for that slot now, without reserving.",
+          "expectation": "Perform read-only lookup when explicitly permitted; no booking.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Give a French recap distinguishing our confirmed plan, your past check, and an actual reservation.",
+          "expectation": "Separate user requirements, timestamped availability evidence, and no completed booking.",
+          "locale": "fr"
+        },
+        {
+          "prompt": "Would that check guarantee the room will still be available tomorrow?",
+          "expectation": "Explain volatility without denying that the actual check happened.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Ask only one missing question that I can answer.",
+          "expectation": "Ask a relevant unknown user requirement; do not ask user to prove undocumented room capacity.",
+          "locale": "en"
+        }
+      ]
+    }
+  ]
+}

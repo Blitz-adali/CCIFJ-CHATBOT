@@ -1,11 +1,12 @@
+from __future__ import annotations
 from .config import DB_PATH, COLLECTION_NAME, EMBED_MODEL_NAME, PAGES_PATH, CHUNKS_PATH, INDEX_PATH
-from .preprocess import MinimalSource, chunk, blocks_to_markdown
-import chromadb
 from pathlib import Path
-from chromadb.api.models.Collection import Collection
-from sentence_transformers import (SentenceTransformer)
-from tqdm.auto import tqdm
-import bm25s
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .preprocess import MinimalSource
+    from chromadb.api.models.Collection import Collection
+    from sentence_transformers import SentenceTransformer
 import json
 
 def index(chunk_size: int = 450):
@@ -17,6 +18,9 @@ def index(chunk_size: int = 450):
     Returns:
         None.
     """
+    from .preprocess import chunk, blocks_to_markdown
+    from sentence_transformers import SentenceTransformer
+
     # 1. Load and parse the documents
     with open(PAGES_PATH, 'r') as f:
         docs_json = [json.loads(line) for line in f if line.strip()]
@@ -32,7 +36,7 @@ def index(chunk_size: int = 450):
     sources = chunk(chunk_size, en_pages)
     print(f"Created {len(sources)} text chunks.")
 
-    model = SentenceTransformer(EMBED_MODEL_NAME)
+    model = SentenceTransformer(EMBED_MODEL_NAME, device="cpu")
     collection = create_collection(overwrite=True)
 
     # 3. Index documents in vector database and using BM25s
@@ -40,17 +44,18 @@ def index(chunk_size: int = 450):
     lexical_index(sources)
 
 def lexical_index(sources: list[MinimalSource]):
-    corpus = [src.content for src in sources]
+    import bm25s
+    corpus = [src.content or "" for src in sources]
 
     try:
-        retriever = bm25s.BM25(corpus=corpus)
+        # Retrieval fusion needs stable IDs shared with Chroma, not bare text.
+        records = [{"id": src.id, "text": src.content or "", "url": str(src.url)} for src in sources]
+        retriever = bm25s.BM25(corpus=records)
         retriever.index(bm25s.tokenize(corpus))
         index_files = INDEX_PATH
         index_files.mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        print("Error Indexing Corpus", e,
-                "Check files under data/raw")
-        exit()
+        raise RuntimeError("Could not build BM25 index") from e
     try:
         retriever.save(index_files)
         sources_json = json.dumps(
@@ -59,8 +64,7 @@ def lexical_index(sources: list[MinimalSource]):
         with open(CHUNKS_PATH, "w", encoding="utf-8") as f:
             f.write(sources_json)
     except Exception as e:
-        print("Error Saving Index", e)
-        exit()
+        raise RuntimeError("Could not save BM25 index") from e
     return sources
 
 
@@ -79,6 +83,7 @@ def create_collection(
     Returns:
         The requested ChromaDB collection.
     """
+    import chromadb
     client = chromadb.PersistentClient(path=db_path)
     if overwrite:
         try:
@@ -108,6 +113,7 @@ def vector_index(
     Returns:
         None.
     """
+    from tqdm.auto import tqdm
     pbar = tqdm(unit="chunk", desc="Indexing Chunks", total=len(sources))
     for start in range(0, len(sources), batch_size):
         batch = sources[start: start + batch_size]

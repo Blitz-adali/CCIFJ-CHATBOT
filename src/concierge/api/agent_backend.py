@@ -8,8 +8,14 @@ thread and never replays writes.
 """
 
 import logging
+import asyncio
+from concierge.config import get_settings
+from concierge.recovery import ReadOnlyTurnFailure
 import re
 import threading
+import time as timer
+from dataclasses import asdict
+from concierge.evidence import TurnEvidence, turn_evidence
 from contextvars import ContextVar
 from datetime import datetime, time
 from functools import lru_cache
@@ -27,14 +33,14 @@ response_events = ContextVar("api_response_events", default=None)
 agent_inputs = ContextVar("api_agent_inputs", default=None)
 
 LOGIN_REQUIRED = {
-    "en": "This action needs a signed-in account. Log in, start a new conversation, and ask again.",
-    "fr": "Cette action nécessite un compte connecté. Connectez-vous, démarrez une nouvelle conversation, puis réessayez.",
-    "ja": "この操作にはログインが必要です。ログイン後、新しい会話を開始して、もう一度お試しください。",
+    "en": "This action needs a signed-in account. Log in and continue in this conversation; I can keep helping you prepare.",
+    "fr": "Cette action nécessite un compte connecté. Connectez-vous, puis continuez cette conversation.",
+    "ja": "この操作にはログインが必要です。ログイン後、この会話を続けてください。",
 }
 LOGIN_WARNING = {
-    "en": "Login is required for protected actions. Start a new conversation after signing in.",
-    "fr": "La connexion est requise pour les actions protégées. Démarrez une nouvelle conversation après connexion.",
-    "ja": "保護された操作にはログインが必要です。ログイン後、新しい会話を開始してください。",
+    "en": "Login is required for protected actions. Continue this conversation after signing in.",
+    "fr": "La connexion est requise pour les actions protégées. Continuez cette conversation après connexion.",
+    "ja": "保護された操作にはログインが必要です。ログイン後、この会話を続けてください。",
 }
 APPROVAL_WARNING = {
     "en": "The action will not run until you approve it.",
@@ -313,6 +319,33 @@ class AgentBackend:
         return {"configurable": {"thread_id": thread_id}}
 
     async def chat(self, history, user_id, thread_id):
+        evidence = TurnEvidence()
+        token = turn_evidence.set(evidence)
+        started = timer.perf_counter()
+        try:
+            # Leave time for the API to persist a truthful recovery reply before
+            # its outer deadline. Never rerun an entire graph after a failure.
+            async with asyncio.timeout(get_settings().agent_timeout_seconds * .9):
+                return await self._chat(history, user_id, thread_id)
+        except Exception as exc:
+            from langgraph.errors import GraphBubbleUp
+            if isinstance(exc, GraphBubbleUp) or evidence.write_started:
+                raise
+            brief = (agent_inputs.get() or {}).get('conversation_brief') or {}
+            try:
+                async with asyncio.timeout(1):
+                    snapshot = await self.graph.aget_state(self.config(thread_id))
+                    brief = (snapshot.values or {}).get('conversation_brief', brief)
+            except Exception:
+                logger.warning('Could not load brief for read-only recovery')
+            error = ReadOnlyTurnFailure(brief=brief)
+            logger.exception('Read-only turn failed reference=%s', error.reference)
+            raise error from exc
+        finally:
+            logger.info("agent_turn duration_ms=%.1f", (timer.perf_counter()-started)*1000)
+            turn_evidence.reset(token)
+
+    async def _chat(self, history, user_id, thread_id):
         from langchain_core.messages import AIMessage, HumanMessage
 
         inputs = agent_inputs.get() or {}
@@ -332,6 +365,10 @@ class AgentBackend:
             "context": list(inputs.get("context") or []),
             "out_of_scope_count": int(inputs.get("out_of_scope_count") or 0),
             "user_context": inputs.get("user_context"),
+            "conversation_brief": inputs.get("conversation_brief") or {},
+            "membership_context": inputs.get("membership_context") or [],
+            "source_urls": inputs.get("source_urls") or [],
+            "space_checks": inputs.get("space_checks") or [],
         }
         config = self.config(thread_id)
         queue = response_events.get()
@@ -348,6 +385,8 @@ class AgentBackend:
             interrupts = [i for task in snapshot.tasks for i in getattr(task, "interrupts", ())]
             if interrupts:
                 result["__interrupt__"] = interrupts
+        evidence = turn_evidence.get()
+        result["tool_evidence"] = asdict(evidence) if evidence else {}
         return await self.format_result(result, guest=user_id is None)
 
     async def resume(self, thread_id, interrupt_id, decision):
@@ -357,8 +396,14 @@ class AgentBackend:
             interrupts = tuple(i for task in snapshot.tasks for i in task.interrupts)
         if not any(item.id == interrupt_id for item in interrupts):
             raise ApprovalStateUnavailable()
-        result = await self.resume_approval(self.config(thread_id), interrupt_id, decision)
-        return await self.format_result(result)
+        saved = (agent_inputs.get() or {}).get("tool_evidence") or {}
+        token = turn_evidence.set(TurnEvidence(**{key: list(saved.get(key) or []) for key in ("passages", "event_ids", "warnings", "resources", "database_sources", "space_checks")}))
+        try:
+            result = await self.resume_approval(self.config(thread_id), interrupt_id, decision)
+            result["tool_evidence"] = asdict(turn_evidence.get())
+            return await self.format_result(result)
+        finally:
+            turn_evidence.reset(token)
 
     async def format_result(self, result, guest=False):
         from langchain_core.messages import AIMessage, HumanMessage
@@ -400,16 +445,43 @@ class AgentBackend:
         plan = result.get("plan") or {}
         tasks = plan.get("tasks", []) if isinstance(plan, dict) else []
         intent = ", ".join(dict.fromkeys(t.get("target", "") for t in tasks if isinstance(t, dict) and t.get("target")))
-        sources, actions = linked_resources(reply)
+        from .presentation import evidence_sources, grounded_links
+        evidence = result.get("tool_evidence") or {}
+        from concierge.source_context import source_memory, page_passage
+        # An explicitly cited prior source is still real evidence: reconstruct
+        # its indexed metadata rather than treating a generated URL as proof.
+        prior = [page_passage(url) for url in source_memory(result.get('source_urls')) if url in reply]
+        sources = evidence_sources([*(evidence.get("passages") or []), *[p for p in prior if p]])
+        sources.extend(evidence.get("database_sources") or [])
+        if sources:
+            reply = grounded_links(reply, {source["url"] for source in sources} | set(evidence.get("resources") or []))
+        _, actions = linked_resources(reply)
+        events = []
+        if evidence.get("event_ids"):
+            from concierge.db.relationaldb.session import AsyncSessionLocal
+            from .events import cards_for_ids
+            try:
+                async with AsyncSessionLocal() as db:
+                    events = await cards_for_ids(db, evidence["event_ids"])
+            except Exception:
+                # Optional presentation must not hide a successful action.
+                logger.exception("Could not load event cards for this answer")
+        warnings.extend(evidence.get("warnings") or [])
+        from concierge.evidence import space_check_memory
+        checks = space_check_memory(result.get("space_checks"), evidence.get("space_checks"))
+        from concierge.source_context import source_memory
+        source_urls = source_memory([*(result.get("source_urls") or []), *[p.get("url") for p in evidence.get("passages") or []]])
         return {
-            "reply": reply, "pending_approvals": approvals, "sources": sources, "actions": actions,
+            "reply": reply, "pending_approvals": approvals, "sources": sources, "actions": actions, "events": events,
             "suggested_questions": suggested, "warnings": warnings,
             "intent": {"code": intent} if intent else None,
             # Guided journeys start from the welcome screen, not under agent answers.
             "path_actions": [],
             "next_actions": actions_for_turn,
             "attachment_count": len(result.get("context") or []),
-            "agent_state": {"out_of_scope_count": int(result.get("out_of_scope_count") or 0)},
+            "agent_state": {**({"space_checks": checks} if checks else {}), **({"source_urls": source_urls} if source_urls else {}), "out_of_scope_count": int(result.get("out_of_scope_count") or 0),
+                            **({"conversation_brief": result["conversation_brief"]} if "conversation_brief" in result else {}),
+                            **({"tool_evidence": evidence} if any(evidence.get(key) for key in ("passages", "event_ids", "warnings", "resources", "database_sources", "space_checks")) else {})},
         }
 
 

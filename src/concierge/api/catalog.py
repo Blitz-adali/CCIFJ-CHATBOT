@@ -1,6 +1,8 @@
 """The predefined question catalog, read without initializing the agents or models."""
 
 import json
+import re
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
@@ -25,3 +27,21 @@ def localized_question(canonical: str, locale: str) -> str:
 
 def catalog_questions(locale: str) -> list[str]:
     return [localized_question(question, locale) for question in _questions()]
+
+
+def normalize_question(text: str) -> str:
+    text = unicodedata.normalize('NFKC', text).casefold().replace('’', "'")
+    return re.sub(r'\s+', ' ', text).strip().rstrip('?？.!。 ')
+
+
+@lru_cache
+def _canonical_questions():
+    mapping = {normalize_question(question):question for question in _questions()}
+    for entries in _translations().values():
+        for canonical, entry in entries.items():
+            mapping[normalize_question(entry['question'])] = canonical
+    return mapping
+
+
+def canonical_question(text: str) -> str | None:
+    return _canonical_questions().get(normalize_question(text))

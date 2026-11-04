@@ -94,6 +94,7 @@ function normalizeResponse(raw: unknown): ChatResponse {
     suggested_questions: Array.isArray(body.suggested_questions) ? body.suggested_questions : [],
     pending_approvals: Array.isArray(body.pending_approvals) ? body.pending_approvals : [],
     sources: Array.isArray(body.sources) ? body.sources : [],
+    events: Array.isArray(body.events) ? body.events : [],
     actions: Array.isArray(body.actions) ? body.actions : [],
     warnings: Array.isArray(body.warnings) ? body.warnings : [],
     path_actions: Array.isArray(body.path_actions) ? body.path_actions : [],
@@ -292,6 +293,16 @@ export function discardGuestSession(sessionId: string): void {
 
 export async function getApiStatus(): Promise<ApiStatusResponse> {
   return requestJson<ApiStatusResponse>(API_ENDPOINTS.status, { method: "GET" }, 6000);
+}
+
+export async function getCurrentUser(): Promise<import('./types').AuthUser> {
+  return requestJson(API_ENDPOINTS.currentUser, { method: 'GET' }, 6000);
+}
+
+export async function getStaffRequests(status = '', offset = 0): Promise<{items: import('./types').StaffRequestItem[]; next_offset: number | null}> {
+  const params = new URLSearchParams({ offset: String(offset) });
+  if (status) params.set('status', status);
+  return requestJson(`/api/v1/staff/requests?${params}`, { method: 'GET' }, 10000);
 }
 
 export async function getSuggestedQuestions(locale: Locale = "en"): Promise<string[]> {

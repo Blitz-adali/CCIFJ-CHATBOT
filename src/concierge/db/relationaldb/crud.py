@@ -60,6 +60,8 @@ async def search_events(
     date_to: Optional[datetime] = None,
     max_price: Optional[float] = None,
     currency: Optional[str] = None,
+    price_audience: Optional[str] = None,
+    registration_open_only: bool = False,
     limit: int = 10,
 ) -> Sequence[Event]:
     """Every filter is optional; only the ones given are applied.
@@ -91,16 +93,15 @@ async def search_events(
         stmt = stmt.where(Event.start_at >= _naive(date_from))
     if date_to:
         stmt = stmt.where(Event.start_at <= _naive(date_to))
+    if registration_open_only:
+        stmt = stmt.where(Event.start_at > _now(), (col(Event.reg_deadline).is_(None)) | (Event.reg_deadline >= _now()))
     if max_price is not None:
         price_currency = (currency or "JPY").upper()
-        stmt = stmt.where(
-            (
-                (Event.price <= max_price)
-                | (Event.member_price <= max_price)
-                | (Event.non_member_price <= max_price)
-            ),
-            Event.currency == price_currency,
-        )
+        if price_audience in {"member", "non_member"}:
+            specific = Event.member_price if price_audience == "member" else Event.non_member_price
+            stmt = stmt.where(func.coalesce(specific, Event.price) <= max_price, Event.currency == price_currency)
+        else:
+            stmt = stmt.where(((Event.price <= max_price) | (Event.member_price <= max_price) | (Event.non_member_price <= max_price)), Event.currency == price_currency)
     elif currency:
         stmt = stmt.where(Event.currency == currency.upper())
 
@@ -445,7 +446,9 @@ async def book_event(
     event = await session.get(Event, event_id)
     if event is None:
         raise ValueError("That event doesn't exist.")
-    closing_at = event.reg_deadline if event.reg_deadline is not None else event.end_at
+    from concierge.source_context import effective_deadline
+    deadline = effective_deadline(event)
+    closing_at = deadline if deadline is not None else event.end_at
     if closing_at is not None and _now() >= _naive(closing_at):
         raise ValueError("Registration for this event has closed.")
     if not attendees:

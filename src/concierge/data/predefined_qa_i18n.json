@@ -6,11 +6,11 @@
     },
     "How do I become a CCIFJ member?": {
       "question": "Comment devenir membre de la CCIFJ ?",
-      "answer": "Pour adhérer à la CCIFJ, remplissez le formulaire en ligne : https://survey.ccife.net/232729?lang=en. L’adhésion est ouverte aux entreprises françaises et internationales présentes au Japon. Choisissez entre les catégories Bienfaiteur, Active, Startup ou Non-résident selon le profil de votre entreprise."
+      "answer": "Choisissez la catégorie adaptée à votre entreprise, puis remplissez le formulaire officiel. La CCIFJ confirme l’éligibilité et l’admission. Je peux vous aider à comparer les catégories actuelles."
     },
     "What are the CCIFJ membership fees?": {
       "question": "Quels sont les tarifs d’adhésion à la CCIFJ ?",
-      "answer": "La CCIFJ propose quatre catégories d’adhésion avec une cotisation annuelle en yens :\n- **Bienfaiteur** : catégorie supérieure pour les grands partenaires stratégiques.\n- **Active** : adhésion d’entreprise standard.\n- **Startup** : tarif réduit pour les jeunes entreprises.\n- **Non-résident** : pour les entreprises établies hors du Japon.\nPour connaître le montant exact, demandez-moi le tarif d’une catégorie précise."
+      "answer": "Je peux consulter toutes les catégories et leurs cotisations annuelles dans la base CCIFJ. Les devises peuvent varier ; l’équipe adhésion confirme l’éligibilité et les conditions actuelles."
     },
     "What are the benefits of CCIFJ membership?": {
       "question": "Quels sont les avantages d’une adhésion à la CCIFJ ?",
@@ -18,7 +18,7 @@
     },
     "How can I book a ticket for a CCIFJ event?": {
       "question": "Comment réserver un billet pour un événement de la CCIFJ ?",
-      "answer": "Indiquez l’événement auquel vous souhaitez participer et le nombre de billets. Pour effectuer une réservation, vous devrez être connecté, confirmer la réservation et fournir le nom et l’adresse e-mail de chaque participant."
+      "answer": "Choisissez d’abord un événement pour vérifier les inscriptions. L’enregistrement nécessite une connexion, le nom et l’e-mail de chaque participant, puis votre approbation explicite. Aucun paiement n’est effectué. Quel événement vous intéresse ?"
     },
     "Can I rent a meeting room or event space at CCIFJ?": {
       "question": "Puis-je louer une salle de réunion ou un espace événementiel à la CCIFJ ?",
@@ -26,7 +26,7 @@
     },
     "How can I set up a company in Japan through CCIFJ?": {
       "question": "Comment créer une entreprise au Japon avec l’aide de la CCIFJ ?",
-      "answer": "L’équipe Appui aux entreprises de la CCIFJ accompagne les entreprises françaises et européennes pour la création d’entreprise, la domiciliation et les centres d’affaires, les études de marché et la récupération de TVA. Écrivez à appui.entreprises@ccifj.or.jp ou remplissez le formulaire de demande d’accompagnement commercial."
+      "answer": "La CCIFJ propose des études de marché, la recherche de partenaires et un accompagnement à l’implantation. Souhaitez-vous d’abord tester la demande ou préparer une installation au Japon ?"
     },
     "How do I post a job offer or find candidates through CCIFJ?": {
       "question": "Comment publier une offre d’emploi ou trouver des candidats avec la CCIFJ ?",
@@ -42,7 +42,7 @@
     },
     "How do I subscribe to the CCIFJ newsletter?": {
       "question": "Comment m’abonner à la newsletter de la CCIFJ ?",
-      "answer": "Je peux vous aider à vous inscrire aux newsletters de la CCIFJ. Elles comprennent les actualités de la Chambre et des entreprises, les annonces de formations et les nouveaux épisodes du podcast @StudioCCIFJ. Indiquez votre adresse e-mail et la newsletter souhaitée."
+      "answer": "Choisissez les actualités générales, les annonces de formation ou le podcast @StudioCCIFJ. Une connexion et votre approbation sont nécessaires avant tout enregistrement. Quelle newsletter souhaitez-vous ?"
     },
     "Where is the CCIFJ office located?": {
       "question": "Où se trouve le bureau de la CCIFJ ?",
@@ -68,11 +68,11 @@
     },
     "How do I become a CCIFJ member?": {
       "question": "CCIFJの会員になるにはどうすればよいですか？",
-      "answer": "CCIFJへの入会は、オンライン申請フォームからお申し込みいただけます：https://survey.ccife.net/232729?lang=en。日本で事業を行うフランス企業および海外企業が対象です。企業の状況に応じて、Benefactor、Active、Startup、Non-Residentの会員区分をお選びください。"
+      "answer": "会社の状況に合う会員区分を選び、公式フォームから申請します。入会資格と承認はCCIFJが確認します。現在の区分の比較をお手伝いできます。"
     },
     "What are the CCIFJ membership fees?": {
       "question": "CCIFJの会費はいくらですか？",
-      "answer": "CCIFJには、年会費が日本円で設定された4つの会員区分があります。\n- **Benefactor**：大規模な戦略的パートナー向けの上位区分\n- **Active**：標準的な法人会員\n- **Startup**：設立初期の企業向けの割引区分\n- **Non-Resident**：日本国外に拠点を置く企業向け\n正確な金額については、希望する区分を指定してお尋ねください。"
+      "answer": "CCIFJデータベースで全会員区分と年間会費を確認できます。通貨は区分によって異なります。入会資格と最新の条件は会員担当者が確認します。"
     },
     "What are the benefits of CCIFJ membership?": {
       "question": "CCIFJ会員にはどのようなメリットがありますか？",
@@ -80,7 +80,7 @@
     },
     "How can I book a ticket for a CCIFJ event?": {
       "question": "CCIFJのイベントチケットを予約するには？",
-      "answer": "参加したいイベント名とチケット枚数をお知らせください。予約手続きにはログインが必要です。また、予約の確定後、参加者全員の氏名とメールアドレスを登録します。"
+      "answer": "まずイベントを選び、申込期限を確認しましょう。予約の保存にはログイン、参加者全員の氏名・メールアドレス、明示的な承認が必要です。支払いは発生しません。どのイベントをご希望ですか？"
     },
     "Can I rent a meeting room or event space at CCIFJ?": {
       "question": "CCIFJの会議室やイベントスペースを借りられますか？",
@@ -88,7 +88,7 @@
     },
     "How can I set up a company in Japan through CCIFJ?": {
       "question": "CCIFJを通じて日本で会社を設立するには？",
-      "answer": "CCIFJの企業支援チーム（Appui aux Entreprises）は、フランスおよび欧州企業向けに、会社設立、住所貸し・ビジネスセンター、市場調査、VAT還付などを支援しています。appui.entreprises@ccifj.or.jp へ連絡するか、事業開発問い合わせフォームをご利用ください。"
+      "answer": "CCIFJは市場調査、パートナー探し、拠点設立の支援を行っています。まず需要を確かめたいですか。それとも日本拠点の設立を準備していますか？"
     },
     "How do I post a job offer or find candidates through CCIFJ?": {
       "question": "CCIFJを通じて求人を掲載したり候補者を探したりするには？",
@@ -104,7 +104,7 @@
     },
     "How do I subscribe to the CCIFJ newsletter?": {
       "question": "CCIFJのニュースレターに登録するには？",
-      "answer": "CCIFJのニュースレターへの登録をお手伝いできます。会員向けのお知らせや企業ニュース、研修案内、@StudioCCIFJポッドキャストの新着情報があります。メールアドレスと希望するニュースレターの種類をお知らせください。"
+      "answer": "一般ニュース、研修案内、@StudioCCIFJポッドキャストから選べます。保存前にログインと明示的な承認が必要です。どのニュースレターをご希望ですか？"
     },
     "Where is the CCIFJ office located?": {
       "question": "CCIFJのオフィスはどこにありますか？",

@@ -11,12 +11,18 @@ from .schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def user_response(user) -> UserResponse:
+    return UserResponse.model_validate(user).model_copy(update={
+        "is_staff": user.user_id in get_settings().staff_user_ids,
+    })
+
+
 def token_response(user, response: Response) -> TokenResponse:
     lifetime = get_settings().access_token_seconds
     response.headers["Cache-Control"] = "no-store"
     return TokenResponse(
         access_token=create_token(user.user_id, "access", lifetime),
-        expires_in=lifetime, user=UserResponse.model_validate(user),
+        expires_in=lifetime, user=user_response(user),
     )
 
 
@@ -48,4 +54,4 @@ async def current_user(user: CurrentUser, response: Response):
     if user is None:
         raise HTTPException(status_code=401, detail="Log in to view your account.", headers={"WWW-Authenticate": "Bearer"})
     response.headers["Cache-Control"] = "no-store"
-    return UserResponse.model_validate(user)
+    return user_response(user)

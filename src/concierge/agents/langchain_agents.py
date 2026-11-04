@@ -5,6 +5,7 @@ from typing_extensions import NotRequired
 from . import schema_prompts
 from . import tools as t
 from . import model
+from .reliability import ConciergeToolBoundary
 
 
 class ConciergeAgentState(AgentState):
@@ -31,6 +32,7 @@ event_agent = create_agent(
     model.llm,
     tools=[
         t.list_available_events,
+        t.search_indexed_events,
         t.get_event_details,
         t.book_event_ticket,
         t.book_space,
@@ -44,6 +46,7 @@ event_agent = create_agent(
         t.change_space_reservation,
         t.get_ccifj_contact,
         t.search_vectordb,
+        t.get_source_details,
         t.return_to_main_menu,
     ],
     middleware=[_write_approval([
@@ -53,7 +56,7 @@ event_agent = create_agent(
         "cancel_space_reservation",
         "change_event_booking",
         "change_space_reservation",
-    ])],
+    ]), ConciergeToolBoundary()],
     state_schema=ConciergeAgentState,
     system_prompt=schema_prompts.EVENT_AGENT_PROMPT,
 )
@@ -74,6 +77,7 @@ membership_agent = create_agent(
         t.get_ccifj_contact,
         t.return_to_main_menu,
     ],
+    middleware=[ConciergeToolBoundary()],
     state_schema=ConciergeAgentState,
     system_prompt=schema_prompts.MEMBERSHIP_AGENT_PROMPT,
 )
@@ -86,13 +90,14 @@ general_agent = create_agent(
     model.llm,
     tools=[
         t.search_vectordb,
+        t.get_source_details,
         t.get_ccifj_contact,
         t.get_official_form,
         t.subscribe_newsletter,
         t.submit_staff_request,
         t.return_to_main_menu,
     ],
-    middleware=[_write_approval(["subscribe_newsletter", "submit_staff_request"])],
+    middleware=[_write_approval(["subscribe_newsletter", "submit_staff_request"]), ConciergeToolBoundary()],
     state_schema=ConciergeAgentState,
     system_prompt=schema_prompts.GENERAL_AGENT_PROMPT,
 )
