@@ -581,6 +581,34 @@ class MemberRegionTest(unittest.TestCase):
         self.assertIsNone(_member_region_pattern("Japan"))
 
 
+class BookingButtonTest(unittest.IsolatedAsyncioTestCase):
+    async def test_no_book_button_for_an_event_booked_earlier_in_the_turn(self):
+        """The profile is loaded before the approval, so only the database knows
+        the user just booked; the button must follow the database."""
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+        from unittest import mock
+        from concierge.agents import body
+
+        @asynccontextmanager
+        async def fake_session():
+            yield None
+
+        event = SimpleNamespace(event_id=56, title="Kansai International Career Forum")
+        state = {"user_id": "7", "lang": "en", "user_context": {"upcoming_bookings": []}}
+        findings = "Booked.\n\n[Event IDs from the events database this turn: ID 56 = Kansai International Career Forum]"
+        with mock.patch("concierge.db.relationaldb.session.AsyncSessionLocal", fake_session), \
+                mock.patch("concierge.db.relationaldb.crud.list_user_bookings", mock.AsyncMock(return_value=[(None, event)])), \
+                mock.patch("concierge.db.relationaldb.crud.get_event", mock.AsyncMock(return_value=event)), \
+                mock.patch("concierge.agents.tools._registration_problem", return_value=None):
+            booked = await body._booked_event_ids(state)
+            after_booking = await body._with_booking_action([], state, findings, booked)
+            before_booking = await body._with_booking_action([], state, findings, set())
+        self.assertEqual(booked, {56})
+        self.assertEqual(after_booking, [])
+        self.assertEqual([a["id"] for a in before_booking], ["event.book"])
+
+
 class LinkLabelTest(unittest.TestCase):
     def test_generic_and_repeated_link_texts_get_distinct_page_names(self):
         from concierge.api.presentation import linked_resources
