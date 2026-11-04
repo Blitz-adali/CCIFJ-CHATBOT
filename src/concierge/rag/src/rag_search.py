@@ -27,13 +27,6 @@ def search(retriever: bm25s.BM25, model: SentenceTransformer, query: str, origin
         return ["hybrid_n can't be greater than original_n"]
     if (reranked_n >= hybrid_n):
         return ["reranked_n can't be equal to or greater than hybrid_n"]
-    tokenizer = AutoTokenizer.from_pretrained(EMBED_MODEL_NAME)
-    token_ids = tokenizer.encode(
-    query,
-    add_special_tokens=False,
-    )
-    if (len(token_ids) > 450):
-        return ["Query length is larger than 450 tokens"]
     collection = create_collection(overwrite=False)
     results1 = semantic_search(query, collection=collection, model=model, limit=original_n)
     results2 = lexical_search(retriever, query, limit=original_n)
