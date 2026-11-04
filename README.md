@@ -1,7 +1,8 @@
 # CCIFJ Concierge
 
 An AI concierge for the **Chambre de Commerce et d'Industrie France Japon (CCIFJ)**.
-It answers questions about CCIFJ events, membership, and business support in
+It answers questions about CCIFJ events, membership, business support, and
+recruitment and training (for employers and job seekers) in
 English, French, Japanese, or the user's own language. It can also take real
 actions, such as booking event tickets or writing a message to CCIFJ staff, but
 only after the user approves them.
@@ -110,7 +111,7 @@ flowchart TD
 2. **Knowing the user first.** For an advisory request (*"I want to expand to Japan"*) with important details missing, the orchestrator first asks for them, once, and says the user can skip. Whatever the user replies, the next turn answers, tailored to what they shared, and ends by recommending the details that are still missing. Factual and transactional requests are never held up. Off-topic requests get a polite refusal.
 3. **Specialist agents.** Each one is a LangChain agent with its own prompt and tools (see below). It sees the recent conversation, any attached files, and the user's profile.
 4. **Collector.** Merges what the specialists found into one answer in the user's language. It also sees the last 3 exchanges, so it builds on earlier advice and doesn't ask again for details the user skipped. It keeps the answer to about 250 words, names the 2 most relevant member companies when the directory found any, ends with one follow-up question, proposes up to 2 next actions, and writes 3 suggested questions for this user.
-5. **Final policy check.** A second, cheaper model call makes sure the answer stays within CCIFJ topics.
+5. **Final policy check.** A second, cheaper model call makes sure the answer stays within CCIFJ topics. It uses the same scope definition as the orchestrator (`SCOPE_DEFINITION`) and also sees the previous assistant message, so follow-ups like "help me write an email to Nicolas" aren't mistaken for new, unrelated requests. Answers that only ask the user questions, staff drafts, and help for job seekers are always allowed; it blocks only answers that fulfill a plainly unrelated request (homework, coding, trivia).
 6. **Pause.** If an agent calls a tool that writes to the database, the graph pauses and the user sees an approval card (see [Approvals](#approvals-human-in-the-loop)).
 
 ---
