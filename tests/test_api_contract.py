@@ -447,17 +447,17 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         pending = await self.backend.format_result({**result, "__interrupt__": [{"interrupt_id": "i", "action_requests": [{"name": "book_space", "args": {}}]}]}, guest=True)
         self.assertEqual(pending["next_actions"], [])
 
-    async def test_suggestions_use_the_ui_locale_and_fill_up_to_three_buttons(self):
+    async def test_model_suggestions_pass_through_and_fill_up_to_three_buttons(self):
         from langchain_core.messages import AIMessage, HumanMessage
         from concierge.api.agent_backend import response_locale
-        question = "What events are coming up at CCIFJ?"
+        question = "Which committee fits a cosmetics brand?"
         result = {
             "messages": [HumanMessage("What networking events are coming up?"), AIMessage("Networking Night is on Friday.")],
             "next_actions": [
                 {"id": "event.book", "label": "Book", "prompt": "I want to book a ticket for event ID 12", "event_id": 12},
                 {"id": "events.browse", "label": "Browse", "prompt": "Show me more events"},
             ],
-            "suggested_questions": [question, "Not in the catalog?"],
+            "suggested_questions": [question, " Can CCIFJ help me find a distributor? ", ""],
         }
         token = response_locale.set("fr")
         try:
@@ -466,9 +466,10 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         finally:
             response_locale.reset(token)
         self.assertEqual(len(with_actions["next_actions"]), 2)
-        self.assertEqual(with_actions["suggested_questions"], ["Quels sont les prochains événements de la CCIFJ ?"])
+        # Suggestions are written by the model in the user's language: never re-localized.
+        self.assertEqual(with_actions["suggested_questions"], [question, "Can CCIFJ help me find a distributor?"])
         self.assertEqual(with_actions["path_actions"], [])
-        self.assertEqual(questions_only["suggested_questions"], ["Quels sont les prochains événements de la CCIFJ ?", "Not in the catalog?"])
+        self.assertEqual(questions_only["suggested_questions"], [question, "Can CCIFJ help me find a distributor?"])
 
 
 class UserContextTest(unittest.IsolatedAsyncioTestCase):
@@ -495,7 +496,7 @@ class UserContextTest(unittest.IsolatedAsyncioTestCase):
             space = models.Space(name="Room A")
             session.add_all([member_user, guest_user, category, space])
             await session.flush()
-            company = models.Member(name="ACME KK", category_id=category.category_id)
+            company = models.Member(name="ACME KK", category_id=category.category_id, sector="IT", country="Japan", region="Tokyo")
             events = [models.Event(title=f"Event {i}", description="", category="tech", start_at=now + timedelta(days=i, hours=1)) for i in range(-1, 7)]
             session.add_all([company, *events])
             await session.flush()
@@ -511,7 +512,7 @@ class UserContextTest(unittest.IsolatedAsyncioTestCase):
 
             context = await crud.load_user_context(session, member_user.user_id)
             self.assertEqual(set(context), {"name", "email", "membership", "upcoming_bookings", "upcoming_space_reservations", "newsletter_subscribed", "interests", "recommended_events"})
-            self.assertEqual(context["membership"], {"company": "ACME KK", "tier": "Premium", "annual_price": "250000", "currency": "JPY"})
+            self.assertEqual(context["membership"], {"company": "ACME KK", "industry": "IT", "country": "Japan", "region": "Tokyo", "tier": "Premium", "annual_price": "250000", "currency": "JPY"})
             self.assertEqual([b["title"] for b in context["upcoming_bookings"]], ["Event 0", "Event 1", "Event 2", "Event 3", "Event 4"])
             self.assertEqual(context["upcoming_bookings"][0]["start_at"], (now + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M"))
             self.assertEqual([r["title"] for r in context["upcoming_space_reservations"]], ["Meeting 1", "Meeting 2", "Meeting 3"])
@@ -532,8 +533,97 @@ class ProgressTrackerTest(unittest.TestCase):
         self.assertEqual(tracker.update(node("events_node", "on_chain_start", "1")), ["Our Events Agent is finding relevant events for you…"])
         self.assertEqual(tracker.update(node("general_node", "on_chain_start", "2")), ["Our Events and Business Support Agents are working in parallel…"])
         tool = tracker.update({"event": "on_tool_start", "name": "search_vectordb", "run_id": "t", "metadata": {}})
-        self.assertEqual(tool[0], "Searching CCIFJ website and knowledge base information…")
+        self.assertEqual(tool[0], "Looking through CCIFJ information…")
         self.assertIsNone(tracker.update({"event": "on_tool_start", "name": "internal_helper", "run_id": "u", "metadata": {}}))
+
+
+class EventSearchTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.engine = create_async_engine(f"sqlite+aiosqlite:///{self.directory.name}/test.db")
+        async with self.engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+
+    async def asyncTearDown(self):
+        await self.engine.dispose()
+        self.directory.cleanup()
+
+    async def test_keywords_and_locations_match_any_term(self):
+        from datetime import timedelta
+        from concierge.db.relationaldb import crud, models
+        soon = crud._now() + timedelta(days=3)
+        async with AsyncSession(self.engine, expire_on_commit=False) as session:
+            session.add_all([
+                models.Event(title="Ask me Anything", description="Leaders from the Food & Beverage industry",
+                             category="Business event", location="Nihonbashi, Tokyo", start_at=soon),
+                models.Event(title="GALA KANSAI 2026", description="French gastronomy evening",
+                             category="Networking", location="Higashiyama-ku, Kyoto Japan", start_at=soon),
+                models.Event(title="HR Trends", description="Salaries and recruitment",
+                             category="Business event", location="Chuo-ku, Tokyo", start_at=soon),
+            ])
+            await session.commit()
+            food = await crud.search_events(session, keywords=["wine", "gastronomy", "beverage"])
+            kansai = await crud.search_events(session, locations=["Osaka", "Kyoto"])
+            categories = await crud.list_event_categories(session)
+        self.assertEqual({e.title for e in food}, {"Ask me Anything", "GALA KANSAI 2026"})
+        self.assertEqual([e.title for e in kansai], ["GALA KANSAI 2026"])
+        self.assertEqual(categories, ["Business event", "Networking"])
+
+
+class MemberRegionTest(unittest.TestCase):
+    def test_regions_match_stored_wards_and_cities_as_whole_words(self):
+        from concierge.agents.tools import _member_region_pattern
+        tokyo, kansai = _member_region_pattern("Tokyo"), _member_region_pattern("Kansai")
+        self.assertTrue(tokyo.search("CHIYODA-KU"))
+        self.assertTrue(tokyo.search("shibuya ku Japon"))
+        self.assertTrue(tokyo.search("町田市 Japon"))
+        self.assertFalse(tokyo.search("Kitaazumi-gun Hakuba"))
+        self.assertTrue(kansai.search("Osaka-shi"))
+        self.assertFalse(kansai.search("Narashino-shi Japon"))
+        self.assertIsNone(_member_region_pattern("Japan"))
+
+
+class BookingButtonTest(unittest.IsolatedAsyncioTestCase):
+    async def test_no_book_button_for_an_event_booked_earlier_in_the_turn(self):
+        """The profile is loaded before the approval, so only the database knows
+        the user just booked; the button must follow the database."""
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+        from unittest import mock
+        from concierge.agents import body
+
+        @asynccontextmanager
+        async def fake_session():
+            yield None
+
+        from datetime import datetime
+        event = SimpleNamespace(event_id=56, title="Kansai International Career Forum", reg_deadline=datetime(2099, 1, 1))
+        state = {"user_id": "7", "lang": "en", "user_context": {"upcoming_bookings": []}}
+        findings = "Booked.\n\n[Event IDs from the events database this turn: ID 56 = Kansai International Career Forum]"
+        with mock.patch("concierge.db.relationaldb.session.AsyncSessionLocal", fake_session), \
+                mock.patch("concierge.db.relationaldb.crud.list_user_bookings", mock.AsyncMock(return_value=[(None, event)])), \
+                mock.patch("concierge.db.relationaldb.crud.get_event", mock.AsyncMock(return_value=event)), \
+                mock.patch("concierge.agents.tools._registration_problem", return_value=None):
+            booked = await body._booked_event_ids(state)
+            after_booking = await body._with_booking_action([], state, findings, booked)
+            before_booking = await body._with_booking_action([], state, findings, set())
+        self.assertEqual(booked, {56})
+        self.assertEqual(after_booking, [])
+        self.assertEqual([a["id"] for a in before_booking], ["event.book"])
+
+
+class LinkLabelTest(unittest.TestCase):
+    def test_generic_and_repeated_link_texts_get_distinct_page_names(self):
+        from concierge.api.presentation import linked_resources
+        reply = (
+            "[event page](https://www.ccifj.or.jp/en/events/upcoming-events/event-details/event/ask-me-anything.html) "
+            "[event page](https://www.ccifj.or.jp/en/events/upcoming-events/event-details/event/gala-kansai-2026.html) "
+            "[Contact us](https://www.ccifj.or.jp/en/events/contact-us.html) "
+            "[Contact us](https://www.ccifj.or.jp/en/membership/contact-us.html) "
+            "https://www.ccifj.or.jp/en/membership/contact-us.html/"
+        )
+        labels = [action["label"] for action in linked_resources(reply)[1]]
+        self.assertEqual(labels, ["Ask me anything", "Gala kansai 2026", "Events · Contact us", "Membership · Contact us"])
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ from typing import Optional, Sequence
 from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy import delete, func, update
+from sqlalchemy import delete, func, or_, update
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from .datetimes import japan_now, japan_naive
@@ -48,13 +48,23 @@ def _naive(dt: datetime) -> datetime:
 
 # ---------- Events ----------
 
+async def list_event_categories(session: AsyncSession) -> list[str]:
+    """The event categories in use, for validating the agent's category filter."""
+    result = await session.exec(
+        select(Event.category).where(col(Event.category).is_not(None)).distinct().order_by(Event.category)
+    )
+    return [category for category in result.all() if category]
+
+
 async def search_events(
     session: AsyncSession,
     *,
     keyword: Optional[str] = None,
+    keywords: Sequence[str] = (),
     name: Optional[str] = None,
     category: Optional[str] = None,
     location: Optional[str] = None,
+    locations: Sequence[str] = (),
     language: Optional[str] = None,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
@@ -69,6 +79,7 @@ async def search_events(
     Prices in different currencies aren't comparable, so `max_price` is always
     matched against one currency: `currency` if given, otherwise JPY.
     `currency` on its own (without max_price) just filters by that currency.
+    `keywords` and `locations` match when any one of their terms matches.
     """
     stmt = select(Event)
 
@@ -77,12 +88,19 @@ async def search_events(
         stmt = stmt.where(
             col(Event.title).ilike(like) | col(Event.description).ilike(like)
         )
+    if keywords:
+        stmt = stmt.where(or_(*(
+            col(Event.title).ilike(f"%{term}%") | col(Event.description).ilike(f"%{term}%")
+            for term in keywords
+        )))
     if category:
         stmt = stmt.where(col(Event.category).ilike(category))
     if name:
         stmt = stmt.where(col(Event.title).ilike(f"%{name}%"))
     if location:
         stmt = stmt.where(col(Event.location).ilike(f"%{location}%"))
+    if locations:
+        stmt = stmt.where(or_(*(col(Event.location).ilike(f"%{place}%") for place in locations)))
     if language:
         # Subquery instead of a join, so an event isn't returned once per language.
         has_language = select(EventLanguage.event_id).where(
@@ -807,6 +825,10 @@ async def load_user_context(session: AsyncSession, user_id: Optional[int]) -> Op
         member, category = row
         membership = {
             "company": member.name,
+            # Lets the concierge tailor advice without asking the user again.
+            "industry": member.sector,
+            "country": member.country,
+            "region": member.region,
             "tier": category.category_name if category else None,
             "annual_price": _amount_text(category.annual_price) if category else None,
             "currency": category.currency if category else None,

@@ -136,6 +136,12 @@
 .action-card, .follow-up-list button { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid #d8dfde; border-radius: 13px; background: #faf8f4; color: #174965; text-align: start; font-size: 13px; }
 .action-card:hover, .follow-up-list button:hover:not(:disabled) { border-color: #8caaba; background: #fffdf9; }
 .action-heading { font-size: 13px; font-weight: 600; }
+/* Links from the answer: compact chips, a few at a time, so many links don't bury the reply. */
+.link-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.link-chip { display: inline-flex; max-width: 100%; align-items: center; gap: 6px; padding: 6px 11px; border: 1px solid #d8dfde; border-radius: 999px; background: #faf8f4; color: #174965; font-size: 12px; text-decoration: none; }
+.link-chip > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-chip:hover { border-color: #8caaba; background: #fffdf9; }
+.link-chip-more { border-style: dashed; color: #73838d; cursor: pointer; font: inherit; font-size: 12px; }
 .action-content p { margin: 4px 0 0; color: #6c808a; font-size: 12px; line-height: 1.5; }
 .follow-up-list button svg { flex: none; color: #a24f67; }
 /* "Do something" buttons stand out; "ask something" questions read as lighter links. */

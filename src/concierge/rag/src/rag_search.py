@@ -26,15 +26,25 @@ def get_tokenizer():
 
 
 @lru_cache(maxsize=1)
-def get_collection():
-    from .index_init import create_collection
-    return create_collection(overwrite=False)
-
-
-@lru_cache(maxsize=1)
 def get_rerank_client():
     import cohere
     return cohere.ClientV2(api_key=COHERE_API_KEY, timeout=8)
+
+import threading
+
+_collection: Collection | None = None
+_collection_lock = threading.Lock()
+
+
+def get_collection() -> Collection:
+    """Open the Chroma collection once per process. Creating a client for every
+    search crashes when the agent runs two searches in parallel."""
+    global _collection
+    with _collection_lock:
+        if _collection is None:
+            from .index_init import create_collection
+            _collection = create_collection(overwrite=False)
+        return _collection
 
 
 

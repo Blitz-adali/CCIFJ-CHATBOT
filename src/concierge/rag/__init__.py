@@ -1,4 +1,4 @@
-from .src.rag_search import search
+from .src.rag_search import search, get_collection
 from .src.config import EMBED_MODEL_NAME
 
 
@@ -7,4 +7,4 @@ def index(*args, **kwargs):
     return build_index(*args, **kwargs)
 
 
-__all__ = ["search", "index", "EMBED_MODEL_NAME"]
+__all__ = ["search", "get_collection", "index", "EMBED_MODEL_NAME"]

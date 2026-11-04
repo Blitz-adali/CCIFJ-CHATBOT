@@ -55,7 +55,7 @@ def corpus_report(dataset):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("corpus", "retrieval", "api"), default="corpus")
-    parser.add_argument("--dataset", type=Path, default=ROOT / "ccifj_retrieval_eval_100.json")
+    parser.add_argument("--dataset", type=Path, default=ROOT / "tests/fixtures/retrieval_eval_100.json")
     parser.add_argument("--limit", type=int, default=0, help="0 runs all questions")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--output", type=Path)

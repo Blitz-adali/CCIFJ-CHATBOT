@@ -20,7 +20,6 @@ from contextvars import ContextVar
 from datetime import datetime, time
 from functools import lru_cache
 
-from .catalog import localized_question
 from .presentation import linked_resources
 from .progress import ProgressTracker
 
@@ -33,14 +32,14 @@ response_events = ContextVar("api_response_events", default=None)
 agent_inputs = ContextVar("api_agent_inputs", default=None)
 
 LOGIN_REQUIRED = {
-    "en": "This action needs a signed-in account. Log in and continue in this conversation; I can keep helping you prepare.",
-    "fr": "Cette action nécessite un compte connecté. Connectez-vous, puis continuez cette conversation.",
-    "ja": "この操作にはログインが必要です。ログイン後、この会話を続けてください。",
+    "en": "This action needs a CCIFJ account. Please sign in: you can stay in this conversation and continue right here afterwards.",
+    "fr": "Cette action nécessite un compte CCIFJ. Veuillez vous connecter : vous pourrez rester dans cette conversation et continuer ici ensuite.",
+    "ja": "この操作にはCCIFJアカウントが必要です。ログインしてください。ログイン後もこの会話のまま続けられます。",
 }
 LOGIN_WARNING = {
-    "en": "Login is required for protected actions. Continue this conversation after signing in.",
-    "fr": "La connexion est requise pour les actions protégées. Continuez cette conversation après connexion.",
-    "ja": "保護された操作にはログインが必要です。ログイン後、この会話を続けてください。",
+    "en": "Sign in to book, reserve, or subscribe. Your conversation is kept when you sign in.",
+    "fr": "Connectez-vous pour réserver ou vous abonner. Votre conversation est conservée après la connexion.",
+    "ja": "予約や登録にはログインが必要です。ログインしても会話はそのまま残ります。",
 }
 APPROVAL_WARNING = {
     "en": "The action will not run until you approve it.",
@@ -438,10 +437,10 @@ class AgentBackend:
                 warnings.append(APPROVAL_WARNING[locale])
         if not reply:
             raise RuntimeError("Agent returned no reply.")
-        # The answer follows the user's language; catalog questions follow the UI locale.
-        suggested = [localized_question(q, locale) for q in (result.get("suggested_questions") or [])]
-        # At most three buttons under an answer: the agent's actions first, then questions.
-        suggested = suggested[:max(0, 3 - len(actions_for_turn))]
+        # Written by the model for this user, already in the user's language.
+        suggested = [q.strip() for q in (result.get("suggested_questions") or []) if isinstance(q, str) and q.strip()]
+        # Actions first, then questions: three buttons in all, but always room for two questions.
+        suggested = suggested[:max(2, 3 - len(actions_for_turn))]
         plan = result.get("plan") or {}
         tasks = plan.get("tasks", []) if isinstance(plan, dict) else []
         intent = ", ".join(dict.fromkeys(t.get("target", "") for t in tasks if isinstance(t, dict) and t.get("target")))

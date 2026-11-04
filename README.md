@@ -1,7 +1,8 @@
 # CCIFJ Concierge
 
 An AI concierge for the **Chambre de Commerce et d'Industrie France Japon (CCIFJ)**.
-It answers questions about CCIFJ events, membership, and business support in
+It answers questions about CCIFJ events, membership, business support, and
+recruitment and training (for employers and job seekers) in
 English, French, Japanese, or the user's own language. It can also take real
 actions, such as booking event tickets or writing a message to CCIFJ staff, but
 only after the user approves them.
@@ -27,6 +28,7 @@ User ──► React chat ──► FastAPI ──► LangGraph agents ──►
 - [Writing to CCIFJ staff](#writing-to-ccifj-staff)
 - [Knowledge search (RAG)](#knowledge-search-rag)
 - [Personal answers](#personal-answers)
+- [How answers are written](#how-answers-are-written)
 - [Buttons under an answer](#buttons-under-an-answer)
 - [Project structure](#project-structure)
 - [Getting started](#getting-started)
@@ -42,16 +44,16 @@ User ──► React chat ──► FastAPI ──► LangGraph agents ──►
 
 | Area | What it does |
 |---|---|
-| **Events** | Lists upcoming events (by name, category, place, or dates), shows full event details, books tickets for every attendee, and reserves the L'Espace@CCIFJ room. Booking requires login and approval. |
+| **Events** | Lists upcoming events (by topic keywords, name, format, city or region such as Kansai, or dates), shows full event details, books tickets for every attendee, and reserves the L'Espace@CCIFJ room. Booking requires login and approval. |
 | **My bookings** | Shows the user's own bookings and room reservations. Before booking, checks whether registration is open, whether they already booked, whether it clashes with their schedule, and whether the room is free (suggesting free slots when it isn't). Cancels a booking or reservation, or changes it (another event, add or remove attendees, new dates) in one step, until it starts. Changes need login and approval. |
-| **Membership** | Explains membership categories, fees, eligibility, and benefits, shares the application form, and searches 650+ member companies by industry or region. |
-| **Business support** | Answers from CCIFJ's knowledge base: company setup in Japan, domiciliation, VAT recovery, HR and recruitment, CV registration, corporate news, and media. |
+| **Membership** | Explains membership categories, fees, eligibility, and benefits, shares the application form, and searches 650+ member companies by industry and, when asked, by place (Tokyo, Kansai, a city…). |
+| **Business support** | Knows the full CCIFJ offer across the 8 sections of ccifj.or.jp (Our Chamber, News, Membership, Events, Business Forum, Commercial Support, Recruitment/Training, Publications) and recommends the services that fit the user's stage: market studies, Business Connect, Expo+, sector missions, company setup, domiciliation, V.I.E, VAT recovery, recruitment, training, publications, and advertising. |
 | **Contacts** | Gives the right CCIFJ person for events, speaking, sponsorship, BONJOUR FRANCE, membership, corporate news, market entry, and recruitment, and always offers to write the email together. |
 | **Staff requests** | Writes an email to a CCIFJ contact, or a ticket for the CCIFJ team when no contact fits. It revises the draft with the user and stores it after the user approves. |
 | **Newsletter** | Subscribes the user to general news, training announcements, or the @StudioCCIFJ podcast, after approval. |
 | **Files** | Reads attached PDFs, images (PNG, JPEG), Word documents (DOCX), and text files, with OCR in English, French, and Japanese for scans and images. Up to 4 files per conversation, 5 MB each. The text goes to the agent as context; the chat only shows the file name. |
-| **Personal touch** | Knows the date and the signed-in user's bookings, membership, and newsletter status. It can remind them of an event coming up soon or suggest one that matches their interests. |
-| **Safety** | Keeps to CCIFJ topics and refuses unrelated requests. It treats tool results and documents as data, not instructions. Every database write needs explicit approval. |
+| **Personal touch** | Asks for the details that change its advice (industry, country, B2B or B2C, stage) before answering an advisory question, once, and lets the user skip. Knows the date and the signed-in user's bookings, membership (with the company's industry and location), and newsletter status. Remembers the last few exchanges, so it builds on earlier advice instead of repeating it. |
+| **Safety** | Keeps to CCIFJ topics and refuses unrelated requests. It treats tool results and documents as data, not instructions. Every database write needs explicit approval. It never shows the user its internals (databases, tools, event IDs). |
 
 ---
 
@@ -96,28 +98,28 @@ conversation brief carries user-supplied facts and corrections across turns.
 
 ```mermaid
 flowchart TD
-    START(["User message"]) --> ORCH["Orchestrator<br/>detects language,<br/>checks scope, splits into tasks,<br/>predicts follow-up questions"]
-    ORCH -- "catalog question<br/>(15 pre-written answers)" --> FAST["Instant answer<br/>no tools"]
+    START(["User message"]) --> ORCH["Orchestrator<br/>detects language,<br/>checks scope, splits into tasks,<br/>notes what it knows about the user"]
+    ORCH -- "advisory request,<br/>user details missing" --> ASK["Asks for the user's details<br/>(company, industry, country…)"]
     ORCH -- "out of scope or unclear" --> REFUSE["Refusal or<br/>clarifying question"]
     ORCH -- "events task" --> EV["Events agent"]
     ORCH -- "membership task" --> MEM["Membership agent"]
     ORCH -- "general task" --> GEN["General & business agent"]
-    EV --> COL["Collector<br/>merges findings into one answer,<br/>picks up to 2 next actions"]
+    EV --> COL["Collector<br/>merges findings into one answer,<br/>picks up to 2 next actions,<br/>writes 3 follow-up questions"]
     MEM --> COL
     GEN --> COL
     COL --> POLICY["Final policy check<br/>blocks off-topic answers"]
-    FAST --> POLICY
+    ASK --> POLICY
     REFUSE --> POLICY
     POLICY --> END(["Answer + buttons"])
     EV -. "write tool called" .-> PAUSE{{"Paused for approval"}}
     GEN -. "write tool called" .-> PAUSE
 ```
 
-1. **Orchestrator.** Detects the user's language and decides whether the request is in scope. It splits a request into tasks for one or more specialists: *"show me events and membership fees"* runs both in parallel. It also picks up to 3 likely follow-up questions from the catalog.
-2. **Shortcuts.** A question that matches one of the 15 catalog questions (in English, French, or Japanese) gets its pre-written answer straight away. Off-topic requests get a polite refusal.
+1. **Orchestrator.** Detects the user's language and decides whether the request is in scope. It splits a request into tasks for one or more specialists: *"show me events and membership fees"* runs both in parallel. A market-entry or partner-finding request with a known industry goes to all three specialists: support services, member companies in that industry, and matching events and committees. It also notes which details about the user matter for the request (industry, home country, B2B or B2C, stage, timeline...), which ones are already known from the profile or the conversation, and which are missing.
+2. **Knowing the user first.** For an advisory request (*"I want to expand to Japan"*) with important details missing, the orchestrator first asks for them, once, and says the user can skip. Whatever the user replies, the next turn answers, tailored to what they shared, and ends by recommending the details that are still missing. Factual and transactional requests are never held up. Off-topic requests get a polite refusal.
 3. **Specialist agents.** Each one is a LangChain agent with its own prompt and tools (see below). It sees the recent conversation, any attached files, and the user's profile.
 4. **Collector.** Passes through a single specialist's final answer, or merges multiple specialists' findings into one answer. Multi-domain synthesis may propose up to 2 next actions; event booking actions remain checked against database records and authentication.
-5. **Final policy check.** A second, cheaper model call makes sure the answer stays within CCIFJ topics.
+5. **Final policy check.** A second, cheaper model call makes sure the answer stays within CCIFJ topics. It uses the same scope definition as the orchestrator (`SCOPE_DEFINITION`) and also sees the previous assistant message, so follow-ups like "help me write an email to Nicolas" aren't mistaken for new, unrelated requests. Answers that only ask the user questions, staff drafts, and help for job seekers are always allowed; it blocks only answers that fulfill a plainly unrelated request (homework, coding, trivia).
 6. **Pause.** If an agent calls a tool that writes to the database, the graph pauses and the user sees an approval card (see [Approvals](#approvals-human-in-the-loop)).
 
 ---
@@ -150,6 +152,7 @@ flowchart LR
         m3["list_available_industries_and_regions"]
         m4["get_official_form"]
         m5["get_ccifj_contact"]
+        m6["search_vectordb"]
     end
     subgraph GENERAL["General & business agent"]
         direction TB
@@ -163,6 +166,7 @@ flowchart LR
     MEMBERSHIP --> DB
     GENERAL --> DB
     EVENTS --> KB[("Knowledge base")]
+    MEMBERSHIP --> KB
     GENERAL --> KB
 ```
 
@@ -171,7 +175,7 @@ flowchart LR
 
 | Tool | Agent | What it does |
 |---|---|---|
-| `list_available_events` | Events | Upcoming events, filtered by name, category, location, and date range, 10 per page. |
+| `list_available_events` | Events | Upcoming events, 10 per page. Filters: `keyword` (comma-separated topic words searched in title and description as whole words, e.g. `"F&B, food, wine"`), `name`, `category` (the event **format**: Business event, Conference, Networking, Training; a topic passed here is rejected with the valid list), `location` (a city, venue, or region: Kanto, Kansai, Chubu, Kyushu, Hokkaido), and dates. |
 | `get_event_details` | Events | One event's schedule, venue, price, registration deadline, languages, and speakers. |
 | `book_event_ticket` 🔒 | Events | Books one ticket per attendee (name and email; phone optional). Requires login. Checks the registration deadline. |
 | `book_space` 🔒 | Events | Reserves L'Espace@CCIFJ for a date range. Requires login. The database prevents overlapping reservations. |
@@ -184,10 +188,10 @@ flowchart LR
 | `change_event_booking` 🔒 | Events | Moves a booking to another event and/or replaces its attendee list, in one step. |
 | `change_space_reservation` 🔒 | Events | Moves a reservation to new dates, or changes its title or attendee count, in one step. |
 | `get_ccifj_contact` | Events, Membership, General | The direct contact for a topic: `events`, `become_speaker`, `become_sponsor`, `bonjour_france`, `membership`, `corporate_news`, `japanese_market_support`, `recruitment_and_hr`. |
-| `search_vectordb` | Events, General | Hybrid search of the CCIFJ website and knowledge base (see [Knowledge search](#knowledge-search-rag)). |
+| `search_vectordb` | Events, Membership, General | Hybrid search of the CCIFJ website and knowledge base (see [Knowledge search](#knowledge-search-rag)). |
 | `get_membership_tier_info` | Membership | Membership categories, annual dues in JPY, eligibility, and benefits. |
-| `search_member_directory` | Membership | Member companies by industry and/or region. |
-| `list_available_industries_and_regions` | Membership | The industries and regions you can search by. |
+| `search_member_directory` | Membership | Member companies by industry and/or place. Places are stored as address parts (Tokyo wards like `Minato-ku`, cities, French towns), so a region is matched as the wards and cities inside it ("Tokyo" covers the 23 wards; "Kansai" covers Osaka, Kyoto, Kobe, Nara…), as whole words. "Japan" means no filter. If a place has no members in that industry, it returns the industry's members elsewhere, with a note. |
+| `list_available_industries_and_regions` | Membership | The directory industries, and the region names `search_member_directory` understands. |
 | `get_official_form` | Membership, General | Official form links: membership application, business development inquiry, CV database. |
 | `subscribe_newsletter` 🔒 | General | Subscribes an email to a CCIFJ newsletter. Requires login. |
 | `submit_staff_request` 🔒 | General | Stores an email to one or more CCIFJ contacts, or a ticket for the team. Guests may use it. |
@@ -329,19 +333,30 @@ The knowledge base is built from crawled CCIFJ website pages
 write their search queries in English, because the index is in English, but
 always answer in the user's language.
 
+The Chroma collection is opened once per process (`rag_search.get_collection`,
+also loaded by the startup warm-up). Opening a new client for every search used
+to crash when an agent ran two searches in parallel.
+
+**Which source wins.** CCIFJ records in SQLite (events, membership categories
+and fees, the member directory, contacts, forms, the user's bookings) are the
+source of truth. Website search is background only. When the two disagree on a
+fact such as a fee or a date, the agents use the record and don't mention the
+difference.
+
 ---
 
 ## Personal answers
 
 For a signed-in user, the API loads a small profile on every turn
-(`crud.load_user_context`): name, email, membership (company and tier),
-newsletter status, upcoming bookings (with days until each one), upcoming room
-reservations, **interests** (the event categories they book most), and up to two
-**recommended events** (upcoming, registration open, in those categories, not
-yet booked). Every prompt also gets the current date and time in Japan and the
-turn number.
+(`crud.load_user_context`): name, email, membership (company, its industry,
+country and region, and tier), newsletter status, upcoming bookings (with days
+until each one), upcoming room reservations, **interests** (the event categories
+they book most), and up to two **recommended events** (upcoming, registration
+open, in those categories, not yet booked). Every prompt also gets the current
+date and time in Japan and the turn number.
 
 The concierge uses this to:
+- avoid asking for details it already knows (a member's industry or country);
 - avoid offering what the user already has (joining when already a member,
   booking an event they already booked, subscribing twice);
 - pre-fill their name and email in bookings and staff requests;
@@ -349,7 +364,33 @@ The concierge uses this to:
   the next 7 days, a registration deadline that's close, or an upcoming event
   that matches their interests.
 
-Guests get the same answers, without the personal parts.
+**Knowing the user.** For advisory questions, the orchestrator decides which
+details would change the answer (`known_user_details`, `missing_user_details`
+in its plan) and asks for the missing ones once, before answering. Every
+specialist gets those details with its task. If the user skips, the answer is
+general and never asks again.
+
+Guests get the same answers, without the personal parts. A guest who tries to
+book is asked to sign in and keeps the same conversation; after signing in from
+the chat, the widget continues it automatically.
+
+---
+
+## How answers are written
+
+The collector's prompt (`COLLECTOR_SYSTEM_PROMPT` in `schema_prompts.py`) and
+the shared blocks every agent gets (`CCIFJ_SERVICES_MAP`,
+`PERSONALIZATION_GUIDE`, `USER_FACING_RULES`) set these rules:
+
+| Rule | What it means |
+|---|---|
+| Build on the conversation | The collector sees the last 3 exchanges. It doesn't repeat earlier advice, links, or offers, and doesn't ask again for details the user skipped. |
+| Short | About 250 words, the 2–3 recommendations that matter most, at most 3 items per list; the rest is offered as a follow-up. |
+| Name members | When the directory found relevant members, the 2 most relevant are named, exactly as written, with their sector and a caveat that they're possible contacts. |
+| End with a question | Every answer ends with one question that moves the user forward (a draft, a deeper topic). |
+| No internals | Never mention databases, the knowledge base, tools, agents, or event IDs, and never say information "was not provided". Say what the user can do instead. |
+| Exact names | Company, event, and people's names are copied character for character. |
+| Links | Each URL once, as a Markdown link with a descriptive title; an event is linked on its title. |
 
 ---
 
@@ -358,12 +399,25 @@ Guests get the same answers, without the personal parts.
 | Kind | Source | Limit |
 |---|---|---|
 | **Next actions** (filled buttons) | The collector, from a fixed list: `event.view`, `event.book`, `events.browse`, `space.book`, `membership.join`, `membership.benefits`, `newsletter.subscribe`, `contact.staff`, `auth.login` | up to 2 |
-| **Suggested questions** | The orchestrator, from the 15-question catalog | fill the rest |
+| **Suggested questions** | Written by the model for this user, in their language: 3 related CCIFJ topics, spread across sections, that the answer and earlier turns haven't covered | at least 2 |
 
-There are **at most 3 buttons** in total. Actions are checked against the user's
-real situation before they're shown: no booking button for guests, no "join"
-for members, no event button for an ID that isn't in the results, and no
-`contact.staff` while a draft is already on screen.
+Three buttons in all, but there's always room for 2 suggested questions, so 2
+actions + 2 questions is the most. Actions are checked against the user's real
+situation before they're shown: no booking button for guests, no "join" for
+members, no event button for an ID that isn't in the results, and no
+`contact.staff` while a draft is already on screen. Action prompts name an
+event by its title, never its ID, because the user sees them as their own
+message.
+
+**Useful links.** Links in the answer also appear as chips
+(`api/presentation.py`, `NextActions.tsx`), but only when there are 2 or more
+(a single link is already visible in the text):
+- each page once (a trailing slash or `#anchor` doesn't make a new page);
+- generic link text ("event page", "here", "details") is replaced by the page's
+  own name from its URL;
+- links that share a label are told apart by page name or section
+  ("Events · Contact us", "Membership · Contact us");
+- at most 3 at a time, with a "Show N more" toggle.
 
 ---
 
@@ -389,7 +443,6 @@ src/concierge/
 └── main.py              FastAPI app
 ccifj-frontend/          React + TypeScript chat site
 tests/                   API contract tests (fake agent, throwaway database)
-tickets/                 open work for the backend and frontend
 start.sh                 starts the whole stack with one command
 ```
 
@@ -476,7 +529,7 @@ Settings come from `.env` and are checked at startup (`src/concierge/config.py`)
 | `trim_messages_max_token` | no | Conversation history kept per turn (default 1000 tokens). |
 | `CCIFJ_AGENT_TIMEOUT_SECONDS` | no | Maximum time for one agent turn (default 180). |
 | `CCIFJ_CORS_ORIGINS` | no | Comma-separated frontend origins allowed to call the API. |
-| `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, … | no | LangSmith tracing. |
+| `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, … | no | LangSmith tracing. Traces go to the project `<LANGSMITH_AGENT_ID>-<LANGSMITH_AGENT_ENVIRONMENT>` (e.g. `realhackathon-local`). Runs are listed by their start time, taken from this machine's clock: keep it synced, or runs recorded while it was wrong sort above newer ones. |
 
 Frontend settings (`ccifj-frontend/.env.local`): `CCIFJ_API_TARGET` for the
 development proxy, and optionally `VITE_API_BASE_URL`. Never put API keys in
@@ -573,13 +626,21 @@ cd ccifj-frontend && npm test
 
 ## Current limitations and tickets
 
-### Open tickets
+### Answer quality: known gaps
 
-Open work outside the agent is described in [`tickets/`](tickets/):
-
-| Ticket | Summary |
-|---|---|
-| [09](tickets/09-frontend-answer-paragraphs-merge.md) | Separate paragraphs in an answer show up joined on one line (`compactMarkdown` in `AnswerText.tsx` removes blank lines). |
+Seen in live tests of the concierge and not fixed yet:
+- When a fact differs for members and non-members (members-only events, 20% vs
+  30% recruitment fees), the answer states both but doesn't say what membership
+  would change for this user.
+- A later turn can soften a recommendation made earlier (for example "both
+  categories fit" after recommending Non-Resident), or describe a step the user
+  hasn't taken as done ("your Non-Resident membership").
+- Events named in an answer aren't always linked, and "not confirmed" or "not
+  tracked" wording still slips through occasionally.
+- Requests to find partners or clients don't always reach the events agent, so
+  matchmaking events can be missed.
+- Joining steps don't mention payment (card via Stripe) or the Start-up
+  category's two-year limit.
 
 ### Done
 
@@ -595,6 +656,23 @@ Tickets 01–08 were implemented in PR #6 (backend and frontend support for the 
 | 06 | The user profile includes interests and recommended events. |
 | 07 | The agent loads at server start; `/status` reports `agent_ready`. |
 | 08 | Approval messages and cards for cancelling and changing bookings. |
+
+On `feature/concierge-tweaks` and `feature/concierge-answer-quality`:
+
+| Change | Where |
+|---|---|
+| Asks for the user's details before advisory answers, once | orchestrator prompt and plan fields |
+| Knows the 8 CCIFJ website sections and suggests related services | `CCIFJ_SERVICES_MAP` |
+| Suggested questions written by the model (the 15 pre-written Q&A answers were removed) | orchestrator and collector |
+| Link chips: deduplicated, readable labels, shown only for 2+ links, 3 at a time | `presentation.py`, `NextActions.tsx` |
+| No internals in answers or loading messages | `USER_FACING_RULES`, `progress.py` |
+| Guests sign in and continue the same conversation | `body.py`, `agent_backend.py`, `WidgetChat.tsx` |
+| Answers build on the last 3 exchanges, name members, end with a question | collector |
+| Market-entry requests go to all three agents | orchestrator prompt |
+| Database facts win over website search | `USER_FACING_RULES` |
+| Event search by topic keyword, format, and region | `list_available_events`, `crud.search_events` |
+| Member search by region (wards and cities), with fallback | `search_member_directory` |
+| One shared Chroma collection, so parallel searches no longer crash | `rag_search.get_collection` |
 
 ### Other known limits
 - Event booking, room reservations, newsletter, cancel, and change require
