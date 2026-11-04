@@ -31,12 +31,12 @@ _WORKER_NAMES = {
 }
 
 _TOOL_LABELS = {
-    "list_available_events": {"en": "Checking our events database…", "fr": "Consultation de notre base de données des événements…", "ja": "イベントデータベースを確認しています…"},
-    "get_event_details": {"en": "Looking up the event details in our database…", "fr": "Recherche des détails de l’événement dans notre base de données…", "ja": "イベントの詳細をデータベースで確認しています…"},
-    "get_membership_tier_info": {"en": "Checking our membership database…", "fr": "Consultation de notre base de données des adhésions…", "ja": "会員データベースを確認しています…"},
+    "list_available_events": {"en": "Checking upcoming CCIFJ events…", "fr": "Consultation des prochains événements de la CCIFJ…", "ja": "CCIFJの今後のイベントを確認しています…"},
+    "get_event_details": {"en": "Looking up the event details…", "fr": "Recherche des détails de l’événement…", "ja": "イベントの詳細を確認しています…"},
+    "get_membership_tier_info": {"en": "Checking CCIFJ membership options…", "fr": "Consultation des formules d’adhésion de la CCIFJ…", "ja": "CCIFJの会員プランを確認しています…"},
     "search_member_directory": {"en": "Searching our member company directory…", "fr": "Recherche dans notre annuaire des entreprises membres…", "ja": "会員企業ディレクトリを検索しています…"},
     "list_available_industries_and_regions": {"en": "Checking the available industries and regions…", "fr": "Vérification des secteurs et régions disponibles…", "ja": "検索可能な業種と地域を確認しています…"},
-    "search_vectordb": {"en": "Searching CCIFJ website and knowledge base information…", "fr": "Recherche dans les contenus du site et la base de connaissances CCIFJ…", "ja": "CCIFJウェブサイトとナレッジベースの情報を検索しています…"},
+    "search_vectordb": {"en": "Looking through CCIFJ information…", "fr": "Recherche dans les informations de la CCIFJ…", "ja": "CCIFJの情報を確認しています…"},
     "get_ccifj_contact": {"en": "Finding the right CCIFJ contact…", "fr": "Recherche du bon contact à la CCIFJ…", "ja": "適切なCCIFJの問い合わせ先を探しています…"},
     "get_official_form": {"en": "Finding the official CCIFJ form…", "fr": "Recherche du formulaire officiel de la CCIFJ…", "ja": "CCIFJの公式フォームを探しています…"},
     "book_event_ticket": {"en": "Preparing the event booking for your review…", "fr": "Préparation de la réservation pour votre validation…", "ja": "イベント予約の確認準備をしています…"},

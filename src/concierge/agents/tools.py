@@ -6,7 +6,7 @@ from typing import Literal, Optional
 from langchain_core.tools import tool
 from langgraph.prebuilt import ToolRuntime
 from pydantic import BaseModel
-from ..rag import search, EMBED_MODEL_NAME
+from ..rag import search, get_collection, EMBED_MODEL_NAME
 from ..rag.src.config import INDEX_PATH
 from sentence_transformers import SentenceTransformer
 import bm25s
@@ -45,6 +45,7 @@ def warm_up() -> None:
     """Load the search models now so the first knowledge-base question does not wait."""
     _get_embed_model()
     _get_retriever()
+    get_collection()
 
 #################################################
 #
@@ -216,8 +217,34 @@ class AttendeeInfo(BaseModel):
 #
 #################################################
 
+# Event locations are stored as street addresses, so a region a user names
+# ("Kansai") is searched as the cities in it.
+_REGION_CITIES = {
+    "kanto": ("Tokyo", "Yokohama", "Kawasaki", "Chiba", "Saitama", "Maebashi", "Takasaki"),
+    "kansai": ("Osaka", "Kyoto", "Kobe", "Nara"),
+    "chubu": ("Nagoya", "Shizuoka", "Fukui", "Kanazawa"),
+    "kyushu": ("Fukuoka", "Kitakyushu", "Kumamoto"),
+    "hokkaido": ("Sapporo", "Hokkaido"),
+}
+
+
+_KEYWORD_FETCH_LIMIT = 200
+
+
+def _split_terms(text: str) -> list[str]:
+    return list(dict.fromkeys(term.strip() for term in text.split(",") if term.strip()))
+
+
+def _location_terms(location: str) -> list[str]:
+    places = []
+    for place in _split_terms(location):
+        places.extend(_REGION_CITIES.get(place.casefold(), (place,)))
+    return list(dict.fromkeys(places))
+
+
 @tool
 async def list_available_events(
+    keyword: str = "",
     name: str = "",
     category: str = "",
     location: str = "",
@@ -225,19 +252,25 @@ async def list_available_events(
     date_to: str = "",
 ) -> str:
     """
-    List upcoming events, optionally filtered by name, category, location,
-    or date range.
+    List upcoming events, optionally filtered by topic keywords, name,
+    category, location, or date range.
 
     Use this tool when:
     - The user asks what events are available.
     - The user wants to browse upcoming events.
+    - The user looks for events about a topic or industry (food, HR, startups...).
     - The user knows an event's name but not its date or location.
-    - The user wants to find events matching specific criteria.
 
     Args:
-        name: Optional full or partial event name. Case-insensitive.
-        category: Optional event category, such as technology, energy, healthcare, or networking.
-        location: Optional city or venue.
+        keyword: Optional topic words, comma-separated synonyms, searched in
+            each event's title and description; an event matches if any word
+            matches. Use this for topics and industries, e.g.
+            "F&B, food, wine, gastronomy" or "HR, recruitment, career".
+        name: Optional full or partial event title. Case-insensitive.
+        category: Optional event FORMAT, not a topic. One of: Business event,
+            Conference, Networking, Training. Leave empty for topic searches.
+        location: Optional city, venue, or region (Kanto, Kansai, Chubu,
+            Kyushu, Hokkaido); comma-separate several.
         date_from: Optional earliest event date, formatted YYYY-MM-DD.
         date_to: Optional latest event date, formatted YYYY-MM-DD.
 
@@ -254,17 +287,40 @@ async def list_available_events(
         return "Invalid date range: date_to must not be earlier than date_from."
 
     async with AsyncSessionLocal() as session:
+        if category:
+            # The categories are formats; read them from the data so the list never goes stale.
+            categories = await crud.list_event_categories(session)
+            if category.casefold() not in {known.casefold() for known in categories}:
+                return (
+                    f"'{category}' is not an event category. Categories are event formats: "
+                    f"{', '.join(categories)}. For a topic or industry, search with `keyword` instead."
+                )
+        keywords = _split_terms(keyword)
         events = await crud.search_events(
             session,
+            keywords=keywords,
             name=name or None,
             category=category or None,
-            location=location or None,
+            locations=_location_terms(location),
             date_from=start,
             date_to=end,
-            limit=PAGE_SIZE + 1,  # one extra row tells us whether more exist
+            # Keyword hits are re-checked below, so fetch enough to fill a page after that.
+            limit=_KEYWORD_FETCH_LIMIT if keywords else PAGE_SIZE + 1,  # one extra row tells us whether more exist
         )
+    if keywords:
+        # SQL matches substrings ("HR" in "through"); keep whole-word matches only.
+        patterns = [re.compile(rf"(?<!\w){re.escape(term)}(?!\w)", re.IGNORECASE) for term in keywords]
+        events = [
+            event for event in events
+            if any(p.search(f"{event.title}\n{event.description or ''}") for p in patterns)
+        ][:PAGE_SIZE + 1]
 
     if not events:
+        if keyword:
+            return (
+                "No upcoming events match these keywords. Try other synonyms, or list "
+                "upcoming events without `keyword` and pick the relevant ones."
+            )
         return "No matching events were found."
 
     text = "\n".join(_event_line(e) for e in events[:PAGE_SIZE])
@@ -1115,6 +1171,61 @@ async def get_membership_tier_info(
     return prefix + "\n\n".join(describe(c) for c in categories)
 
 
+# Member regions are stored as written in each company's address: Tokyo wards
+# ("Minato-ku", "CHIYODA-KU"), cities ("OSAKA", "Yokohama-shi"), or towns in
+# France. A region the user names is searched as the places inside it.
+_TOKYO_PLACES = (
+    "Tokyo", "Chiyoda", "Chuo", "Minato", "Shinjuku", "Bunkyo", "Taito", "Taitou", "Sumida",
+    "Koto", "Shinagawa", "Meguro", "Ota", "Setagaya", "Shibuya", "Nakano", "Suginami",
+    "Toshima", "Kita", "Arakawa", "Itabashi", "Nerima", "Adachi", "Katsushika", "Edogawa",
+    "Minamiazabu", "Chofu", "Mitaka", "Machida", "町田", "西東京",
+)
+_MEMBER_REGION_PLACES = {
+    "tokyo": _TOKYO_PLACES,
+    "kanto": _TOKYO_PLACES + (
+        "Yokohama", "Kawasaki", "Sagamihara", "Ebina", "Zushi", "Ashigara", "Chiba", "Narashino",
+        "Minamiboso", "Saitama", "Sayama", "Higashimatsuyama", "Maebashi", "Tatebayashi",
+        "Annaka", "Ashikaga", "Utsunomiya", "Mito", "Tsukuba",
+    ),
+    "kansai": (
+        "Osaka", "Osakasayama", "Kyoto", "Nakagyo", "Kobe", "Nara", "Nishinomiya", "Amagasaki",
+        "Ashiya", "Suita", "Sakai", "Hirakata", "Izumisano", "Himeji", "Ibaraki", "Arida",
+        "Hikone", "Yamatotakada",
+    ),
+    "chubu": (
+        "Nagoya", "Kariya", "Okazaki", "Ogaki", "Nakatugawa", "Chino", "Nagano", "Shizuoka",
+        "Iwata", "Shimada", "Fukui", "Kanazawa", "Komatsu", "Nanao", "Kofu", "Fuefuki",
+        "Suzuka", "Yokkaichi", "Tokoname", "Nagaizumi", "Tateyama",
+    ),
+    "kyushu": ("Fukuoka", "Nagasaki"),
+    "hokkaido": ("Sapporo", "Hokkaido"),
+    "chugoku": ("Onomichi", "Iwakuni", "Matsue", "Izumo", "Tsuyama"),
+    "shikoku": ("Tosa",),
+}
+# Asking for "Japan" (or anywhere) is no filter at all.
+_NO_REGION_FILTER = {"japan", "japon", "日本", "all", "any", "anywhere", "everywhere"}
+_MEMBER_FETCH_LIMIT = 1000
+
+
+def _member_region_pattern(region: str):
+    """A whole-word pattern for the places in `region`, or None for no filter."""
+    places = []
+    for part in _split_terms(region):
+        key = part.casefold()
+        if key in _NO_REGION_FILTER:
+            return None
+        places.extend(_MEMBER_REGION_PLACES.get(key, (part,)))
+    if not places:
+        return None
+    places = list(dict.fromkeys(places))
+    # Whole words only: "Nara" must not match "Narashino", "Kita" not "Kitaazumi".
+    # Japanese has no spaces between words ("町田市"), so its names match anywhere.
+    latin = [re.escape(p) for p in places if p.isascii()]
+    other = [re.escape(p) for p in places if not p.isascii()]
+    parts = ([r"(?<![^\W\d_])(?:" + "|".join(latin) + r")(?![^\W\d_])"] if latin else []) + other
+    return re.compile("|".join(parts), re.IGNORECASE)
+
+
 @tool
 async def search_member_directory(
     industry: Optional[str] = None,
@@ -1126,35 +1237,49 @@ async def search_member_directory(
     Use this tool when:
     - The user wants to find member companies in the CCIFJ network.
     - The user asks for companies in a particular sector (e.g., IT, Energy, Luxury, Aerospace).
-    - The user asks for companies in a particular region (e.g., Tokyo, Kansai).
-    - The user wants companies matching both sector and region.
+    - The user asks for companies in a particular place.
 
     Args:
-        industry: Optional industry or business sector, such as IT, Healthcare, or Retail.
-        region: Optional region, prefecture, or city, such as Tokyo or Kansai.
+        industry: Optional directory sector, e.g. "Wine and Spirits", "Food & Beverage",
+            "Distribution", "IT & Computer". Use list_available_industries_and_regions
+            for the exact list.
+        region: Optional. Only set it when the user asked for a place. Accepts a region
+            (Tokyo, Kanto, Kansai, Chubu, Kyushu, Hokkaido, Chugoku, Shikoku) or a city
+            (Osaka, Yokohama, Paris...); comma-separate several. "Japan" means no filter.
 
     Returns:
         Matching company records including company names, sectors, regions,
         and directory descriptions.
     """
-    if not industry and not region:
+    pattern = _member_region_pattern(region or "")
+    if not industry and pattern is None:
         return (
-            "Please provide an industry and/or a region to search. "
-            "Use list_available_industries_and_regions to see the valid values."
+            "Please provide an industry and/or a place in Japan or abroad to search. "
+            "Use list_available_industries_and_regions to see the industries."
         )
 
     async with AsyncSessionLocal() as session:
         members = await crud.search_members(
             session,
             sector=industry or None,
-            region=region or None,
-            limit=PAGE_SIZE + 1,
+            # Places are matched below, so fetch the whole sector first.
+            limit=_MEMBER_FETCH_LIMIT if pattern else PAGE_SIZE + 1,
         )
+
+    note = ""
+    if pattern is not None:
+        in_place = [m for m in members if pattern.search(m.region or "")]
+        if not in_place and members and industry:
+            # Better to show the sector elsewhere than nothing at all.
+            note = f"No {industry} members are listed in {region}; these {industry} members are elsewhere.\n\n"
+        else:
+            members = in_place
+    members = list(members)[:PAGE_SIZE + 1]
 
     if not members:
         return (
             "No member companies matched those filters. "
-            "Use list_available_industries_and_regions to see the valid values."
+            "Use list_available_industries_and_regions to see the industries."
         )
 
     blocks = []
@@ -1166,7 +1291,7 @@ async def search_member_directory(
             block += f"\n  {desc}"
         blocks.append(block)
 
-    text = "\n\n".join(blocks)
+    text = note + "\n\n".join(blocks)
     if len(members) > PAGE_SIZE:
         text += f"\n\nShowing the first {PAGE_SIZE} results; more companies match. Add another filter to narrow it down."
     return text
@@ -1187,11 +1312,14 @@ async def list_available_industries_and_regions() -> str:
     """
     async with AsyncSessionLocal() as session:
         sectors = [s for s in await crud.list_sectors(session) if s]
-        regions = [r for r in await crud.list_regions(session) if r]
 
+    # Stored regions are raw address parts (wards, towns, typos); offer the
+    # names search_member_directory understands instead.
+    regions = ", ".join(name.capitalize() for name in _MEMBER_REGION_PLACES)
     return (
         f"Industries: {', '.join(sectors) or 'none found'}\n"
-        f"Regions: {', '.join(regions) or 'none found'}"
+        f"Regions: {regions}, or any city name (e.g. Osaka, Yokohama, Paris). "
+        "Leave the region empty to search all of Japan and abroad."
     )
 
 

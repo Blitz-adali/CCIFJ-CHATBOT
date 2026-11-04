@@ -109,12 +109,15 @@ existing model environment variables and service before using `/chat`.
 Every route is also available under `/api/v1`. The React frontend uses that prefix.
 `GET /status` provides JSON process health, with `agent_ready` turning true once
 the agent and search models finish loading in the background at startup (`/health`
-answers immediately either way); `GET /suggestions` reads the same
-predefined question catalog used by the agents without loading any models.
+answers immediately either way); `GET /suggestions` reads the starter
+question catalog (`data/predefined_qa*.json`) for the welcome screen without
+loading any models.
 Chat and approval decisions accept `locale` (`en`, `fr`, `ja`), the UI language.
 The agent answers in the language of the user's message, whatever it is, and the
 API returns that answer unchanged; there is no second model call. Suggested
-questions, guided paths, and fixed texts (approval, login, warnings) use `locale`.
+questions under an answer are written by the model in the user's language and
+returned unchanged; guided paths and fixed texts (approval, login, warnings)
+use `locale`.
 
 `POST /chat/stream` accepts the same body and authorization as `/chat`, and emits
 SSE `progress`, `delta`, `result`, and `error` events. The result contains the normal chat
@@ -216,11 +219,12 @@ model generation, language formatting, or idle socket time.
 
 The agent graph (`concierge/agents`) classifies each request as in scope
 (CCIFJ events, membership, business support), out of scope, or unclear, and a
-final policy node reviews answers before they are returned. Predefined
-questions are answered directly in English, French, or Japanese
-(`data/predefined_qa_i18n.json`), with follow-up suggestions in the same
-language. The events agent can fall back to the CCIFJ knowledge base
-(`search_vectordb`) when the live events database has no match.
+final policy node reviews answers before they are returned. Every question,
+including the welcome-screen starters, goes through the agent; there are no
+pre-written answers. For advisory questions the agent may first ask for the
+user's details (industry, country, stage). The events agent can fall back to the
+CCIFJ knowledge base (`search_vectordb`) when the live events database has no
+match; database facts win when the two disagree.
 
 Each turn still runs on a fresh graph thread rebuilt from SQL history. State
 the graph needs across turns is saved in message metadata: extracted file
@@ -251,17 +255,20 @@ starter paths.
 
 ### Next actions
 
-For signed-in users, every agent turn loads the user's profile (membership,
-upcoming bookings and space reservations, newsletter status) and passes it to
+For signed-in users, every agent turn loads the user's profile (membership
+with the company's industry, country and region, upcoming bookings and space
+reservations, newsletter status) and passes it to
 the agent as `user_context`. Agent answers include up to two `next_actions`,
 `{"id", "label", "prompt", "event_id"?}`, with `id` one of `event.view`,
 `event.book`, `events.browse`, `space.book`, `membership.join`,
 `membership.benefits`, `newsletter.subscribe`, `contact.staff`, or
 `auth.login`. Send `prompt` back as an ordinary chat message, not as
 `path_step_id`. `auth.login` opens sign-in instead. `next_actions` is empty
-while an approval is pending. An answer shows at most three buttons: the
-actions first, then `suggested_questions` (localized to `locale`) in the
-remaining slots.
+while an approval is pending. Buttons: the actions first, then
+`suggested_questions` (written by the model in the user's language), three
+buttons in all but always room for two questions. Action prompts name events by
+title, never by ID. Only a guest who wants to book gets `auth.login`; after
+signing in, the conversation continues in the same session.
 
 ### Attachments
 

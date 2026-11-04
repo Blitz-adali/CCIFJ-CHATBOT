@@ -21,7 +21,7 @@ Direct/deployed mode: set `VITE_API_BASE_URL=https://your-backend.example` befor
 
 ## GET /api/v1/suggestions
 
-`locale` is `en`, `fr` or `ja`. Returns `suggested_questions` (the predefined catalog, localized) and `starter_paths` (`[{id, label}]`) shown on the welcome screen. If the request fails, the bundled catalog is used.
+`locale` is `en`, `fr` or `ja`. Returns `suggested_questions` (the starter catalog, localized) and `starter_paths` (`[{id, label}]`) shown on the welcome screen. Questions under an answer come from the chat response instead: written by the agent for that user, in the user's language. If the request fails, the bundled catalog is used.
 
 ## POST /api/v1/chat and /api/v1/chat/stream
 
@@ -43,7 +43,7 @@ Request (unknown fields are rejected):
 - `attachments`: optional `[{name, mime_type, data_base64}]` files (see below).
 - `path_step_id`, `path_event_id`, `path_context`: optional guided-journey fields. Selecting a starter path or a `path_actions` button sends its `id`, `event_id` and `data`. When a response has `active_path_step`, the next free-text message continues that step with the returned `path_context` (for example the space-availability date range).
 
-The backend returns the answer as `reply`; `api.ts` normalizes it to `answer` for the UI. Other fields: `mode` (`agent` or `guided_path`), `intent`, `suggested_questions` (in the UI locale; together with `next_actions`, at most three), `sources`, `actions` (HTTPS links), `warnings`, `pending_approvals` (rendered as one card per action: ticket, space, newsletter, staff request, cancel, and change cards showing current → new; guests may approve staff requests only), `path_actions`, `next_actions` (agent-proposed buttons; clicking one sends its `prompt` as a normal message, and `auth.login` opens sign-in), `active_path_step`, `path_context`, `attachment_count`, `request_id`.
+The backend returns the answer as `reply`; `api.ts` normalizes it to `answer` for the UI. Other fields: `mode` (`agent` or `guided_path`), `intent`, `suggested_questions` (written by the agent in the user's language; three buttons with `next_actions`, but always room for two questions), `sources`, `actions` (HTTPS links found in the answer, each page once, with readable labels; the widget shows them as chips only when there are two or more, three at a time), `warnings`, `pending_approvals` (rendered as one card per action: ticket, space, newsletter, staff request, cancel, and change cards showing current → new; guests may approve staff requests only), `path_actions`, `next_actions` (agent-proposed buttons; clicking one sends its `prompt` as a normal message, and `auth.login` opens sign-in), `active_path_step`, `path_context`, `attachment_count`, `request_id`.
 
 The stream emits `progress` (`{"messages": [...]}` localized labels for the concierge, specialist agents and tools), `delta` (reserved; not emitted today, the answer arrives in `result`), `result` (the chat response) and `error` (`status`, `message`, and possibly `outcome_unknown`).
 
