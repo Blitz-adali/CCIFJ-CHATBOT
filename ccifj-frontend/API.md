@@ -49,7 +49,7 @@ The stream emits `progress` (`{"messages": [...]}` localized labels for the conc
 
 ## Authentication and approvals
 
-Registration accepts `name`, `email` and a password of at least 8 characters. Login and registration return a bearer token valid for one hour, which the frontend stores locally and sends with requests. Expired tokens are dropped automatically; if the API rejects a token, the site signs out and opens the login dialog. Signing in or out starts a new conversation.
+Registration accepts `name`, `email` and a password of at least 8 characters. Login and registration return a bearer token valid for one hour, which the frontend stores locally and sends with requests. Expired tokens are dropped automatically; if the API rejects a token, the site signs out and opens the login dialog. Signing in keeps the open conversation (the guest chat is claimed for the account); when the chat itself asked for the sign-in, the widget continues the conversation automatically. Signing out starts a new conversation.
 
 Booking actions pause for review: the response includes `pending_approvals` with each action's tool name and arguments (ticket bookings include `event_title`, `event_start` and `event_location`). The decision is sent to the session's approvals route as `{"interrupt_id", "decision": "approve" | "reject", "locale"}`. Guests are asked to log in instead of receiving an approval card.
 
