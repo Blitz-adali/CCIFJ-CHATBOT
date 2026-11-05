@@ -122,11 +122,25 @@ def _when(dt: Optional[datetime], missing: str = "unknown") -> str:
     return dt.strftime("%Y-%m-%d %H:%M") if dt else missing
 
 
-def _event_line(event) -> str:
+_TODAY_FETCH_MARGIN = 10
+
+
+def _has_finished(event, now: datetime) -> bool:
+    """An event is over once it ends; without an end time, once it starts."""
+    if event.start_at is None:
+        return False
+    finish = event.end_at or event.start_at
+    return finish <= now
+
+
+def _event_line(event, now: datetime | None = None) -> str:
+    status = ""
+    if now is not None and event.start_at is not None and event.start_at <= now:
+        status = " | IN PROGRESS NOW (already started; cannot be booked)"
     return (
         f"[ID {event.event_id}] {event.title} | {_when(event.start_at, 'date unknown')} "
         f"| {event.location or 'location unknown'} | Category: {event.category} "
-        f"| Price: {_price_text(event)}"
+        f"| Price: {_price_text(event)}{status}"
     )
 
 
@@ -276,10 +290,15 @@ async def list_available_events(
 
     Returns:
         A list of matching events with event IDs, names, dates, locations,
-        categories, and prices. Ticket availability is not tracked.
+        categories, and prices. Without `date_from`, events taking place right
+        now are included and marked IN PROGRESS NOW. Ticket availability is
+        not tracked.
     """
+    now = _now()
     try:
-        start = _parse_date(date_from) if date_from else _now()
+        # Without a date, search from the start of today so events in progress
+        # are still found; finished ones are dropped below.
+        start = _parse_date(date_from) if date_from else datetime.combine(now.date(), time.min)
         end = _parse_date(date_to, end_of_day=True) if date_to else None
     except ValueError:
         return "Invalid date. Dates must be formatted YYYY-MM-DD."
@@ -305,8 +324,13 @@ async def list_available_events(
             date_from=start,
             date_to=end,
             # Keyword hits are re-checked below, so fetch enough to fill a page after that.
-            limit=_KEYWORD_FETCH_LIMIT if keywords else PAGE_SIZE + 1,  # one extra row tells us whether more exist
+            # One extra row tells us whether more exist; a few more cover today's finished events.
+            limit=_KEYWORD_FETCH_LIMIT if keywords else PAGE_SIZE + 1 + _TODAY_FETCH_MARGIN,
         )
+    if not date_from:
+        events = [e for e in events if not _has_finished(e, now)]
+    if not keywords:
+        events = events[:PAGE_SIZE + 1]
     if keywords:
         # SQL matches substrings ("HR" in "through"); keep whole-word matches only.
         patterns = [re.compile(rf"(?<!\w){re.escape(term)}(?!\w)", re.IGNORECASE) for term in keywords]
@@ -323,7 +347,7 @@ async def list_available_events(
             )
         return "No matching events were found."
 
-    text = "\n".join(_event_line(e) for e in events[:PAGE_SIZE])
+    text = "\n".join(_event_line(e, now) for e in events[:PAGE_SIZE])
     if len(events) > PAGE_SIZE:
         text += (
             f"\n\nShowing the first {PAGE_SIZE} results; more events match. "
