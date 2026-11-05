@@ -45,6 +45,7 @@ event_agent = create_agent(
         t.get_ccifj_contact,
         t.search_vectordb,
         t.return_to_main_menu,
+        *model.web_search_tools(),
     ],
     middleware=[_write_approval([
         "book_event_ticket",
@@ -92,6 +93,7 @@ general_agent = create_agent(
         t.subscribe_newsletter,
         t.submit_staff_request,
         t.return_to_main_menu,
+        *model.web_search_tools(),
     ],
     middleware=[_write_approval(["subscribe_newsletter", "submit_staff_request"])],
     state_schema=ConciergeAgentState,
