@@ -362,6 +362,7 @@ class NextAction(BaseModel):
 
 
 class CollectorOutput(BaseModel):
+    used_source_ids: list[str] = Field(default_factory=list, description="Only supplied source IDs supporting factual claims retained in the final answer, including sources without inline links. Exclude unused search results and action links.")
     answer: str = Field(description="The final synthesized answer for the user, in Markdown.")
     next_actions: list[NextAction] = Field(
         default_factory=list,
@@ -386,6 +387,7 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     # Extracted files remain available for follow-up turns in this conversation.
     space_checks: list[dict]
+    used_source_ids: list[str]
     source_urls: list[str]
     context: list[dict]
     active_agent: str

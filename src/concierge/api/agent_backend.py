@@ -375,6 +375,7 @@ class AgentBackend:
             # A guided path turns structured selections into an explicit request.
             messages[-1] = HumanMessage(content=override, id=messages[-1].id)
         graph_input = {
+            "used_source_ids": [],
             "messages": messages,
             "user_id": str(user_id) if user_id is not None else None,
             "context": list(inputs.get("context") or []),
@@ -471,16 +472,17 @@ class AgentBackend:
         plan = result.get("plan") or {}
         tasks = plan.get("tasks", []) if isinstance(plan, dict) else []
         intent = ", ".join(dict.fromkeys(t.get("target", "") for t in tasks if isinstance(t, dict) and t.get("target")))
-        from .presentation import evidence_sources, grounded_links
+        from .presentation import grounded_links
+        from concierge.evidence import source_candidates, selected_sources
         evidence = result.get("tool_evidence") or {}
-        from concierge.source_context import source_memory, page_passage
-        # An explicitly cited prior source is still real evidence: reconstruct
-        # its indexed metadata rather than treating a generated URL as proof.
-        prior = [page_passage(url) for url in source_memory(result.get('source_urls')) if url in reply]
-        sources = evidence_sources([*(evidence.get("passages") or []), *[p for p in prior if p]])
-        sources.extend(evidence.get("database_sources") or [])
-        if sources:
-            reply = grounded_links(reply, {source["url"] for source in sources} | set(evidence.get("resources") or []))
+        from concierge.source_context import source_memory
+        candidates = source_candidates(evidence, result.get("source_urls") or [])
+        allowed_urls = {source["url"] for source in candidates.values()} | set(evidence.get("resources") or [])
+        if candidates:
+            # Unverified links become plain text only in answers built on retrieved evidence;
+            # official links given as next steps (no retrieval) stay as actions.
+            reply = grounded_links(reply, allowed_urls)
+        sources = selected_sources(candidates, result.get("used_source_ids"), reply)
         _, actions = linked_resources(reply)
         events = []
         if evidence.get("event_ids"):

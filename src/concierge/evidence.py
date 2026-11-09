@@ -76,3 +76,36 @@ def record_space_check(space, start, end, free, checked_at):
             'space_id': space.space_id, 'name': space.name, 'start': start.isoformat(),
             'end': end.isoformat(), 'checked_at': checked_at.isoformat(), 'free': bool(free),
             'capacity': space.capacity}])
+
+
+def source_candidates(evidence, prior_urls=()):
+    """Stable source IDs shared by collector and API; retain evidence text privately."""
+    import hashlib
+    from concierge.api.presentation import evidence_sources, _canonical
+    from concierge.source_context import source_memory, page_passage
+
+    passages = list(evidence.get("passages") or [])
+    passages.extend(p for url in source_memory(prior_urls) if (p := page_passage(url)))
+    candidates = {}
+    for source in [*evidence_sources(passages), *(evidence.get("database_sources") or [])]:
+        url = source.get("url", "")
+        if not url.startswith("https://"):
+            continue
+        key = _canonical(url)
+        source_id = "source_" + hashlib.sha256(key.encode()).hexdigest()[:16]
+        if source_id not in candidates:
+            candidates[source_id] = {**source, "source_id": source_id, "text": ""}
+        texts = [str(p.get("text") or "") for p in passages if _canonical(p.get("url", "")) == key]
+        candidates[source_id]["text"] = "\n".join(dict.fromkeys(texts))
+    return candidates
+
+
+def selected_sources(candidates, selected_ids, reply):
+    """Validate model selections; on failure retain only explicit verified citations."""
+    from concierge.api.presentation import linked_resources, _canonical
+    linked, _ = linked_resources(reply)
+    cited = {_canonical(item["url"]) for item in linked}
+    selected = set(selected_ids or [])
+    return [{k: v for k, v in source.items() if k != "text"}
+            for source_id, source in candidates.items()
+            if source_id in selected or _canonical(source["url"]) in cited]
