@@ -10,7 +10,10 @@ actions, such as booking event tickets or writing a message to CCIFJ staff, but
 only after the user approves them.
 
 For the demo, staff inbox setup, evaluation commands and rehearsal sequence, see
-the [hackathon runbook](docs/HACKATHON.md).
+the [hackathon runbook](docs/HACKATHON.md). [Deployment](docs/DEPLOYMENT.md) covers
+the TYPO3 / Odoo / GetResponse integration path, no-code content updates, recurring
+costs and maintenance roles; [Hackathon data check](docs/HACKATHON_DATA_CHECK.md)
+compares the implementation with the organisers' data pack.
 The [concierge behavior upgrade](docs/CONCIERGE_UPGRADE.md) explains the current
 memory, database-answer paths, event filters and version-checked conversation tests.
 
@@ -48,9 +51,9 @@ User ──► React chat ──► FastAPI ──► LangGraph agents ──►
 |---|---|
 | **Events** | Lists upcoming events (by topic keywords, name, format, city or region such as Kansai, or dates), shows full event details, books tickets for every attendee, and reserves the L'Espace@CCIFJ room. Booking requires login and approval. |
 | **My bookings** | Shows the user's own bookings and room reservations. Before booking, checks whether registration is open, whether they already booked, whether it clashes with their schedule, and whether the room is free (suggesting free slots when it isn't). Cancels a booking or reservation, or changes it (another event, add or remove attendees, new dates) in one step, until it starts. Changes need login and approval. |
-| **Membership** | Explains membership categories, fees, eligibility, and benefits, shares the application form, and searches 650+ member companies by industry and, when asked, by place (Tokyo, Kansai, a city…). |
+| **Membership** | Explains membership categories, fees, eligibility, and benefits, shares the application form, and searches the member directory by industry and, when asked, by place (Tokyo, Kansai, a city…). The directory is whatever staff import (today: the organisers' 50 fictional companies with their 116 contact people folded into each company's description). |
 | **Business support** | Knows the full CCIFJ offer across the 8 sections of ccifj.or.jp (Our Chamber, News, Membership, Events, Business Forum, Commercial Support, Recruitment/Training, Publications) and recommends the services that fit the user's stage: market studies, Business Connect, Expo+, sector missions, company setup, domiciliation, V.I.E, VAT recovery, recruitment, training, publications, and advertising. |
-| **Contacts** | Gives the right CCIFJ person for events, speaking, sponsorship, BONJOUR FRANCE, membership, corporate news, market entry, and recruitment, and always offers to write the email together. |
+| **Contacts** | Reads the staff directory that CCIFJ maintains in the admin dashboard (department, what each contact handles, email, languages), picks the right contact for the request itself, falls back to the triage contact, and always offers to write the email together. A contact added in the dashboard is used on the next question; no code or topic list to update. |
 | **Staff requests** | Writes an email to a CCIFJ contact, or a ticket for the CCIFJ team when no contact fits. It revises the draft with the user and stores it after the user approves. |
 | **Newsletter** | Subscribes the user to general news, training announcements, or the @StudioCCIFJ podcast, after approval. |
 | **Files** | Reads attached PDFs, images (PNG, JPEG), Word documents (DOCX), and text files, with OCR in English, French, and Japanese for scans and images. Up to 4 files per conversation, 5 MB each. The text goes to the agent as context; the chat only shows the file name. |
@@ -324,16 +327,30 @@ keyword search, then reranks the results.
 flowchart LR
     Q["English search query<br/>written by the agent"] --> S["Semantic search<br/>Chroma +<br/>multilingual-e5-small<br/>top 20"]
     Q --> L["Keyword search<br/>BM25<br/>top 20"]
+    O["User's original wording<br/>(FR / JA), when not English"] --> S
+    O --> L
     S --> F["Reciprocal rank fusion<br/>top 10"]
     L --> F
-    F --> R["Cohere rerank<br/>rerank-v4.0-fast"]
+    F --> X["Drop superseded sources<br/>(rag config)"]
+    X --> R["Cohere rerank<br/>rerank-v4.0-fast"]
     R --> OUT["Top 5 passages<br/>with source URLs"]
 ```
 
-The knowledge base is built from crawled CCIFJ website pages
-(`src/concierge/data/documents.jsonl`, split into `chunks.json`). The agents
-write their search queries in English, because the index is in English, but
-always answer in the user's language.
+Two collections are searched together: the crawled CCIFJ website
+(`src/concierge/data/documents.jsonl`, split into `chunks.json`; English pages
+only) and the **documents staff upload** in the admin dashboard or with
+`scripts/ingest_documents.py` (brochures, price lists, procedures, in any
+language; scanned PDFs are OCR'd). The agent writes its query in English for the
+website index and also passes the user's original wording (`original_query`)
+when they wrote in French or Japanese: the multilingual embedding matches it
+across languages and keyword search matches uploaded documents written in that
+language. Every result list joins the same rank fusion. The agents always answer
+in the user's language.
+
+Sources that newer CCIFJ documents supersede (for example the 2017 domiciliation
+brochure with an old membership fee) are listed in
+`rag/src/config.py:OUTDATED_SOURCE_URLS` and dropped at search time, so no
+re-index is needed to retire a document.
 
 The Chroma collection is opened once per process (`rag_search.get_collection`,
 also loaded by the startup warm-up). Opening a new client for every search used
@@ -443,8 +460,15 @@ src/concierge/
 ├── index/               BM25 index
 ├── config.py            settings from .env, checked at startup
 └── main.py              FastAPI app
-ccifj-frontend/          React + TypeScript chat site
-tests/                   API contract tests (fake agent, throwaway database)
+ccifj-frontend/          React + TypeScript chat site and admin dashboard
+tests/                   API contract tests (fake agent, throwaway database); fixtures/faq_scenarios.json is the organisers' question bank
+scripts/
+├── verify.sh                backend tests, corpus check, frontend build and tests
+├── evaluate.py              corpus / retrieval / API evaluation on 100 labelled questions
+├── faq_check.py             runs the 71 recurring questions + 5 fallback cases through the live API
+├── ingest_documents.py      loads a folder of brochures into the knowledge base (same as the dashboard upload)
+└── replace_members.py       replaces the member directory with a CSV/XLSX export (directory layout accepted)
+docs/                    runbook, deployment and handover, data-pack check, quality notes
 start.sh                 starts the whole stack with one command
 ```
 
@@ -508,6 +532,24 @@ uv run concierge-db seed-demo
 This creates two member accounts and one non-member account (password
 `ccifj-demo-2026`). The first member also gets an upcoming booking and a
 newsletter subscription. Running it again changes nothing.
+
+### 4. Load CCIFJ content
+
+Everything below can also be done in the admin dashboard; the scripts exist for
+bulk loading.
+
+```bash
+# Member directory from a CSV/XLSX export (preview first, then --yes to replace the current list)
+uv run python scripts/replace_members.py "path/to/members.csv" --yes
+```
+
+```bash
+# Brochures and other documents (PDF, DOCX, text; scanned PDFs are OCR'd), deduplicated by content
+uv run python scripts/ingest_documents.py "path/to/brochures"
+```
+
+Staff contacts (department, what they handle, email, triage flag) are edited in
+**Admin → Staff contacts**; the agent reads them live.
 
 > The API loads the agent and search models in the background when it starts
 > (about 12–18 s). `GET /status` returns `"agent_ready": true` once they are
@@ -612,11 +654,18 @@ processes.
 ## Testing
 
 The contract tests use a fake agent and a throwaway database, so they need no
-API keys:
+API keys (set any 32+ byte `CCIFJ_AUTH_SECRET` if `.env` is absent):
 
 ```bash
-PYTHONPATH=src uv run --with httpx python -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -p 'test_*.py'
 ```
+
+`scripts/verify.sh` runs the same plus the corpus check and the frontend build and
+tests. Live-model checks are separate: `scripts/evaluate.py --mode api` (100
+labelled questions, source hit rate) and `scripts/faq_check.py` (the organisers'
+71 recurring questions in EN/FR plus five fallback cases: missing price,
+conflicting price, unknown member, unavailable event, unsupported policy). Both
+need a running, warmed API and call the model.
 
 Frontend tests:
 

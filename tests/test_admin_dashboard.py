@@ -7,7 +7,7 @@ import test_api_contract as contract
 from concierge.api import admin, staff
 from concierge.config import get_settings
 from concierge.db.relationaldb import models
-from concierge.staff_directory import describe_contacts
+from concierge.staff_directory import describe_contacts, describe_directory
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 
@@ -78,6 +78,12 @@ class AdminDashboardTest(unittest.TestCase):
         # Nobody covers membership, so the triage contact is returned.
         fallback = self.run_db(lambda db: describe_contacts(db, 'membership'))
         self.assertIn('triage', fallback)
+        # The agent tool returns the whole directory with departments, so a contact added in the
+        # dashboard is usable without any topic key.
+        directory = self.run_db(describe_directory)
+        self.assertIn('1. Aiko TEST (triage)', directory)
+        self.assertIn('- Department: General', directory)
+        self.assertIn('- Email: a.test@ccifj.or.jp', directory)
         self.assertIn('a.test@ccifj.or.jp', fallback)
 
         with self.as_bootstrap_staff(boss):

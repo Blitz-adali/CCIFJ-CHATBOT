@@ -1,5 +1,5 @@
 from __future__ import annotations
-from .config import EMBED_MODEL_NAME, COHERE_API_KEY, COHERE_RERANK_MODEL
+from .config import EMBED_MODEL_NAME, COHERE_API_KEY, COHERE_RERANK_MODEL, OUTDATED_SOURCE_URLS
 import logging
 import time
 from functools import lru_cache
@@ -48,8 +48,14 @@ def get_collection() -> Collection:
 
 
 
-def search_passages(retriever, model, query: str, original_n=20, hybrid_n=10, reranked_n=5) -> list[dict]:
+def search_passages(retriever, model, query: str, original_n=20, hybrid_n=10, reranked_n=5,
+                    extra_queries=()) -> list[dict]:
     """Hybrid retrieval with stable chunk IDs, source URLs and bounded reranking.
+
+    `query` is the agent's English rewrite. `extra_queries` are other formulations, typically the
+    user's original wording in French or Japanese: each one is searched semantically (the
+    multilingual embedding matches across languages) and lexically (which only matches sources in
+    that language), and every result list joins the same rank fusion. Reranking uses `query`.
 
     Reranker downtime degrades to fused ranking; it never discards retrieved
     evidence or lets the model improvise an answer in place of a failed lookup.
@@ -70,22 +76,26 @@ def search_passages(retriever, model, query: str, original_n=20, hybrid_n=10, re
         logger.exception("Search tokenizer unavailable; using character bound")
         record_warning('retrieval_tokenizer_unavailable')
     started = time.perf_counter()
-    results1, results2, failed = [], [], False
+    queries = [query, *dict.fromkeys(q.strip()[:4000] for q in extra_queries
+                                     if isinstance(q, str) and q.strip() and q.strip() != query.strip())]
+    semantic_lists, lexical_lists, failed = [], [], False
     try:
         if model is None:
             raise RuntimeError('Embedding model unavailable')
         collection = get_collection()
         count = collection.count()
-        results1 = semantic_search(query, collection, model, min(original_n, count)) if count else []
-        try:
-            # Files staff uploaded live in their own collection; merge by distance.
-            from concierge.knowledge import semantic_upload_results
-            vector = model.encode(f"query: {query}", normalize_embeddings=True).tolist()
-            uploads = semantic_upload_results(vector, original_n)
-            if uploads:
-                results1 = sorted([*results1, *uploads], key=lambda r: r.get("distance", 1.0))[:original_n]
-        except Exception:
-            logger.exception('Uploaded knowledge search unavailable; keeping website results')
+        for text in queries:
+            found = semantic_search(text, collection, model, min(original_n, count)) if count else []
+            try:
+                # Files staff uploaded live in their own collection; merge by distance.
+                from concierge.knowledge import semantic_upload_results
+                vector = model.encode(f"query: {text}", normalize_embeddings=True).tolist()
+                uploads = semantic_upload_results(vector, original_n)
+                if uploads:
+                    found = sorted([*found, *uploads], key=lambda r: r.get("distance", 1.0))[:original_n]
+            except Exception:
+                logger.exception('Uploaded knowledge search unavailable; keeping website results')
+            semantic_lists.append(found)
         diagnose('semantic')
     except Exception as exc:
         diagnose('semantic', exc)
@@ -95,30 +105,38 @@ def search_passages(retriever, model, query: str, original_n=20, hybrid_n=10, re
     try:
         if retriever is None:
             raise RuntimeError('Keyword index unavailable')
-        results2 = lexical_search(retriever, query, original_n)
+        for text in queries:
+            lexical_lists.append(lexical_search(retriever, text, original_n))
         diagnose('lexical')
     except Exception as exc:
         diagnose('lexical', exc)
         logger.exception('Keyword retrieval unavailable; keeping semantic search')
         record_warning('retrieval_lexical_unavailable')
         failed = True
-    had_records = bool(results1 or results2)
-    results1 = valid_records(results1, 'content')
-    results2 = valid_records(results2, 'text')
+    had_records = any(semantic_lists) or any(lexical_lists)
+    semantic_lists = [valid_records(records, 'content') for records in semantic_lists]
+    lexical_lists = [valid_records(records, 'text') for records in lexical_lists]
     # The persisted vector index and BM25 corpus can use independent chunk
     # layouts. Equal numeric IDs do not prove equal text or source URLs.
     # Uploaded documents share chunk IDs across both indexes, so they keep their ID and fuse.
     from concierge.knowledge import UPLOAD_ID_BASE
-    results1 = [r if int(r['id']) >= UPLOAD_ID_BASE else {**r, 'id': f"vector:{r['id']}"} for r in results1]
-    if not results1 and not results2 and (failed or had_records):
+    semantic_lists = [[r if int(r['id']) >= UPLOAD_ID_BASE else {**r, 'id': f"vector:{r['id']}"} for r in records]
+                      for records in semantic_lists]
+    results1 = semantic_lists[0] if semantic_lists else []
+    results2 = lexical_lists[0] if lexical_lists else []
+    if not any(semantic_lists) and not any(lexical_lists) and (failed or had_records):
         raise RetrievalUnavailable('No retrieval backend could provide evidence')
-    fused = rrf(results1, results2, hybrid_n)
-    metadata = {str(r["id"]): r for r in [*results1, *results2]}
+    fused = rrf(results1, results2, hybrid_n,
+                extra=[(records, 'content') for records in semantic_lists[1:]] +
+                      [(records, 'text') for records in lexical_lists[1:]])
+    metadata = {str(r["id"]): r for records in [*semantic_lists, *lexical_lists] for r in records}
     docs = []
     for chunk_id, (_, text) in fused:
         record = metadata.get(str(chunk_id), {})
         # Older checked-in BM25 records store their URL inside the passage.
         url = record.get("url") or next((line[5:].strip() for line in text.splitlines() if line.startswith("url: ")), "")
+        if any(marker in url for marker in OUTDATED_SOURCE_URLS):
+            continue  # superseded by a newer CCIFJ document; see rag config
         try:
             parsed = urlsplit(url)
             # ccifj-doc://<id> cites an uploaded CCIFJ document that has no public link.
@@ -169,9 +187,11 @@ def valid_records(records, text_field):
     return valid
 
 
-def rrf(results1, results2, top_n: int, k: int = 60) -> list[tuple[int | str, tuple[float, str]]]:
+def rrf(results1, results2, top_n: int, k: int = 60, extra=()) -> list[tuple[int | str, tuple[float, str]]]:
+    """Reciprocal rank fusion of a semantic and a lexical list, plus any `extra` (records, text_field) lists
+    from additional query formulations (e.g. the user's original wording next to the English rewrite)."""
     final_ranks = {}
-    for records, text_field in ((results1, 'content'), (results2, 'text')):
+    for records, text_field in ((results1, 'content'), (results2, 'text'), *extra):
         for rank, result in enumerate(records):
             raw_id = str(result['id'])
             key = int(raw_id) if raw_id.isdecimal() else raw_id

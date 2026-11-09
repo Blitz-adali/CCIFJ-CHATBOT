@@ -1622,56 +1622,23 @@ async def list_available_industries_and_regions() -> str:
 #################################################
 
 @tool
-async def get_ccifj_contact(
-    topic: Literal[
-        "events",
-        "become_speaker",
-        "become_sponsor",
-        "bonjour_france",
-        "membership",
-        "corporate_news",
-        "japanese_market_support",
-        "recruitment_and_hr",
-        "general_or_unsure",
-    ],
-) -> str:
+async def get_ccifj_contact() -> str:
     """
-    Retrieve direct contact person details (name, title, email, phone number)
-    for specific CCIFJ inquiries, from the CCIFJ staff directory.
+    Return the CCIFJ staff directory: every active contact with their department, what they
+    handle, email, phone and languages, maintained by CCIFJ staff in the admin dashboard.
 
-    Use this tool when the user wants to:
-    - Ask about a CCIFJ event, registration problems, or late registration.
-    - Inquire about becoming a speaker at CCIFJ events or conferences.
-    - Sponsor CCIFJ events, summits, or business forums.
-    - Learn about BONJOUR FRANCE, the starting point for companies that want to work in Japan.
-    - Ask about CCIFJ membership, joining, dues, or member services.
-    - Share corporate news or press releases with CCIFJ media.
-    - Ask questions about entering or developing in the Japanese market.
-    - Inquire about recruitment, hiring, posting job offers, or HR services.
-    - Reach CCIFJ about anything else, or when you are not sure which team fits.
+    Use this tool when the user wants to reach someone at CCIFJ or needs a recipient for a
+    staff email: event questions, speaking or sponsoring, membership, corporate news, market
+    entry, recruitment, training, communication, venue rental, billing or anything else.
 
-    Args:
-        topic: The specific subject of inquiry. Must be one of:
-            - 'events': General event questions, registration issues, late registration.
-            - 'become_speaker': Inquire about speaking at events.
-            - 'become_sponsor': Inquire about sponsorship opportunities.
-            - 'bonjour_france': BONJOUR FRANCE, the starting point for companies that want to work in Japan.
-            - 'membership': Membership, joining, dues, and member services.
-            - 'corporate_news': Submit or share corporate news with CCIFJ.
-            - 'japanese_market_support': Advisory & support for French companies entering the Japanese market.
-            - 'recruitment_and_hr': Inquiries regarding job postings, recruitment, and HR support.
-            - 'general_or_unsure': No other topic fits, or the request is unclear; returns the
-              CCIFJ triage contact, who routes it to the right colleague.
-
-    Returns:
-        The contact details on file (name, role, email, phone where available). If no
-        specialist covers the topic, the triage contact; if nobody does, a hint to send
-        a 'team_ticket' instead.
+    Pick the contact whose department and "Handles" line match the request. When none fits,
+    use the entry marked "(triage)", who routes the request. Never invent a name or email that
+    is not in the output; if the directory is empty, send a 'team_ticket' instead.
     """
-    from ..staff_directory import describe_contacts
+    from ..staff_directory import describe_directory
 
     async with AsyncSessionLocal() as session:
-        return await describe_contacts(session, topic)
+        return await describe_directory(session)
 
 
 @tool
@@ -1920,7 +1887,7 @@ async def submit_staff_request(
 
 
 @tool
-def search_vectordb(query: str) -> str:
+def search_vectordb(query: str, original_query: str = "") -> str:
     """
     Search the vector database for information relevant to the user's request.
 
@@ -1932,8 +1899,12 @@ def search_vectordb(query: str) -> str:
 
     Args:
         query: A clear, specific, self-contained English search query describing
-               exactly what information you need. The knowledge base is indexed
-               in English; preserve exact names, dates, identifiers, and key terms.
+               exactly what information you need. The website index is in English;
+               preserve exact names, dates, identifiers, and key terms.
+        original_query: The user's own wording of the question in their language
+               (French, Japanese...), when it is not English. It is searched as well,
+               so documents staff uploaded in that language can match. Leave empty
+               for English questions.
 
     Returns:
         Relevant content chunks retrieved and reranked from the knowledge database.
@@ -1955,10 +1926,12 @@ def search_vectordb(query: str) -> str:
         raise ValueError('Search query must be nonempty and at most 4000 characters')
     from concierge.rag.src.search_cache import public_search_cache, cache_key
     from concierge.evidence import turn_evidence
-    key = cache_key(query,retriever,model) if retriever is not None and model is not None else None
+    original_query = (original_query or '')[:4000]
+    key = cache_key(query + ('\n' + original_query.strip() if original_query.strip() else ''),retriever,model) \
+        if retriever is not None and model is not None else None
     passages = public_search_cache.get(key) if key is not None else None
     if passages is None:
-        passages = search_passages(retriever, model, query, 20, 10, 5)
+        passages = search_passages(retriever, model, query, 20, 10, 5, extra_queries=(original_query,))
         evidence = turn_evidence.get()
         # Never retain partial/fallback/error answers or cache when diagnostics
         # are unavailable. SQL availability, user data and writes never use this cache.

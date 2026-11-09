@@ -62,7 +62,7 @@ class ConciergeApiTest(unittest.TestCase):
     def test_fee_questions_use_database_without_loading_models_in_all_languages(self):
         self.client.portal.call(self.seed_categories)
         self.client.app.dependency_overrides.pop(chat.agent_backend)
-        data=json.loads((__import__('pathlib').Path(__file__).parents[1]/'src/concierge/data/predefined_qa_i18n.json').read_text())
+        data=json.loads((__import__('pathlib').Path(__file__).parents[1]/'src/concierge/data/predefined_qa_i18n.json').read_text(encoding='utf-8'))
         questions={'en':'What are the CCIFJ membership fees?',**{lang:data[lang]['What are the CCIFJ membership fees?']['question'] for lang in ('fr','ja')}}
         with patch('concierge.api.chat.get_agent_backend',side_effect=AssertionError('Must not load models')):
             for locale,question in questions.items():

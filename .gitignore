@@ -234,3 +234,6 @@ backend
 /docs/NEXT_SESSION_HANDOFF.md
 /src/concierge/db/relationaldb/*.db*
 /src/concierge/db/vectordb/chroma_db/
+
+# Never commit runtime secrets
+/config/secret_key

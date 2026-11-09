@@ -26,7 +26,6 @@ async def overview(session: DatabaseSession, response: Response):
 
     open_statuses = [StaffRequestStatus.new, StaffRequestStatus.in_review]
     contacts = (await session.exec(select(ContactUs).where(ContactUs.is_active == True))).all()  # noqa: E712
-    covered = {topic for contact in contacts for topic in split_topics(contact.topics)}
     response.headers["Cache-Control"] = "no-store"
     return {
         "users": await count(select(func.count()).select_from(User)),
@@ -43,7 +42,9 @@ async def overview(session: DatabaseSession, response: Response):
                                           .where(IntroRequest.status == IntroStatus.new)),
         "active_contacts": len(contacts),
         "has_triage_contact": any(contact.is_triage for contact in contacts),
-        "uncovered_topics": [key for key in TOPICS if key != "general_or_unsure" and key not in covered],
+        # The agent now reads the whole directory and picks the department itself, so no
+        # topic can be "uncovered"; the field stays for the dashboard's contract.
+        "uncovered_topics": [],
     }
 
 
@@ -100,6 +101,9 @@ async def update_user_role(user_id: int, body: RoleUpdate, session: DatabaseSess
 
 
 # ---------- Staff directory (who the agent routes requests to) ----------
+# The agent's `get_ccifj_contact` returns every active contact with its department and
+# "sub_category" (what it handles) and picks the right one itself, so a contact added here
+# is used immediately. Topics are optional tags kept for the dashboard's filters.
 
 class ContactFields(BaseModel):
     name: Optional[str] = Field(default=None, max_length=100)

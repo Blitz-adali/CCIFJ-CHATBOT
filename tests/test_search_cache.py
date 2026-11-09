@@ -41,7 +41,7 @@ class SearchCacheTest(unittest.TestCase):
                 self.assertEqual(evidence.passages,passages)
             self.assertEqual(lookup.call_count,1)
         cache=SearchCache()
-        def degraded(*args):
+        def degraded(*args, **kwargs):
             record_warning('retrieval_semantic_unavailable')
             return passages
         with patch.object(tools,'_get_embed_model',return_value=model),patch.object(tools,'_get_retriever',return_value=retriever),patch.object(tools,'search_passages',side_effect=degraded) as lookup,patch('concierge.rag.src.search_cache.public_search_cache',cache):

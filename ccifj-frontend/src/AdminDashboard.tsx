@@ -181,7 +181,7 @@ function DirectoryPanel() {
         <label>Languages<input value={editing.form.languages ?? ''} onChange={e => set({ languages: e.target.value })} placeholder="en,fr,ja" /></label>
       </div>
       <label className="admin-wide">What they handle<input value={editing.form.sub_category ?? ''} onChange={e => set({ sub_category: e.target.value })} /></label>
-      <fieldset><legend>Agent topics</legend>
+      <fieldset><legend>Tags (optional; the agent reads the department and "What they handle")</legend>
         {topics.filter(topic => topic.key !== 'general_or_unsure').map(topic => <label key={topic.key} className="admin-check">
           <input type="checkbox" checked={editing.form.topics?.includes(topic.key) ?? false}
             onChange={e => set({ topics: e.target.checked ? [...(editing.form.topics ?? []), topic.key] : (editing.form.topics ?? []).filter(key => key !== topic.key) })} />
@@ -205,7 +205,6 @@ function DirectoryPanel() {
         {contact.is_triage && <span className="admin-badge level-staff">Triage</span>}
         {!contact.is_active && <span className="admin-badge">Inactive</span>}
         {contact.topics.map(key => <span key={key} className="admin-badge">{topicLabel(key)}</span>)}
-        {!contact.topics.length && !contact.is_triage && <span className="admin-muted">Not used by the agent</span>}
       </div>
     </article>)}</div>
   </section>;

@@ -71,6 +71,31 @@ async def contacts_for_topic(session: AsyncSession, topic: str) -> list[ContactU
     return [row for row in rows if topic in split_topics(row.topics)]
 
 
+async def describe_directory(session: AsyncSession) -> str:
+    """Tool output: the whole active directory, so the model picks the department itself.
+
+    Staff maintain the directory in the admin dashboard; a contact added there is returned on the
+    next call with no code change. Each entry carries its department and what it handles.
+    """
+    rows = (await session.exec(
+        select(ContactUs).where(ContactUs.is_active == True).order_by(col(ContactUs.contact_id))  # noqa: E712
+    )).all()
+    if not rows:
+        return NO_CONTACT
+    lines = ["CCIFJ staff directory. Choose the contact whose department matches the request; "
+             "when none fits, use the triage contact, who routes requests. Use only these names and emails."]
+    for index, contact in enumerate(rows, start=1):
+        title = contact.name or contact.role or contact.category
+        lines.append(f"{index}. {title}" + (" (triage)" if contact.is_triage else ""))
+        fields = [("Department", contact.category), ("Handles", contact.sub_category),
+                  ("Role", contact.role if contact.name else None), ("Phone", contact.mobile),
+                  ("Email", contact.email), ("Languages", contact.languages)]
+        lines += [f"   - {label}: {value}" for label, value in fields if value]
+    lines.append("- Note: " + TOPIC_NOTES["japanese_market_support"])
+    lines.append("- Note: " + TOPIC_NOTES["recruitment_and_hr"])
+    return "\n".join(lines)
+
+
 async def describe_contacts(session: AsyncSession, topic: str) -> str:
     """Tool output: the contacts for a topic, else the triage contacts, else a team-ticket hint."""
     contacts = await contacts_for_topic(session, topic)

@@ -3,6 +3,11 @@
 Imports are two-step: `preview` parses and validates every row without writing anything,
 then `commit` re-validates the same file and saves only the valid rows. Existing records
 are updated instead of duplicated: events match on title + start date, members on name.
+
+Member files may use the CCIFJ directory export layout (`Full name`, `Primary sector`,
+`Membership type`, `Email`, one row per company plus one row per contact person): the
+columns are mapped by `MEMBER_ALIASES`, membership labels by `CATEGORY_HINTS`, and contact
+people are folded into their company's description.
 """
 
 from __future__ import annotations
@@ -53,6 +58,29 @@ MEMBER_COLUMNS: dict[str, tuple[bool, str]] = {
     "established": (False, "YYYY-MM-DD or year"),
 }
 COLUMNS = {"events": EVENT_COLUMNS, "members": MEMBER_COLUMNS}
+
+# Column names other systems export (normalised like `_key`) -> our column. A value is only
+# copied when our column is empty, so a file that already uses our names is unaffected.
+MEMBER_ALIASES: dict[str, str] = {
+    "full_name": "name", "company": "name", "company_name": "name", "organisation": "name",
+    "primary_sector": "sector", "industry": "sector",
+    "membership_type": "category", "membership": "category", "tier": "category",
+    "email": "contact", "website": "contact",
+    "employees": "manpower", "founded": "established",
+}
+# Membership labels other systems use -> our category name. Checked in order against the
+# lowercased label, so "Resident Active Member - Outside Kanto rate" is Non-Kanto, not Active.
+CATEGORY_HINTS: tuple[tuple[str, str], ...] = (
+    ("non-resident", "Non-Resident"), ("non resident", "Non-Resident"),
+    ("outside kanto", "Non-Kanto"), ("non-kanto", "Non-Kanto"), ("non kanto", "Non-Kanto"), ("regional", "Non-Kanto"),
+    ("benefactor", "Benefactor"), ("start-up", "Startup"), ("startup", "Startup"),
+    ("individual", "Individual"), ("associate", "Associate"), ("active", "Active"),
+)
+# Extra member columns worth keeping for matching, folded into the description.
+MEMBER_EXTRA_COLUMNS: dict[str, str] = {
+    "secondary_sector(s)": "Secondary sectors", "secondary_sectors": "Secondary sectors",
+    "communication_language": "Communication language",
+}
 
 
 class ImportFileError(ValueError):
@@ -225,6 +253,64 @@ def validate_event(row: dict) -> tuple[dict, list[str]]:
     return clean, errors
 
 
+def apply_member_aliases(row: dict) -> dict:
+    """Map another system's column names onto ours and fold extra columns into the description."""
+    out = dict(row)
+    for alias, target in MEMBER_ALIASES.items():
+        if _text(out.get(target)) == "" and _text(out.get(alias)) != "":
+            out[target] = out[alias]
+    extras = [f"{label}: {_text(out[key])}" for key, label in MEMBER_EXTRA_COLUMNS.items() if _text(out.get(key))]
+    if extras:
+        out["description"] = "\n".join(filter(None, [_text(out.get("description")), *extras]))
+    return out
+
+
+def fold_member_contacts(rows: list[tuple[int, dict]]) -> tuple[list[tuple[int, dict]], int, list[int]]:
+    """Attach person rows ("COMPANY 01, Sophie DUBOIS", with a job title) to their company row.
+
+    Directory exports often list a company and then one row per contact person. The member
+    table has company rows only, so each person is appended to the company description as
+    "Contacts: ..." (name, job title, language, email), where matching and introductions can
+    use them. Returns the remaining rows, how many people were folded, and the row numbers of
+    people whose company is not in the file.
+    """
+    companies = {_text(row.get("name")).lower(): (number, row) for number, row in rows
+                 if _text(row.get("name")) and "," not in _text(row.get("name"))}
+    kept, folded, orphans = [], 0, []
+    contacts: dict[str, list[str]] = {}
+    for number, row in rows:
+        name = _text(row.get("name"))
+        company, _, person = name.partition(",")
+        is_person = bool(person.strip()) and (_text(row.get("job_title")) or _text(row.get("salutation")))
+        if not is_person:
+            kept.append((number, row))
+            continue
+        if company.strip().lower() not in companies:
+            orphans.append(number)
+            continue
+        details = [part for part in (_text(row.get("job_title")), _text(row.get("communication_language"))) if part]
+        line = person.strip() + (f" ({'; '.join(details)})" if details else "")
+        if _text(row.get("email")) or _text(row.get("contact")):
+            line += f" – {_text(row.get('email')) or _text(row.get('contact'))}"
+        contacts.setdefault(company.strip().lower(), []).append(line)
+        folded += 1
+    for key, lines in contacts.items():
+        _, row = companies[key]
+        row["description"] = "\n".join(filter(None, [_text(row.get("description")), "Contacts: " + "; ".join(lines)]))
+    return kept, folded, orphans
+
+
+def match_category(label: str, categories: dict[str, int]) -> int | None:
+    """Exact category name first, then the hints for labels such as 'Resident Active Member - Outside Kanto rate'."""
+    key = label.lower()
+    if key in categories:
+        return categories[key]
+    for hint, name in CATEGORY_HINTS:
+        if hint in key and name.lower() in categories:
+            return categories[name.lower()]
+    return None
+
+
 def validate_member(row: dict, categories: dict[str, int]) -> tuple[dict, list[str]]:
     errors: list[str] = []
     clean: dict[str, Any] = {
@@ -241,7 +327,7 @@ def validate_member(row: dict, categories: dict[str, int]) -> tuple[dict, list[s
     category = _text(row.get("category"))
     clean["category_id"] = None
     if category:
-        clean["category_id"] = categories.get(category.lower())
+        clean["category_id"] = match_category(category, categories)
         if clean["category_id"] is None:
             errors.append(f"category '{category}' is not a membership category ({', '.join(sorted(categories))})")
     return clean, errors
@@ -288,7 +374,18 @@ async def run_import(session: AsyncSession, kind: str, rows: list[dict], commit:
     categories = await _member_categories(session) if kind == "members" else {}
     results, seen = [], set()
     counts = {"create": 0, "update": 0, "error": 0}
-    for number, row in enumerate(rows, start=2):  # row 1 is the header
+    numbered = list(enumerate(rows, start=2))  # row 1 is the header
+    orphans: list[int] = []
+    if kind == "members":
+        numbered = [(number, apply_member_aliases(row)) for number, row in numbered]
+        numbered, folded, orphans = fold_member_contacts(numbered)
+        if folded:
+            counts["folded"] = folded  # contact people attached to their company row
+        for number in orphans:
+            counts["error"] += 1
+            results.append({"row": number, "label": "", "action": "error",
+                            "errors": ["contact person whose company is not in this file"]})
+    for number, row in numbered:
         clean, errors = validate_event(row) if kind == "events" else validate_member(row, categories)
         existing = None
         if not errors:
@@ -319,4 +416,5 @@ async def run_import(session: AsyncSession, kind: str, rows: list[dict], commit:
                 session.add(existing)
     if commit:
         await session.commit()
+    results.sort(key=lambda item: item["row"])
     return {"kind": kind, "committed": commit, "counts": counts, "rows": results}

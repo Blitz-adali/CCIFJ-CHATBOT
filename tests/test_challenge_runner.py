@@ -68,7 +68,7 @@ class ChallengeRunnerTest(unittest.TestCase):
         self.assertEqual(post.call_count,1)
 
     def test_suite_has_long_conversations_with_explicit_expectations(self):
-        suite=json.loads((ROOT/'tests/concierge_challenges.json').read_text())
+        suite=json.loads((ROOT/'tests/concierge_challenges.json').read_text(encoding='utf-8'))
         self.assertEqual(len(suite['scenarios']),16)
         self.assertEqual(sum(len(case['turns']) for case in suite['scenarios']),210)
         self.assertEqual(len(next(case for case in suite['scenarios'] if case['id']=='marathon')['turns']),30)
