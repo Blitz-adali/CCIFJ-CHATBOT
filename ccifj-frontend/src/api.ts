@@ -407,6 +407,57 @@ export async function updateIntroRequest(introId: number, body: {status?: import
   await requestJson(`/api/v1/admin/intro-requests/${introId}`, { method: 'PATCH', body: JSON.stringify(body) }, 10000);
 }
 
+// ---------- Onboarding & automation ----------
+
+export async function getAutomationRules(): Promise<import('./types').AutomationRule[]> {
+  return requestJson('/api/v1/admin/automation/rules', { method: 'GET' }, 10000);
+}
+
+export async function updateAutomationRule(key: string, body: { enabled?: boolean; requires_approval?: boolean }): Promise<void> {
+  await requestJson(`/api/v1/admin/automation/rules/${key}`, { method: 'PATCH', body: JSON.stringify(body) }, 10000);
+}
+
+export async function runAutomation(asOf: string): Promise<import('./types').RunResult> {
+  // Event and member matching may embed new rows on the first run.
+  return requestJson('/api/v1/admin/automation/run', { method: 'POST', body: JSON.stringify({ as_of: asOf || null }) }, 300000);
+}
+
+export async function getOutreach(status = ''): Promise<import('./types').OutreachItem[]> {
+  return requestJson(`/api/v1/admin/outreach${status ? `?status=${status}` : ''}`, { method: 'GET' }, 10000);
+}
+
+export async function actOnOutreach(id: number, action: 'send' | 'skip' | 'save', edits: { subject?: string; body?: string } = {}): Promise<void> {
+  await requestJson(`/api/v1/admin/outreach/${id}`, { method: 'PATCH', body: JSON.stringify({ action, ...edits }) }, 10000);
+}
+
+export async function rewriteOutreach(id: number, language: string): Promise<{ subject: string; body: string }> {
+  return requestJson(`/api/v1/admin/outreach/${id}/rewrite`, { method: 'POST', body: JSON.stringify({ language }) }, 120000);
+}
+
+export async function getEngagement(): Promise<import('./types').EngagementRow[]> {
+  return requestJson('/api/v1/admin/engagement', { method: 'GET' }, 120000);
+}
+
+export async function approveMembership(memberId: number, email: string): Promise<{ member: string; welcome: unknown[] }> {
+  return requestJson(`/api/v1/admin/members/${memberId}/accounts`, { method: 'POST', body: JSON.stringify({ email }) }, 120000);
+}
+
+export async function getMyProfile(): Promise<import('./types').MemberProfile> {
+  return requestJson('/api/v1/me/profile', { method: 'GET' }, 10000);
+}
+
+export async function saveMyProfile(body: { goals: string[]; interests: string; preferred_language: string; preferred_channel: string }): Promise<void> {
+  await requestJson('/api/v1/me/profile', { method: 'PUT', body: JSON.stringify(body) }, 10000);
+}
+
+export async function getMyNotifications(): Promise<import('./types').MemberNotification[]> {
+  return requestJson('/api/v1/me/notifications', { method: 'GET' }, 10000);
+}
+
+export async function markNotificationRead(id: number): Promise<void> {
+  await requestJson(`/api/v1/me/notifications/${id}/read`, { method: 'POST' }, 10000);
+}
+
 export async function getSuggestedQuestions(locale: Locale = "en"): Promise<string[]> {
   try {
     const response = await requestJson<{ suggested_questions?: unknown }>(`${API_ENDPOINTS.suggestions}?locale=${encodeURIComponent(locale)}`);

@@ -182,5 +182,31 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .admin-main select { max-width: 100%; }
 .approval-companies { margin: 0 0 10px; padding-left: 18px; line-height: 1.6; }
 .approval-message { margin: 0; white-space: pre-wrap; }
+.admin-run-result { margin-top: 14px; padding: 14px 16px; border-radius: 12px; background: #f3f8f9; }
+.admin-run-items { margin: 8px 0; padding-left: 18px; line-height: 1.7; }
+.admin-run-items small, .admin-why { display: block; color: #526b7b; font-size: 12px; }
+.admin-why { margin: 0 0 10px; font-size: 13px; }
+.admin-main meter { width: 60px; vertical-align: middle; }
+.simple-chat { display: flex; flex-direction: column; }
+.member-corner { flex: none; margin: 8px 16px 0; padding: 10px 14px; border: 1px solid #d9dfe0; border-radius: 14px; background: #fff; font-size: 13px; }
+.member-corner-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.member-corner-title { display: inline-flex; align-items: center; gap: 6px; color: var(--navy); font-weight: 600; }
+.member-corner-title b { padding: 1px 8px; border-radius: 10px; background: var(--red); color: #fff; font-size: 11px; }
+.member-corner-welcome { flex: 1; min-width: 200px; color: #415c6b; }
+.member-corner button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 5px 12px; border: 1px solid #bccdd6; border-radius: 16px; background: #fff; color: var(--navy); font-size: 12px; }
+.member-corner-bar > button { margin-left: auto; }
+.member-notes { margin: 8px 0 0; padding: 0; list-style: none; }
+.member-notes li button { width: 100%; justify-content: space-between; border: 0; border-radius: 8px; text-align: left; }
+.member-notes li.unread button { font-weight: 700; }
+.member-notes small { color: var(--muted); font-weight: 400; }
+.member-notes p { margin: 4px 12px 10px; white-space: pre-wrap; color: #415c6b; line-height: 1.6; }
+.member-profile { display: grid; gap: 10px; margin-top: 10px; }
+.member-profile fieldset { display: grid; gap: 4px; margin: 0; padding: 8px 12px; border: 1px solid #e3e6e5; border-radius: 10px; }
+.member-profile label { display: grid; gap: 4px; color: #415c6b; }
+.member-profile fieldset label { display: flex; align-items: center; gap: 8px; }
+.member-profile input:not([type=checkbox]), .member-profile select { min-height: 34px; padding: 5px 10px; border: 1px solid #bccdd6; border-radius: 8px; }
+.member-profile-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.member-profile-actions { display: flex; gap: 8px; }
+.member-profile-done { margin: 0; color: #1f6a3b; }
 .inbox-status { min-height: 30px; padding: 3px 8px; border: 1px solid #bccdd6; border-radius: 20px; background: #e9f2f4; color: #234b60; font-size: 12px; }
 @media(max-width:720px) { .staff-inbox { padding: 20px 16px; } .topbar-right { gap: 6px; } .language-control select { min-height: 36px; padding: 5px; font-size: 12px; } .inbox-request { padding: 18px; } }

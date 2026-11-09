@@ -48,6 +48,9 @@ async def login(body: LoginRequest, session: DatabaseSession, response: Response
             status_code=401, detail="Incorrect email or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    from concierge.engagement import record_activity
+    record_activity(session, record[0].user_id, "login")
+    await session.commit()
     return await token_response(session, record[0], response)
 
 

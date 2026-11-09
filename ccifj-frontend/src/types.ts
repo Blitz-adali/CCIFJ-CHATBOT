@@ -150,6 +150,70 @@ export interface IntroRequestItem {
   target: IntroCompany | null;
 }
 
+export interface AutomationRule {
+  key: string;
+  title: string;
+  description: string;
+  enabled: boolean;
+  requires_approval: boolean;
+  staff_task: boolean;
+}
+
+export interface OutreachItem {
+  outreach_id: number;
+  member: string;
+  email: string;
+  rule: string;
+  rule_title: string;
+  channel: string;
+  subject: string;
+  body: string;
+  reason: string;
+  status: 'pending' | 'sent' | 'skipped';
+  created_at: string;
+  sent_at: string | null;
+  read_at: string | null;
+}
+
+export interface RunResult {
+  run_id: number | null;
+  dry_run: boolean;
+  as_of: string;
+  created: number;
+  duplicates: number;
+  items: { outreach_id: number; user_id: number; member?: string; rule: string; status: string; channel: string; subject: string; reason: string }[];
+}
+
+export interface EngagementRow {
+  user_id: number;
+  name: string;
+  email: string;
+  company: string | null;
+  joined_at: string | null;
+  profile_completed: boolean;
+  goals: string[];
+  channel: string;
+  last_activity: string;
+  last_activity_kind: string;
+  days_inactive: number;
+  score: number;
+  stage: string;
+  messages_sent: number;
+}
+
+export interface MemberProfile {
+  access_level: AccessLevel;
+  joined_at: string | null;
+  goals: string[];
+  interests: string;
+  preferred_language: Locale;
+  preferred_channel: 'in_app' | 'email' | 'line';
+  profile_completed: boolean;
+  goal_options: { key: string; label: string }[];
+}
+
+export interface MemberNotification { id: number; subject: string; body: string; sent_at: string; read: boolean; }
+
 export interface StaffTopic { key: string; label: string; description: string; }
 
 export interface StaffContact {

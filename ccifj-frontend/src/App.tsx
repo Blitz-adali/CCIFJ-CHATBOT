@@ -5,6 +5,7 @@ import { AUTH_EXPIRED_EVENT, clearAuthSession, getSavedAuthSession, getCurrentUs
 import { AuthDialog } from './AuthDialog';
 import { readLocale, saveLocale, siteCopy } from './site-copy';
 import { AdminDashboard } from './AdminDashboard';
+import { MemberCorner } from './MemberCorner';
 import type { AuthSession, Locale } from './types';
 import './widget.css';
 
@@ -53,6 +54,7 @@ export default function App() {
     <main id="main-content" className="chat-page">
       {inboxOpen && auth?.user.is_staff && <AdminDashboard key={auth.user.user_id} locale={locale} currentUserId={auth.user.user_id}/>}
       <section className="simple-chat" aria-label={t.assistant} hidden={inboxOpen && Boolean(auth?.user.is_staff)}>
+        {auth && !auth.user.is_staff && <MemberCorner key={auth.user.user_id} locale={locale} userId={auth.user.user_id}/>}
         <WidgetChat locale={locale} isAuthenticated={Boolean(auth)} userId={auth?.user.user_id} onLogin={()=>setAuthOpen(true)}/>
       </section>
     </main>

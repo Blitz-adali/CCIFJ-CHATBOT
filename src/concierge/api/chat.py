@@ -171,6 +171,10 @@ async def chat(
         # Reload every turn so a booking made earlier in the conversation shows up.
         try:
             user_context = await crud.load_user_context(session, user_id)
+            if user_context is not None:
+                from concierge.engagement import onboarding_context, record_activity
+                record_activity(session, user_id, "chat")
+                user_context.update(await onboarding_context(session, user_id))
         except Exception:
             # The agent still answers without a profile; it just isn't personalized.
             logger.exception("Could not load the user context for session %s", conversation.session_id)

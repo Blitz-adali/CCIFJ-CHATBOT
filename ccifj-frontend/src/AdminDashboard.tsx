@@ -7,14 +7,14 @@ import {
 import type { StaffContactInput } from './api';
 import { EventsPanel, KnowledgePanel, MembersPanel } from './AdminContent';
 import { MatchingPanel } from './AdminMatching';
+import { AutomationPanel } from './AdminAutomation';
 import { StaffInbox } from './StaffInbox';
 import type { AdminOverview, AdminUser, Locale, StaffContact, StaffTopic } from './types';
 
-type Section = 'overview' | 'requests' | 'matching' | 'events' | 'members' | 'knowledge' | 'accounts' | 'directory';
+type Section = 'overview' | 'requests' | 'matching' | 'automation' | 'events' | 'members' | 'knowledge' | 'accounts' | 'directory';
 
 /** Pages planned for the next phases; shown so staff see where the dashboard is going. */
 const UPCOMING = [
-  { label: 'Automation', icon: Clock },
   { label: 'Agent analytics', icon: BarChart3 },
 ];
 
@@ -28,6 +28,7 @@ export function AdminDashboard({ locale, currentUserId }: { locale: Locale; curr
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'requests', label: 'Requests', icon: Inbox },
     { id: 'matching', label: 'Matching & intros', icon: Network },
+    { id: 'automation', label: 'Onboarding & automation', icon: Clock },
     { id: 'events', label: 'Events', icon: CalendarDays },
     { id: 'members', label: 'Member companies', icon: Building2 },
     { id: 'knowledge', label: 'Knowledge files', icon: BookOpen },
@@ -50,6 +51,7 @@ export function AdminDashboard({ locale, currentUserId }: { locale: Locale; curr
       {section === 'overview' && <OverviewPanel onOpen={setSection} />}
       {section === 'requests' && <StaffInbox locale={locale} />}
       {section === 'matching' && <MatchingPanel />}
+      {section === 'automation' && <AutomationPanel />}
       {section === 'events' && <EventsPanel />}
       {section === 'members' && <MembersPanel />}
       {section === 'knowledge' && <KnowledgePanel />}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
-  deleteKnowledgeDoc, getAdminEvents, getAdminMembers, getImportTemplate, getKnowledgeDocs, importFile,
+  approveMembership, deleteKnowledgeDoc, getAdminEvents, getAdminMembers, getImportTemplate, getKnowledgeDocs, importFile,
   saveAdminEvent, uploadKnowledgeDoc,
 } from './api';
 import type { EventInput } from './api';
@@ -183,6 +183,9 @@ export function MembersPanel() {
   const [next, setNext] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [approving, setApproving] = useState<AdminMember | null>(null);
+  const [approveEmail, setApproveEmail] = useState('');
+  const [approveNote, setApproveNote] = useState('');
   const load = (offset = 0) => {
     setBusy(true); setError('');
     getAdminMembers(query, sector, offset).then(result => {
@@ -195,6 +198,19 @@ export function MembersPanel() {
     <h1 id="members-title">Member companies</h1>
     <p className="admin-note">The member directory the agent searches. Descriptions matter: matching will use them to explain why a company fits.</p>
     <ImportBox kind="members" onDone={() => load()} />
+    {approving && <form className="admin-form" onSubmit={(event: FormEvent) => {
+      event.preventDefault();
+      setBusy(true); setApproveNote('');
+      approveMembership(approving.member_id, approveEmail)
+        .then(result => { setApproveNote(`Membership approved: the account is now linked to ${result.member} and the welcome message was ${result.welcome.length ? 'sent' : 'already sent before'}.`); load(); })
+        .catch(e => setApproveNote(errorText(e))).finally(() => setBusy(false));
+    }}>
+      <h2>Approve membership: {approving.name}</h2>
+      <p className="admin-note">Link a person's CCIFJ account to this company once their membership application is accepted. This starts their onboarding: the welcome message is sent right away and the daily rules follow up. In production, Odoo would trigger this when the membership is validated.</p>
+      <label className="admin-wide">Account email<input type="email" required value={approveEmail} onChange={e => setApproveEmail(e.target.value)} placeholder="The email they signed up with" /></label>
+      {approveNote && <p role="status" className="admin-note">{approveNote}</p>}
+      <div className="admin-form-actions"><button type="submit" className="primary" disabled={busy}>Approve and send welcome</button><button type="button" onClick={() => setApproving(null)}>Close</button></div>
+    </form>}
     <form className="admin-search" onSubmit={(event: FormEvent) => { event.preventDefault(); load(0); }}>
       <input type="search" placeholder="Search name, description or place" aria-label="Search members" value={query} onChange={e => setQuery(e.target.value)} />
       <select aria-label="Sector" value={sector} onChange={e => setSector(e.target.value)}>
@@ -209,7 +225,8 @@ export function MembersPanel() {
         <td className="admin-wrap"><strong>{item.name}</strong>{item.description && <small>{item.description.slice(0, 140)}{item.description.length > 140 ? '…' : ''}</small>}</td>
         <td>{item.sector ?? '—'}</td><td>{item.category ?? '—'}</td>
         <td>{[item.region, item.country].filter(Boolean).join(', ') || '—'}</td>
-        <td>{item.manpower ?? '—'}</td><td>{item.accounts}</td>
+        <td>{item.manpower ?? '—'}</td>
+        <td>{item.accounts} <button type="button" className="admin-link" onClick={() => { setApproving(item); setApproveEmail(''); setApproveNote(''); }}>Add account</button></td>
       </tr>)}</tbody>
     </table></div>
     {!busy && !items.length && !error && <p>No companies found.</p>}
