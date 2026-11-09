@@ -31,6 +31,7 @@ INTERNAL_SCHEME = "ccifj-doc"
 
 _lock = threading.RLock()
 _collection = None
+_client = None
 
 
 def store_dir() -> Path:
@@ -50,21 +51,30 @@ def chunk_id(doc_id: int, index: int) -> int:
     return UPLOAD_ID_BASE + doc_id * MAX_CHUNKS_PER_DOC + index
 
 
+def chroma_client():
+    """One Chroma client for everything stored under var/knowledge (uploads, matching)."""
+    global _client
+    with _lock:
+        if _client is None:
+            import chromadb
+            _client = chromadb.PersistentClient(path=str(store_dir() / "chroma"))
+        return _client
+
+
 def upload_collection():
     global _collection
     with _lock:
         if _collection is None:
-            import chromadb
-            client = chromadb.PersistentClient(path=str(store_dir() / "chroma"))
-            _collection = client.get_or_create_collection(name=COLLECTION, metadata={"hnsw:space": "cosine"})
+            _collection = chroma_client().get_or_create_collection(name=COLLECTION, metadata={"hnsw:space": "cosine"})
         return _collection
 
 
 def reset_for_tests() -> None:
     """Forget cached handles (tests point CCIFJ_KNOWLEDGE_DIR at a temp folder)."""
-    global _collection
+    global _collection, _client
     with _lock:
         _collection = None
+        _client = None
     _base_records.cache_clear()
 
 

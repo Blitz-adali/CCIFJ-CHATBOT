@@ -67,6 +67,11 @@ APPROVAL_PROMPTS = {
         "fr": "Vérifiez ci-dessous votre message au personnel de la CCIFJ. La confirmation l’enregistrera pour l’équipe ; aucun e-mail n’est envoyé automatiquement.",
         "ja": "下のCCIFJスタッフへのメッセージをご確認ください。確定するとチーム向けに保存されます。メールは自動送信されません。",
     },
+    "request_introduction": {
+        "en": "Please review the introduction request below. Confirming sends it to CCIFJ staff, who contact the company first; nothing is sent to the company automatically.",
+        "fr": "Vérifiez la demande de mise en relation ci-dessous. La confirmation la transmet à l’équipe de la CCIFJ, qui contacte d’abord l’entreprise ; rien ne lui est envoyé automatiquement.",
+        "ja": "下の紹介リクエストをご確認ください。確定するとCCIFJスタッフに送られ、スタッフが先に相手企業へ連絡します。相手企業へ自動送信されることはありません。",
+    },
     "cancel_event_booking": {
         "en": "Please check the booking below. Confirming will cancel it and all its tickets.",
         "fr": "Vérifiez la réservation ci-dessous. La confirmation l’annulera, ainsi que tous ses billets.",
@@ -241,6 +246,17 @@ async def _enrichment(db, name, args, user_id):
     if name == "subscribe_newsletter":
         kind = args.get("newsletter_type") or "general_news"
         return {"newsletter_name": NEWSLETTER_NAMES.get(kind, kind)}
+    if name == "request_introduction":
+        from sqlalchemy import func
+        from sqlmodel import select
+        from concierge.db.relationaldb.models import Member
+        companies = []
+        for company in (args.get("company_names") or [])[:5]:
+            member = (await db.exec(select(Member).where(func.lower(Member.name) == str(company).strip().lower()))).first()
+            companies.append({"name": member.name if member else str(company), "found": member is not None,
+                              "sector": member.sector if member else None,
+                              "place": ", ".join(p for p in (member.region, member.country) if p) if member else None})
+        return {"companies": companies}
     if user_id is None:
         return {}
     if name in {"cancel_event_booking", "change_event_booking"}:

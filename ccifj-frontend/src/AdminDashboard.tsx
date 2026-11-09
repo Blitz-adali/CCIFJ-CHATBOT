@@ -6,14 +6,14 @@ import {
 } from './api';
 import type { StaffContactInput } from './api';
 import { EventsPanel, KnowledgePanel, MembersPanel } from './AdminContent';
+import { MatchingPanel } from './AdminMatching';
 import { StaffInbox } from './StaffInbox';
 import type { AdminOverview, AdminUser, Locale, StaffContact, StaffTopic } from './types';
 
-type Section = 'overview' | 'requests' | 'events' | 'members' | 'knowledge' | 'accounts' | 'directory';
+type Section = 'overview' | 'requests' | 'matching' | 'events' | 'members' | 'knowledge' | 'accounts' | 'directory';
 
 /** Pages planned for the next phases; shown so staff see where the dashboard is going. */
 const UPCOMING = [
-  { label: 'Matching', icon: Network },
   { label: 'Automation', icon: Clock },
   { label: 'Agent analytics', icon: BarChart3 },
 ];
@@ -27,6 +27,7 @@ export function AdminDashboard({ locale, currentUserId }: { locale: Locale; curr
   const nav: { id: Section; label: string; icon: typeof Inbox }[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'requests', label: 'Requests', icon: Inbox },
+    { id: 'matching', label: 'Matching & intros', icon: Network },
     { id: 'events', label: 'Events', icon: CalendarDays },
     { id: 'members', label: 'Member companies', icon: Building2 },
     { id: 'knowledge', label: 'Knowledge files', icon: BookOpen },
@@ -48,6 +49,7 @@ export function AdminDashboard({ locale, currentUserId }: { locale: Locale; curr
     <div className="admin-main">
       {section === 'overview' && <OverviewPanel onOpen={setSection} />}
       {section === 'requests' && <StaffInbox locale={locale} />}
+      {section === 'matching' && <MatchingPanel />}
       {section === 'events' && <EventsPanel />}
       {section === 'members' && <MembersPanel />}
       {section === 'knowledge' && <KnowledgePanel />}
@@ -65,6 +67,7 @@ function OverviewPanel({ onOpen }: { onOpen: (section: Section) => void }) {
   if (!data) return <p role="status">Loading overview…</p>;
   const tiles: { label: string; value: number; hint?: string; open?: Section }[] = [
     { label: 'New requests', value: data.new_requests, hint: `${data.open_requests} open in total`, open: 'requests' },
+    { label: 'New introduction requests', value: data.new_intro_requests, open: 'matching' },
     { label: 'Accounts', value: data.users, hint: `${data.members} linked to a member company`, open: 'accounts' },
     { label: 'Staff accounts', value: data.staff, open: 'accounts' },
     { label: 'Member companies', value: data.member_companies, open: 'members' },

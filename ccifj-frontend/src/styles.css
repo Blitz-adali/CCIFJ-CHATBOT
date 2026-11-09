@@ -175,5 +175,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .admin-table td.admin-wrap { min-width: 240px; max-width: 420px; white-space: normal; }
 .admin-table td.admin-wrap small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
 .admin-main .admin-link.danger { color: #b3261e; }
+.admin-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 18px; }
+.admin-main .admin-tabs button.active { border-color: var(--navy); background: var(--navy); color: #fff; }
+.admin-tabs.small { margin: 0 0 12px; gap: 18px; }
+.admin-badge.weak { background: #f1f0ec; color: var(--muted); }
+.admin-main select { max-width: 100%; }
+.approval-companies { margin: 0 0 10px; padding-left: 18px; line-height: 1.6; }
+.approval-message { margin: 0; white-space: pre-wrap; }
 .inbox-status { min-height: 30px; padding: 3px 8px; border: 1px solid #bccdd6; border-radius: 20px; background: #e9f2f4; color: #234b60; font-size: 12px; }
 @media(max-width:720px) { .staff-inbox { padding: 20px 16px; } .topbar-right { gap: 6px; } .language-control select { min-height: 36px; padding: 5px; font-size: 12px; } .inbox-request { padding: 18px; } }

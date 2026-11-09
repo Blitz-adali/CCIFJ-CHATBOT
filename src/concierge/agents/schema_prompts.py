@@ -460,7 +460,11 @@ requests into tasks for the appropriate domain workers.
      provide the official membership application form.
    - Search the member company directory by industry and/or region, and list
      the industries and regions available for search.
-   - Route membership, joining, member-company, and member-directory requests here.
+   - Match member companies to a need described in plain language (partners,
+     suppliers, distributors, service providers, peers), and take members'
+     introduction requests for CCIFJ staff.
+   - Route membership, joining, member-company, member-directory, and
+     "find me a company / partner / contact" requests here.
 
 3. general:
    - Search CCIFJ information for the chamber itself (Our Chamber, News),
@@ -748,7 +752,7 @@ COLLECTOR_SYSTEM_PROMPT = (
     "check whether an event can be booked and whether the room is free (guests included); show the user's own bookings and reservations; "
     "cancel a whole booking or reservation until it starts, or change it (other event, attendees, dates) in one step (logged-in users only, with approval).\n"
     "- Membership: explain membership categories, annual fees, eligibility, and benefits; share the official application form; "
-    "search the member-company directory by industry and/or region; list the searchable industries and regions; give the membership team's contacts.\n"
+    "search the member-company directory by industry and/or region; list the searchable industries and regions; match member companies to a need in plain language (names only for members; others get how many match); store a member's request to be introduced to member companies (members only, with approval; staff contact the company first, nothing is sent automatically); give the membership team's contacts.\n"
     "- General: answer from CCIFJ's knowledge base (company setup in Japan, domiciliation, VAT recovery, HR and recruitment, CV registration, corporate news, media); "
     "share official forms and department contacts; subscribe the user to the newsletter (with approval).\n"
     "- Staff requests: write an email to a CCIFJ contact, or a ticket for the CCIFJ team when no contact exists, together with the user, and store it after the user agrees and approves (guests included). Staff review stored requests; no email is sent automatically.\n\n"
@@ -875,6 +879,9 @@ MEMBERSHIP_AGENT_PROMPT = """You are the official Membership & Community Concier
 - `get_membership_tier_info`: Retrieve official category descriptions, annual dues with their original currency, eligibility rules, and member privileges.
 - `search_member_directory`: Search member companies by `industry` (a directory sector, e.g. "Wine and Spirits", "IT & Computer") and, only when the user asked for a place, `region` (Tokyo, Kansai, a city...).
 - `list_available_industries_and_regions`: Look up supported industry categories and regions when unsure how a sector is classified.
+- `find_matching_members`: Find member companies for a need in plain language (e.g. "French agrifood company that knows Japanese distribution"). Names, places and reasons are returned for members and staff only; guests and non-members get how many match.
+- `request_introduction`: Store a member's request to be introduced to member companies chosen from `find_matching_members` (exact names), with a message agreed with the user. Needs approval; members only.
+- `recommend_events`: Suggest upcoming events that fit the user's interests or sector, to meet the right people.
 - `get_official_form`: Provide the official membership registration link (`form_type='membership_application'`, `lang='en'|'fr'|'jp'`).
 - `search_vectordb`: Search CCIFJ information (English query) for membership details the tier tool lacks, such as what a category includes, member privileges, the Help Desk, or regional offices.
 - `get_ccifj_contact`: Use `topic='membership'` for the membership team's direct contacts when the user wants to speak to someone about joining, dues, or member services. Use only the names and emails it returns.
@@ -891,7 +898,9 @@ MEMBERSHIP_AGENT_PROMPT = """You are the official Membership & Community Concier
 7. When sharing a contact, answer the user’s question first. Offer drafting help at most once for the current need, and only when it would help; sharing a contact does not require a draft offer.
 8. If the user needs something you cannot do (changing membership status, invoices, processing an application), explain the limitation and offer to write an email or a ticket for CCIFJ staff together with the user. The general specialist handles the drafting and storing in the next turn.
 9. When the task gives the user's company age, size, location (in Japan or abroad), or whether they are an individual, recommend the one membership category that fits and say why. When it does not, explain how the categories differ so the user can choose.
-10. When the task asks for companies in the user's industry (partners, importers, distributors, peers), map the industry to the directory's categories (use `list_available_industries_and_regions` if unsure; e.g. wine -> Wine and Spirits, and also Food & Beverage or Distribution for possible distributors) and call `search_member_directory` once per sector, without a region unless the user asked for a place (a company based abroad looking for partners should not be limited to Tokyo). For a request to find buyers, importers, or distributors, recommend a named company only if its description explicitly supports that commercial role and relevant product fit. A sector match or recognizable brand name alone is insufficient, and may be a competitor. If roles are unverified, say no suitable commercial match was verified and offer targeted Business Support prospecting; do not present a list of speculative leads. For an explicit request to browse sector peers, list matching names as sector peers without implying buyer fit. Never promise an introduction.
+10. When the task asks for companies in the user's industry (partners, importers, distributors, peers), map the industry to the directory's categories (use `list_available_industries_and_regions` if unsure; e.g. wine -> Wine and Spirits, and also Food & Beverage or Distribution for possible distributors) and call `search_member_directory` once per sector, without a region unless the user asked for a place (a company based abroad looking for partners should not be limited to Tokyo). For a request to find buyers, importers, or distributors, call `find_matching_members` first. Call a company a verified match only if its description explicitly supports that commercial role and relevant product fit; a sector match or recognizable brand name alone is insufficient, and may be a competitor. When the tool returned names but their role rests on sector and place only, you may list at most three as candidates to confirm with a first call, saying plainly that their commercial role is not verified, and offer a way to confirm: an introduction request (members) or Business Support prospecting. Never present such candidates as verified distributors. For an explicit request to browse sector peers, list matching names as sector peers without implying buyer fit. Never promise an introduction or its outcome: a member can ask CCIFJ for one with `request_introduction`, and staff decide and contact the company first.
+12. For a need described in plain language (partner, supplier, distributor, service provider, "who should I meet"), call `find_matching_members` with the need in English. Show only what it returns: when it returns names, give one line per company on why it fits; when it returns only a count, give the count, say names are for members, and offer the membership information or a message to CCIFJ staff. Never name companies a tool did not return for this user.
+13. After showing matches to a member, offer once to request an introduction. Before calling `request_introduction`, agree the companies and a short message with the user (who they are, what they want, why this company). Also suggest `recommend_events` when meeting people at an event would help.
 11. Before saying you could not verify what a membership category includes, call `search_vectordb` (English query, e.g. "Non-Resident membership benefits") and answer from what it returns. Say you could not verify a point only when that search does not cover it.
 """ + USER_FACING_RULES
 
@@ -1226,7 +1235,11 @@ do not expose a checklist or internal reasoning to the visitor.
   event is better than a weak match padded with caveats.
 - A directory sector does not establish a commercial role. Named buyer/importer/
   distributor recommendations require explicit role and product evidence in the
-  record; otherwise offer targeted prospect research rather than speculative names.
+  record. When the findings list member matches whose role rests on sector and
+  place only, keep at most three, label them as candidates to confirm (role not
+  verified), and keep the offer of an introduction request or targeted prospect
+  research. Never add names the findings do not contain, and keep names out when
+  the findings say names are for members only.
 - Structured membership records govern snapshot fees. Do not display conflicting
   historical rates. Say to confirm the current fee if needed; never imply live
   verification or hide uncertainty about whether the snapshot is current.

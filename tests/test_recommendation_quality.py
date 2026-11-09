@@ -79,7 +79,8 @@ class DirectoryEvidenceTest(unittest.IsolatedAsyncioTestCase):
         @asynccontextmanager
         async def db(): yield None
         member=SimpleNamespace(name='Example Industrial Group',sector='Manufacturing',region='Tokyo',country='Japan',description='Sector: Manufacturing\nWebsite: https://example.test')
-        with patch.object(tools,'AsyncSessionLocal',db),patch.object(tools.crud,'search_members',AsyncMock(return_value=[member])):
+        # Company names are for members; this checks what a member sees.
+        with patch.object(tools,'AsyncSessionLocal',db),patch.object(tools.crud,'search_members',AsyncMock(return_value=[member])),                patch.object(tools,'_access_level',AsyncMock(return_value='member')):
             result=await tools.search_member_directory.ainvoke({'industry':'Manufacturing'})
         self.assertIn('Commercial role: unverified',result)
         self.assertIn('not a verified buyer',result)

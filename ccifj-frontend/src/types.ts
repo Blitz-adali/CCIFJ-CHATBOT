@@ -60,6 +60,7 @@ export interface AdminOverview {
   upcoming_events: number;
   active_contacts: number;
   has_triage_contact: boolean;
+  new_intro_requests: number;
   uncovered_topics: string[];
 }
 
@@ -119,6 +120,34 @@ export interface KnowledgeDoc {
   char_count: number;
   chunk_count: number;
   created_at: string;
+}
+
+export interface MemberMatch {
+  id: number;
+  name: string;
+  score: number;
+  why: string;
+  sector: string | null;
+  region: string | null;
+  country: string | null;
+  description: string | null;
+  contact: string | null;
+}
+
+export type IntroStatus = 'new' | 'proposed' | 'introduced' | 'declined' | 'closed';
+
+export interface IntroCompany { member_id: number; name: string; sector: string | null; place: string; }
+
+export interface IntroRequestItem {
+  intro_id: number;
+  reference: string;
+  status: IntroStatus;
+  message: string;
+  staff_note: string | null;
+  created_at: string;
+  requester: { name: string; email: string } | null;
+  requester_company: IntroCompany | null;
+  target: IntroCompany | null;
 }
 
 export interface StaffTopic { key: string; label: string; description: string; }

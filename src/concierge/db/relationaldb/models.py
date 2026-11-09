@@ -50,6 +50,14 @@ class UserRole(str, Enum):
     staff = "staff"  # can open the admin dashboard
 
 
+class IntroStatus(str, Enum):
+    new = "new"              # a member asked; staff have not acted yet
+    proposed = "proposed"    # staff wrote to the other company
+    introduced = "introduced"  # both sides agreed and were put in touch
+    declined = "declined"
+    closed = "closed"
+
+
 class MessageRole(str, Enum):
     user = "user"
     assistant = "assistant"
@@ -299,6 +307,25 @@ class StaffRequest(SQLModel, table=True):
     user_id: Optional[int] = Field(default=None, foreign_key="user.user_id", index=True)  # None = guest
     session_id: Optional[int] = Field(default=None, foreign_key="session.session_id", index=True)
     status: StaffRequestStatus = Field(default=StaffRequestStatus.new)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = updated_at_field()
+
+
+class IntroRequest(SQLModel, table=True):
+    """A member asking CCIFJ to introduce them to another member company.
+
+    Staff handle it from the dashboard; nothing is sent to the other company automatically.
+    """
+    __tablename__ = "intro_request"
+
+    intro_id: Optional[int] = Field(default=None, primary_key=True)
+    reference: str = Field(max_length=32, unique=True)  # e.g. "IR-2026-000012", shown to the member
+    requester_user_id: int = Field(foreign_key="user.user_id", index=True)
+    requester_member_id: Optional[int] = Field(default=None, foreign_key="member.member_id")
+    target_member_id: int = Field(foreign_key="member.member_id", index=True)
+    message: str
+    status: IntroStatus = Field(default=IntroStatus.new)
+    staff_note: Optional[str] = Field(default=None)
     created_at: NaiveDatetime = Field(default_factory=utcnow)
     updated_at: NaiveDatetime = updated_at_field()
 

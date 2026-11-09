@@ -1324,6 +1324,7 @@ def _member_region_pattern(region: str):
 async def search_member_directory(
     industry: Optional[str] = None,
     region: Optional[str] = None,
+    runtime: ToolRuntime = None,
 ) -> str:
     """
     Search the CCIFJ member directory for companies matching the provided industry and/or region.
@@ -1343,7 +1344,8 @@ async def search_member_directory(
 
     Returns:
         Matching company records including company names, sectors, regions,
-        and directory descriptions.
+        and directory descriptions. Names are shown to members and staff only;
+        other users get how many companies match.
     """
     pattern = _member_region_pattern(region or "")
     if not industry and pattern is None:
@@ -1370,6 +1372,12 @@ async def search_member_directory(
             members = in_place
     members = list(members)[:PAGE_SIZE + 1]
 
+    if members:
+        level = await _access_level(runtime)
+        if level in ("guest", "user"):
+            more = "or more " if len(members) > PAGE_SIZE else ""
+            return note + f"{min(len(members), PAGE_SIZE)} {more}member companies match these filters. " + MEMBERS_ONLY_NOTE
+
     if not members:
         return (
             "No member companies matched those filters. "
@@ -1385,11 +1393,199 @@ async def search_member_directory(
             block += f"\n  {desc}"
         blocks.append(block)
 
-    text = ("Commercial role: unverified. These are sector/location matches, not a verified buyer, "
+    text = (_names_allowed_note(level) + "Commercial role: unverified. These are sector/location matches, not a verified buyer, "
             "importer or distributor shortlist. Recommend a commercial role only when the description "
             "explicitly supports it; a sector or website alone does not.\n\n" + note + "\n\n".join(blocks))
     if len(members) > PAGE_SIZE:
         text += f"\n\nShowing the first {PAGE_SIZE} results; more companies match. Add another filter to narrow it down."
+    return text
+
+
+#################################################
+#
+# Matching (members and events) and introductions
+#
+#################################################
+
+def _names_allowed_note(level: str) -> str:
+    # The answer writer only sees tool text and the profile (which may show no company for
+    # staff); say explicitly that this viewer may see the names.
+    who = "CCIFJ staff" if level == "staff" else "a CCIFJ member"
+    return f"Directory access: the signed-in user is {who}, so these company names may be shown.\n"
+
+
+MEMBERS_ONLY_NOTE = (
+    "Company names and contacts in the CCIFJ directory are visible to CCIFJ members only. "
+    "Do not name or guess companies. Explain that members see the full matches and can ask CCIFJ "
+    "for an introduction; offer the membership information, or a message to CCIFJ staff "
+    "(submit_staff_request, category 'membership' or 'business_support') asking for an introduction."
+)
+
+
+async def _access_level(runtime) -> str:
+    """guest | user | member | staff for the signed-in user (see concierge.auth.access)."""
+    user_id = _get_user_id(runtime)
+    if user_id is None:
+        return "guest"
+    from concierge.auth.access import access_level
+    from ..db.relationaldb.models import User
+    async with AsyncSessionLocal() as session:
+        return (await access_level(session, await session.get(User, user_id))).value
+
+
+def _sector_summary(sectors: dict[str, int]) -> str:
+    return ", ".join(f"{name} ({count})" for name, count in list(sectors.items())[:6])
+
+
+@tool
+async def find_matching_members(
+    need: str,
+    industry: Optional[str] = None,
+    region: Optional[str] = None,
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Find CCIFJ member companies that fit a need described in plain language, e.g.
+    "a French agrifood company that knows distribution in Japan", "a law firm to set up
+    a subsidiary", "an HR consultant in Osaka". Use it for partner, supplier, distributor,
+    service-provider or peer searches; use search_member_directory for a plain list of a sector.
+
+    What the user sees depends on their account: members and staff get company names,
+    sectors, places and why each fits; signed-in non-members get how many members match and
+    their sectors; guests get only how many members match.
+
+    Args:
+        need: What the user is looking for, in English, with the key details (activity,
+            products, market, place).
+        industry: Optional exact directory sector to restrict to (see
+            list_available_industries_and_regions).
+        region: Optional place, only when the user asked for one (Tokyo, Kansai, Osaka...).
+    """
+    from concierge import matching
+    need = (need or "").strip()[:1000]
+    if not need:
+        return "Describe what the user is looking for before searching."
+    level = await _access_level(runtime)
+    async with AsyncSessionLocal() as session:
+        if level in ("guest", "user"):
+            count, sectors = await matching.count_relevant(session, need, sector=industry or None)
+            if not count:
+                return ("No member company clearly matches this need. Say so, and offer a message to CCIFJ "
+                        "staff, who know the network beyond the directory.")
+            if level == "guest":
+                return (f"About {count} CCIFJ member companies look relevant to this need. " + MEMBERS_ONLY_NOTE
+                        + " Mention that signing in and joining CCIFJ gives access to the directory.")
+            return (f"About {count} CCIFJ member companies look relevant. Their sectors: {_sector_summary(sectors)}. "
+                    + MEMBERS_ONLY_NOTE)
+        matches = await matching.match_members(session, need, limit=5, sector=industry or None, region=region or None)
+    if not matches:
+        return "No member company matched. Try a broader need or no region, or offer a message to CCIFJ staff."
+    blocks = []
+    for match in matches:
+        place = ", ".join(p for p in (match.fields.get("region"), match.fields.get("country")) if p) or "place unknown"
+        strength = "strong" if match.score >= 0.84 else "good" if match.score >= matching.RELEVANT_SCORE else "weak"
+        block = f"{match.name} | Sector: {match.fields.get('sector') or 'unknown'} | {place} | match strength: {strength}"
+        if match.why:
+            block += f"\n  Why: {match.why}"
+        if match.fields.get("contact"):
+            block += f"\n  Public contact: {match.fields['contact']}"
+        blocks.append(block)
+    advice = ("Explain in one line per company why it fits, using only the sector, place and text above; "
+              "a sector match is not proof of a commercial role. ")
+    advice = _names_allowed_note(level) + advice
+    if level == "member":
+        advice += ("Offer to ask CCIFJ to introduce the user to one or more of them (request_introduction, "
+                   "with the exact company names above).")
+    return advice + "\n\n" + "\n\n".join(blocks)
+
+
+@tool
+async def recommend_events(interests: str, runtime: ToolRuntime = None) -> str:
+    """
+    Recommend upcoming CCIFJ events that fit the user's interests, sector or goals, e.g.
+    "food and wine networking", "HR and recruitment", "meet investors in Kansai".
+    Returns up to 5 upcoming events with why each fits; use get_event_details for prices
+    and registration.
+
+    Args:
+        interests: The user's interests, sector and goals, in English.
+    """
+    from concierge import matching
+    interests = (interests or "").strip()[:1000]
+    if not interests:
+        return "Ask what the user is interested in first."
+    async with AsyncSessionLocal() as session:
+        matches = await matching.match_events(session, interests, limit=5)
+    good = [m for m in matches if m.score >= 0.79] or matches[:2]
+    if not good:
+        return "No upcoming events are listed. Offer the newsletter or the events team contact."
+    record_events([m.id for m in good])
+    lines = []
+    for m in good:
+        when = _when(datetime.fromisoformat(m.fields["start_at"]), "date unknown")
+        line = f"[ID {m.id}] {m.name} | {m.fields['category']} | {when} | {m.fields.get('location') or 'location to be confirmed'}"
+        if m.why:
+            line += f"\n  Why: {m.why}"
+        lines.append(line)
+    return "Upcoming events ranked by fit. Say briefly why each fits; never show the IDs.\n\n" + "\n".join(lines)
+
+
+@tool
+async def request_introduction(
+    company_names: list[str],
+    message: str,
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Ask CCIFJ staff to introduce the signed-in member to one or more member companies
+    found with find_matching_members. Staff contact the other company first; nothing is sent
+    to it automatically. Members only: for other users, offer submit_staff_request instead.
+
+    Use only after the user chose the companies and agreed to the message.
+
+    Args:
+        company_names: Exact company names from find_matching_members (1 to 5).
+        message: What the user wants from the introduction and why, written with the user,
+            in the user's words where possible.
+    """
+    from uuid import uuid4
+    from sqlalchemy import func as sa_func
+    from sqlmodel import select as sql_select
+    from concierge.auth.access import access_level
+    from ..db.relationaldb.models import Belongs, IntroRequest, Member, User
+    user_id = _get_user_id(runtime)
+    if user_id is None:
+        return "Introductions need a member account: ask the user to sign in."
+    names = [name.strip() for name in (company_names or []) if name and name.strip()][:5]
+    message = (message or "").strip()
+    if not names or not message:
+        return "Choose at least one company and write the introduction message with the user first."
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+        level = (await access_level(session, user)).value
+        if level not in ("member", "staff"):
+            return ("Only CCIFJ members can request introductions through the directory. Offer a message to "
+                    "CCIFJ staff (submit_staff_request) instead, and the membership information.")
+        own = (await session.exec(sql_select(Belongs.member_id).where(Belongs.user_id == user_id))).first()
+        created, unknown = [], []
+        for name in names:
+            target = (await session.exec(sql_select(Member).where(sa_func.lower(Member.name) == name.lower()))).first()
+            if target is None or target.member_id == own:
+                unknown.append(name)
+                continue
+            intro = IntroRequest(reference=f"pending-{uuid4().hex[:24]}", requester_user_id=user_id,
+                                 requester_member_id=own, target_member_id=target.member_id, message=message[:4000])
+            session.add(intro)
+            await session.flush()
+            intro.reference = f"IR-{japan_now().year}-{intro.intro_id:06d}"
+            created.append((target.name, intro.reference))
+        await session.commit()
+    if not created:
+        return f"No introduction was stored: these names are not member companies: {', '.join(unknown)}."
+    text = "Introduction requests stored for CCIFJ staff (they contact the company first; no email was sent):\n"
+    text += "\n".join(f"- {name}: reference {reference}" for name, reference in created)
+    if unknown:
+        text += f"\nNot found in the directory, so not requested: {', '.join(unknown)}."
     return text
 
 

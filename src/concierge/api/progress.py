@@ -41,6 +41,9 @@ _TOOL_LABELS = {
     "get_official_form": {"en": "Finding the official CCIFJ form…", "fr": "Recherche du formulaire officiel de la CCIFJ…", "ja": "CCIFJの公式フォームを探しています…"},
     "book_event_ticket": {"en": "Preparing the event booking for your review…", "fr": "Préparation de la réservation pour votre validation…", "ja": "イベント予約の確認準備をしています…"},
     "book_space": {"en": "Preparing the space booking for your review…", "fr": "Préparation de la réservation d’espace pour votre validation…", "ja": "スペース予約の確認準備をしています…"},
+    "find_matching_members": {"en": "Looking for member companies that fit…", "fr": "Recherche des entreprises membres adaptées…", "ja": "条件に合う会員企業を探しています…"},
+    "recommend_events": {"en": "Finding events that fit your interests…", "fr": "Recherche d’événements adaptés à vos intérêts…", "ja": "関心に合うイベントを探しています…"},
+    "request_introduction": {"en": "Preparing your introduction request for review…", "fr": "Préparation de votre demande de mise en relation…", "ja": "紹介リクエストを準備しています…"},
     "subscribe_newsletter": {"en": "Preparing your newsletter subscription for review…", "fr": "Préparation de votre inscription à la newsletter pour validation…", "ja": "ニュースレター登録の確認準備をしています…"},
 }
 

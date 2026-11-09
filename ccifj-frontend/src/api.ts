@@ -383,6 +383,30 @@ export async function deleteKnowledgeDoc(docId: number): Promise<void> {
   await requestJson(`/api/v1/admin/knowledge/${docId}`, { method: 'DELETE' }, 60000);
 }
 
+export async function matchMembers(need: string, sector = '', region = ''): Promise<{items: import('./types').MemberMatch[]; relevant_score: number}> {
+  const params = new URLSearchParams({ need, limit: '10' });
+  if (sector) params.set('sector', sector);
+  if (region.trim()) params.set('region', region.trim());
+  // The first search after a change re-embeds the directory, which takes a few seconds.
+  return requestJson(`/api/v1/admin/matching/members?${params}`, { method: 'GET' }, 120000);
+}
+
+export async function matchMembersForEvent(eventId: number): Promise<{need: string; items: import('./types').MemberMatch[]; relevant_score: number}> {
+  return requestJson(`/api/v1/admin/matching/events/${eventId}/members?limit=10`, { method: 'GET' }, 120000);
+}
+
+export async function draftProposal(body: {need: string; requester: string; member_ids: number[]; language: string}): Promise<{draft: string; companies: string[]}> {
+  return requestJson('/api/v1/admin/matching/proposal', { method: 'POST', body: JSON.stringify(body) }, 120000);
+}
+
+export async function getIntroRequests(status = ''): Promise<{items: import('./types').IntroRequestItem[]; next_offset: number | null}> {
+  return requestJson(`/api/v1/admin/intro-requests${status ? `?status=${status}` : ''}`, { method: 'GET' }, 10000);
+}
+
+export async function updateIntroRequest(introId: number, body: {status?: import('./types').IntroStatus; staff_note?: string}): Promise<void> {
+  await requestJson(`/api/v1/admin/intro-requests/${introId}`, { method: 'PATCH', body: JSON.stringify(body) }, 10000);
+}
+
 export async function getSuggestedQuestions(locale: Locale = "en"): Promise<string[]> {
   try {
     const response = await requestJson<{ suggested_questions?: unknown }>(`${API_ENDPOINTS.suggestions}?locale=${encodeURIComponent(locale)}`);
