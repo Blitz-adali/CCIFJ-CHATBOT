@@ -458,6 +458,15 @@ export async function markNotificationRead(id: number): Promise<void> {
   await requestJson(`/api/v1/me/notifications/${id}/read`, { method: 'POST' }, 10000);
 }
 
+export async function getAnalytics(days: number): Promise<import('./types').AnalyticsSummary> {
+  return requestJson(`/api/v1/admin/analytics?days=${days}`, { method: 'GET' }, 60000);
+}
+
+export async function getLangsmithAnalytics(days: number): Promise<import('./types').LangsmithSummary> {
+  // The first call pages through LangSmith runs; later calls are cached for 5 minutes.
+  return requestJson(`/api/v1/admin/analytics/langsmith?days=${days}`, { method: 'GET' }, 180000);
+}
+
 export async function getSuggestedQuestions(locale: Locale = "en"): Promise<string[]> {
   try {
     const response = await requestJson<{ suggested_questions?: unknown }>(`${API_ENDPOINTS.suggestions}?locale=${encodeURIComponent(locale)}`);

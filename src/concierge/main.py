@@ -11,7 +11,7 @@ from datetime import timedelta
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from concierge.api import admin, admin_automation, admin_content, admin_matching, auth, me, chat, health, sessions, staff
+from concierge.api import admin, admin_analytics, admin_automation, admin_content, admin_matching, auth, me, chat, health, sessions, staff
 from concierge.api.agent_backend import warm_agent
 from concierge.config import get_settings
 from concierge.db.relationaldb import crud
@@ -109,9 +109,11 @@ app.include_router(admin.router)
 app.include_router(admin_content.router)
 app.include_router(admin_matching.router)
 app.include_router(admin_automation.router)
+app.include_router(admin_analytics.router)
 app.include_router(me.router)
 for router in (health.router, auth.router, sessions.router, chat.router, staff.router, admin.router,
-               admin_content.router, admin_matching.router, admin_automation.router, me.router):
+               admin_content.router, admin_matching.router, admin_automation.router, me.router,
+               admin_analytics.router):
     app.include_router(router, prefix="/api/v1")
 
 # Only explicit frontend origins are allowed; no permissive wildcard default.

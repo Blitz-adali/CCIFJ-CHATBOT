@@ -8,15 +8,14 @@ import type { StaffContactInput } from './api';
 import { EventsPanel, KnowledgePanel, MembersPanel } from './AdminContent';
 import { MatchingPanel } from './AdminMatching';
 import { AutomationPanel } from './AdminAutomation';
+import { AnalyticsPanel } from './AdminAnalytics';
 import { StaffInbox } from './StaffInbox';
 import type { AdminOverview, AdminUser, Locale, StaffContact, StaffTopic } from './types';
 
-type Section = 'overview' | 'requests' | 'matching' | 'automation' | 'events' | 'members' | 'knowledge' | 'accounts' | 'directory';
+type Section = 'overview' | 'analytics' | 'requests' | 'matching' | 'automation' | 'events' | 'members' | 'knowledge' | 'accounts' | 'directory';
 
-/** Pages planned for the next phases; shown so staff see where the dashboard is going. */
-const UPCOMING = [
-  { label: 'Agent analytics', icon: BarChart3 },
-];
+/** Pages planned for later phases, shown greyed out so staff see where the dashboard is going. */
+const UPCOMING: { label: string; icon: typeof Inbox }[] = [];
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : 'Something went wrong.';
@@ -26,6 +25,7 @@ export function AdminDashboard({ locale, currentUserId }: { locale: Locale; curr
   const [section, setSection] = useState<Section>('overview');
   const nav: { id: Section; label: string; icon: typeof Inbox }[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'analytics', label: 'Agent analytics', icon: BarChart3 },
     { id: 'requests', label: 'Requests', icon: Inbox },
     { id: 'matching', label: 'Matching & intros', icon: Network },
     { id: 'automation', label: 'Onboarding & automation', icon: Clock },
@@ -42,7 +42,7 @@ export function AdminDashboard({ locale, currentUserId }: { locale: Locale; curr
         className={section === item.id ? 'active' : ''} onClick={() => setSection(item.id)}>
         <item.icon size={16} aria-hidden="true" />{item.label}
       </button>)}
-      <p className="admin-nav-soon">Coming next</p>
+      {UPCOMING.length > 0 && <p className="admin-nav-soon">Coming next</p>}
       {UPCOMING.map(item => <button key={item.label} type="button" disabled title="Planned for a later phase">
         <item.icon size={16} aria-hidden="true" />{item.label}
       </button>)}
@@ -50,6 +50,7 @@ export function AdminDashboard({ locale, currentUserId }: { locale: Locale; curr
     <div className="admin-main">
       {section === 'overview' && <OverviewPanel onOpen={setSection} />}
       {section === 'requests' && <StaffInbox locale={locale} />}
+      {section === 'analytics' && <AnalyticsPanel />}
       {section === 'matching' && <MatchingPanel />}
       {section === 'automation' && <AutomationPanel />}
       {section === 'events' && <EventsPanel />}

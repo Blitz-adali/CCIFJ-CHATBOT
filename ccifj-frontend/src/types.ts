@@ -214,6 +214,36 @@ export interface MemberProfile {
 
 export interface MemberNotification { id: number; subject: string; body: string; sent_at: string; read: boolean; }
 
+export interface AnalyticsSummary {
+  days: number;
+  totals: { questions: number; conversations: number; replies: number };
+  daily: { day: string; questions: number }[];
+  audience: { guest: number; user: number; member: number; staff: number };
+  topics: { topic: string; count: number }[];
+  quality: { answers_with_sources: number | null; answers_with_fallback_warnings: number | null;
+    median_response_seconds: number | null; p90_response_seconds: number | null };
+  outcomes: { event_bookings: number; room_reservations: number; staff_requests: number; introduction_requests: number;
+    onboarding_messages_sent: number; actions_proposed: number };
+  recent_questions: { text: string; at: string; audience: string }[];
+}
+
+export interface LangsmithSummary {
+  tracing: boolean;
+  project: string;
+  status: 'connected' | 'off' | 'auth_error' | 'no_project' | 'error';
+  days: number;
+  message?: string;
+  chat_turns?: number;
+  runs?: number;
+  error_rate?: number | null;
+  total_tokens?: number;
+  total_cost?: number | null;
+  median_latency_seconds?: number | null;
+  p99_latency_seconds?: number | null;
+  tool_sample?: number;
+  top_tools?: { tool: string; calls: number }[];
+}
+
 export interface StaffTopic { key: string; label: string; description: string; }
 
 export interface StaffContact {
