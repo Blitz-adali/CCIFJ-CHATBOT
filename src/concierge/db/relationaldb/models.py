@@ -303,6 +303,23 @@ class StaffRequest(SQLModel, table=True):
     updated_at: NaiveDatetime = updated_at_field()
 
 
+class KnowledgeDocument(SQLModel, table=True):
+    """A file staff uploaded as an agent source. Its chunks live in the upload search
+    index (see concierge.knowledge), not in this table."""
+    __tablename__ = "knowledge_document"
+
+    doc_id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(max_length=255)
+    filename: str = Field(max_length=200)
+    mime_type: str = Field(max_length=100)
+    source_url: Optional[str] = Field(default=None, max_length=500)  # public page/Calameo link, if any
+    sha256: str = Field(max_length=64, unique=True)
+    char_count: int = 0
+    chunk_count: int = 0
+    uploaded_by: Optional[int] = Field(default=None, foreign_key="user.user_id")
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+
+
 class StaffRequestRecipient(SQLModel, table=True):
     __tablename__ = "staff_request_recipient"
 

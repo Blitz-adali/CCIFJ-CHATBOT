@@ -1,20 +1,19 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { BarChart3, BookOpen, CalendarDays, Clock, Inbox, LayoutDashboard, Network, Shield, Users } from 'lucide-react';
+import { BarChart3, BookOpen, Building2, CalendarDays, Clock, Inbox, LayoutDashboard, Network, Shield, Users } from 'lucide-react';
 import {
   getAdminOverview, getAdminUsers, getStaffContacts, getStaffTopics, saveStaffContact, setUserRole,
 } from './api';
 import type { StaffContactInput } from './api';
+import { EventsPanel, KnowledgePanel, MembersPanel } from './AdminContent';
 import { StaffInbox } from './StaffInbox';
 import type { AdminOverview, AdminUser, Locale, StaffContact, StaffTopic } from './types';
 
-type Section = 'overview' | 'requests' | 'accounts' | 'directory';
+type Section = 'overview' | 'requests' | 'events' | 'members' | 'knowledge' | 'accounts' | 'directory';
 
 /** Pages planned for the next phases; shown so staff see where the dashboard is going. */
 const UPCOMING = [
-  { label: 'Members & matching', icon: Network },
-  { label: 'Events', icon: CalendarDays },
-  { label: 'Knowledge files', icon: BookOpen },
+  { label: 'Matching', icon: Network },
   { label: 'Automation', icon: Clock },
   { label: 'Agent analytics', icon: BarChart3 },
 ];
@@ -28,6 +27,9 @@ export function AdminDashboard({ locale, currentUserId }: { locale: Locale; curr
   const nav: { id: Section; label: string; icon: typeof Inbox }[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'requests', label: 'Requests', icon: Inbox },
+    { id: 'events', label: 'Events', icon: CalendarDays },
+    { id: 'members', label: 'Member companies', icon: Building2 },
+    { id: 'knowledge', label: 'Knowledge files', icon: BookOpen },
     { id: 'accounts', label: 'Accounts & roles', icon: Users },
     { id: 'directory', label: 'Staff directory', icon: Shield },
   ];
@@ -46,6 +48,9 @@ export function AdminDashboard({ locale, currentUserId }: { locale: Locale; curr
     <div className="admin-main">
       {section === 'overview' && <OverviewPanel onOpen={setSection} />}
       {section === 'requests' && <StaffInbox locale={locale} />}
+      {section === 'events' && <EventsPanel />}
+      {section === 'members' && <MembersPanel />}
+      {section === 'knowledge' && <KnowledgePanel />}
       {section === 'accounts' && <AccountsPanel currentUserId={currentUserId} />}
       {section === 'directory' && <DirectoryPanel />}
     </div>
@@ -62,8 +67,8 @@ function OverviewPanel({ onOpen }: { onOpen: (section: Section) => void }) {
     { label: 'New requests', value: data.new_requests, hint: `${data.open_requests} open in total`, open: 'requests' },
     { label: 'Accounts', value: data.users, hint: `${data.members} linked to a member company`, open: 'accounts' },
     { label: 'Staff accounts', value: data.staff, open: 'accounts' },
-    { label: 'Member companies', value: data.member_companies },
-    { label: 'Upcoming events', value: data.upcoming_events },
+    { label: 'Member companies', value: data.member_companies, open: 'members' },
+    { label: 'Upcoming events', value: data.upcoming_events, open: 'events' },
     { label: 'Active staff contacts', value: data.active_contacts, open: 'directory' },
   ];
   return <section aria-labelledby="overview-title">

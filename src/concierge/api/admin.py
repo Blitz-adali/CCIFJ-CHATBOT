@@ -12,6 +12,7 @@ from concierge.auth.dependencies import DatabaseSession
 from concierge.db.relationaldb.models import (
     Belongs, ContactUs, Event, Member, StaffRequest, StaffRequestStatus, User, UserRole, utcnow,
 )
+from concierge.db.relationaldb.datetimes import japan_now
 from concierge.staff_directory import TOPICS, split_topics
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_staff)])
@@ -35,7 +36,8 @@ async def overview(session: DatabaseSession, response: Response):
                                      .where(col(StaffRequest.status).in_(open_statuses))),
         "new_requests": await count(select(func.count()).select_from(StaffRequest)
                                     .where(StaffRequest.status == StaffRequestStatus.new)),
-        "upcoming_events": await count(select(func.count()).select_from(Event).where(Event.start_at >= utcnow())),
+        # Event times are stored in Japan time.
+        "upcoming_events": await count(select(func.count()).select_from(Event).where(Event.start_at >= japan_now())),
         "active_contacts": len(contacts),
         "has_triage_contact": any(contact.is_triage for contact in contacts),
         "uncovered_topics": [key for key in TOPICS if key != "general_or_unsure" and key not in covered],

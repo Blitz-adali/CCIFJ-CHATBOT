@@ -27,6 +27,10 @@ class SearchCache:
             self._entries.move_to_end(key)
             return deepcopy(passages)
 
+    def clear(self):
+        with self._lock:
+            self._entries.clear()
+
     def put(self, key, passages):
         if not passages:
             return

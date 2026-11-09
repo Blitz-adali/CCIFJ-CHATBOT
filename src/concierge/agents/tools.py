@@ -57,7 +57,11 @@ def _get_retriever():
     if _retriever is None:
         with _retriever_lock:
             if _retriever is None:
-                _retriever = bm25s.BM25.load(str(INDEX_PATH), load_corpus=True)
+                # Staff uploads rebuild a combined index (website + uploads) under var/knowledge.
+                from concierge.knowledge import bm25_dir
+                combined = bm25_dir()
+                path = combined if (combined / "params.index.json").exists() else INDEX_PATH
+                _retriever = bm25s.BM25.load(str(path), load_corpus=True)
     return _retriever
 
 

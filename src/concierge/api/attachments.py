@@ -111,7 +111,9 @@ def _ocr(image) -> str:
         ) from exc
 
 
-def extract_attachment(item: dict) -> dict:
+def extract_attachment(item: dict, *, max_bytes: int = MAX_FILE_BYTES, max_pages: int = MAX_PDF_PAGES,
+                       max_chars: int = MAX_TEXT_CHARS_PER_FILE) -> dict:
+    """Chat attachments use the defaults; staff knowledge uploads pass larger limits."""
     name = str(item.get("name", "attachment"))[:200]
     # Browsers may add parameters, e.g. "text/plain;charset=utf-8".
     mime = str(item.get("mime_type", "")).split(";")[0].strip().lower()
@@ -121,14 +123,14 @@ def extract_attachment(item: dict) -> dict:
         raw = base64.b64decode(item.get("data_base64", ""), validate=True)
     except (binascii.Error, ValueError, TypeError):
         raise HTTPException(400, f"{name}: the uploaded file could not be decoded.") from None
-    if not raw or len(raw) > MAX_FILE_BYTES:
-        raise HTTPException(413, f"{name}: files must be between 1 byte and 5 MB.")
+    if not raw or len(raw) > max_bytes:
+        raise HTTPException(413, f"{name}: files must be between 1 byte and {max_bytes // (1024 * 1024)} MB.")
 
     if mime in TEXT_TYPES or mime == DOCX_TYPE:
         if mime == DOCX_TYPE and not raw.startswith(b"PK\x03\x04"):
             raise HTTPException(400, f"{name}: the file is not a valid DOCX document.")
         text = _docx_text(name, raw) if mime == DOCX_TYPE else _decode_text(name, raw, mime)
-        return _attachment(name, mime, raw, text)
+        return _attachment(name, mime, raw, text, max_chars)
 
     is_pdf = mime == "application/pdf"
     if is_pdf and not raw.startswith(b"%PDF-"):
@@ -147,8 +149,8 @@ def extract_attachment(item: dict) -> dict:
     try:
         if is_pdf:
             reader = PdfReader(io.BytesIO(raw), strict=False)
-            if len(reader.pages) > MAX_PDF_PAGES:
-                raise HTTPException(413, f"{name}: PDFs are limited to 20 pages.")
+            if len(reader.pages) > max_pages:
+                raise HTTPException(413, f"{name}: PDFs are limited to {max_pages} pages.")
             pdf = pdfium.PdfDocument(raw)
             for index, page in enumerate(reader.pages):
                 text = (page.extract_text() or "").strip()
@@ -176,11 +178,11 @@ def extract_attachment(item: dict) -> dict:
             raise HTTPException(503, "OCR is unavailable: install Tesseract and its English, French, and Japanese language data.") from exc
         raise HTTPException(400, f"{name}: could not read this file.") from exc
 
-    return _attachment(name, mime, raw, "\n\n".join(pages))
+    return _attachment(name, mime, raw, "\n\n".join(pages), max_chars)
 
 
-def _attachment(name: str, mime: str, raw: bytes, text: str) -> dict:
-    text = text[:MAX_TEXT_CHARS_PER_FILE]
+def _attachment(name: str, mime: str, raw: bytes, text: str, max_chars: int = MAX_TEXT_CHARS_PER_FILE) -> dict:
+    text = text[:max_chars]
     if not text.strip():
         raise HTTPException(400, f"{name}: no readable text was found.")
     return {

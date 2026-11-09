@@ -341,6 +341,48 @@ export async function saveStaffContact(contactId: number | null, body: StaffCont
     : requestJson(`/api/v1/admin/staff-contacts/${contactId}`, { method: 'PATCH', body: JSON.stringify(body) }, 10000);
 }
 
+export type EventInput = Partial<Omit<import('./types').AdminEvent, 'event_id'>>;
+
+export async function getAdminEvents(q = '', scope: 'upcoming' | 'past' | 'all' = 'upcoming', offset = 0): Promise<{items: import('./types').AdminEvent[]; next_offset: number | null; categories: string[]}> {
+  const params = new URLSearchParams({ scope, offset: String(offset) });
+  if (q.trim()) params.set('q', q.trim());
+  return requestJson(`/api/v1/admin/events?${params}`, { method: 'GET' }, 10000);
+}
+
+export async function saveAdminEvent(eventId: number | null, body: EventInput): Promise<import('./types').AdminEvent> {
+  return eventId === null
+    ? requestJson('/api/v1/admin/events', { method: 'POST', body: JSON.stringify(body) }, 10000)
+    : requestJson(`/api/v1/admin/events/${eventId}`, { method: 'PUT', body: JSON.stringify(body) }, 10000);
+}
+
+export async function getAdminMembers(q = '', sector = '', offset = 0): Promise<{items: import('./types').AdminMember[]; next_offset: number | null; sectors: string[]}> {
+  const params = new URLSearchParams({ offset: String(offset) });
+  if (q.trim()) params.set('q', q.trim());
+  if (sector) params.set('sector', sector);
+  return requestJson(`/api/v1/admin/members?${params}`, { method: 'GET' }, 10000);
+}
+
+export async function getImportTemplate(kind: 'events' | 'members'): Promise<string> {
+  return requestJson(`/api/v1/admin/import/${kind}/template`, { method: 'GET' }, 10000);
+}
+
+export async function importFile(kind: 'events' | 'members', file: import('./types').AttachmentUpload, commit: boolean): Promise<import('./types').ImportResult> {
+  return requestJson(`/api/v1/admin/import/${kind}?commit=${commit}`, { method: 'POST', body: JSON.stringify(file) }, 120000);
+}
+
+export async function getKnowledgeDocs(): Promise<import('./types').KnowledgeDoc[]> {
+  return requestJson('/api/v1/admin/knowledge', { method: 'GET' }, 10000);
+}
+
+export async function uploadKnowledgeDoc(file: import('./types').AttachmentUpload, title: string, sourceUrl: string): Promise<import('./types').KnowledgeDoc> {
+  // Reading, OCR and embedding a long brochure can take a few minutes on CPU.
+  return requestJson('/api/v1/admin/knowledge', { method: 'POST', body: JSON.stringify({ ...file, title, source_url: sourceUrl || null }) }, 600000);
+}
+
+export async function deleteKnowledgeDoc(docId: number): Promise<void> {
+  await requestJson(`/api/v1/admin/knowledge/${docId}`, { method: 'DELETE' }, 60000);
+}
+
 export async function getSuggestedQuestions(locale: Locale = "en"): Promise<string[]> {
   try {
     const response = await requestJson<{ suggested_questions?: unknown }>(`${API_ENDPOINTS.suggestions}?locale=${encodeURIComponent(locale)}`);

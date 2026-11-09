@@ -73,6 +73,54 @@ export interface AdminUser {
   created_at: string;
 }
 
+export interface AdminEvent {
+  event_id: number;
+  title: string;
+  description: string;
+  category: string;
+  location: string | null;
+  contact: string | null;
+  start_at: string | null;
+  end_at: string | null;
+  reg_deadline: string | null;
+  member_price: number | null;
+  non_member_price: number | null;
+  price: number | null;
+  currency: string | null;
+  languages: string[];
+}
+
+export interface AdminMember {
+  member_id: number;
+  name: string;
+  sector: string | null;
+  category: string | null;
+  country: string | null;
+  region: string | null;
+  manpower: number | null;
+  description: string | null;
+  contact: string | null;
+  accounts: number;
+}
+
+export interface ImportResult {
+  kind: 'events' | 'members';
+  committed: boolean;
+  counts: { create: number; update: number; error: number };
+  rows: { row: number; label: string; action: 'create' | 'update' | 'error'; errors: string[] }[];
+}
+
+export interface KnowledgeDoc {
+  doc_id: number;
+  title: string;
+  filename: string;
+  mime_type: string;
+  source_url: string | null;
+  char_count: number;
+  chunk_count: number;
+  created_at: string;
+}
+
 export interface StaffTopic { key: string; label: string; description: string; }
 
 export interface StaffContact {

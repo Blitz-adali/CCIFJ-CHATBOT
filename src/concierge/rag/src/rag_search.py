@@ -77,6 +77,15 @@ def search_passages(retriever, model, query: str, original_n=20, hybrid_n=10, re
         collection = get_collection()
         count = collection.count()
         results1 = semantic_search(query, collection, model, min(original_n, count)) if count else []
+        try:
+            # Files staff uploaded live in their own collection; merge by distance.
+            from concierge.knowledge import semantic_upload_results
+            vector = model.encode(f"query: {query}", normalize_embeddings=True).tolist()
+            uploads = semantic_upload_results(vector, original_n)
+            if uploads:
+                results1 = sorted([*results1, *uploads], key=lambda r: r.get("distance", 1.0))[:original_n]
+        except Exception:
+            logger.exception('Uploaded knowledge search unavailable; keeping website results')
         diagnose('semantic')
     except Exception as exc:
         diagnose('semantic', exc)
@@ -98,7 +107,9 @@ def search_passages(retriever, model, query: str, original_n=20, hybrid_n=10, re
     results2 = valid_records(results2, 'text')
     # The persisted vector index and BM25 corpus can use independent chunk
     # layouts. Equal numeric IDs do not prove equal text or source URLs.
-    results1 = [{**r, 'id': f"vector:{r['id']}"} for r in results1]
+    # Uploaded documents share chunk IDs across both indexes, so they keep their ID and fuse.
+    from concierge.knowledge import UPLOAD_ID_BASE
+    results1 = [r if int(r['id']) >= UPLOAD_ID_BASE else {**r, 'id': f"vector:{r['id']}"} for r in results1]
     if not results1 and not results2 and (failed or had_records):
         raise RetrievalUnavailable('No retrieval backend could provide evidence')
     fused = rrf(results1, results2, hybrid_n)
@@ -110,7 +121,8 @@ def search_passages(retriever, model, query: str, original_n=20, hybrid_n=10, re
         url = record.get("url") or next((line[5:].strip() for line in text.splitlines() if line.startswith("url: ")), "")
         try:
             parsed = urlsplit(url)
-            if parsed.scheme != "https" or not parsed.hostname:
+            # ccifj-doc://<id> cites an uploaded CCIFJ document that has no public link.
+            if parsed.scheme not in ("https", "ccifj-doc") or not parsed.hostname:
                 continue
         except ValueError:
             continue
