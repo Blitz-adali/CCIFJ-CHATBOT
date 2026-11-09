@@ -5,7 +5,7 @@ snapshot. These paths need no model initialization and perform no writes.
 """
 from concierge.db.relationaldb import crud
 from concierge.resources import MEMBERSHIP_FEE_SOURCE, membership_form
-from .catalog import canonical_question
+from .catalog import canonical_question, localized_question
 
 
 async def common_answer(message, locale, session, user=None, conversation_brief=None):
@@ -58,6 +58,10 @@ async def common_answer(message, locale, session, user=None, conversation_brief=
             url=membership_form(locale)
             result['reply'] = f"{copy['join']}\n\n**{copy['categories']}:** {', '.join(c.category_name for c in categories)}.\n\n[{copy['form']}]({url})"
             result['actions'] = [{'type':'external_link','label':copy['form'],'url':url}]
+        result['suggested_questions'] = [localized_question(q, locale) for q in (
+            'What are the benefits of CCIFJ membership?',
+            'How do I become a CCIFJ member?' if question == 'What are the CCIFJ membership fees?' else 'What are the CCIFJ membership fees?',
+        )]
         result['intent']={'code':'membership'}
         return result
     if question == 'How can I book a ticket for a CCIFJ event?':

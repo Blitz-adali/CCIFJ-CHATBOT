@@ -1,4 +1,7 @@
 """Database-backed event cards shared by guided paths and agent responses."""
+import re
+import unicodedata
+
 from concierge.db.relationaldb import crud
 from concierge.db.relationaldb.datetimes import japan_now
 
@@ -28,10 +31,42 @@ def event_card(event) -> dict:
     }
 
 
-async def cards_for_ids(session, ids) -> list[dict]:
+def _title_key(text):
+    return re.sub(r'[^\w]+', ' ', unicodedata.normalize('NFKC', text).casefold()).strip()
+
+
+def registration_preferences(request, *, browsing=False):
+    """Presentation can narrow, never broaden an explicit open-only request."""
+    strict_open = bool(re.search(
+        r'(?:only|just|uniquement|seulement).{0,50}(?:open|confirmed|ouvert)|'
+        r'(?:open|confirmed|ouvert).{0,50}(?:only|uniquement|seulement)|受付中のみ', request, re.I))
+    excludes_closed = bool(re.search(
+        r'(?:no|exclude|without|hide|do not show|don.t show|sans|exclure).{0,25}(?:closed|expired|clos)|終了.*(?:除く|表示しない)', request, re.I))
+    history = bool(re.search(
+        r'past events?|my bookings?|mes r[ée]servations|[ée]v[ée]nements? pass[ée]s|過去|キャンセル|'
+        r'(?:show|list|why|which|voir|pourquoi).{0,50}(?:closed|expired|clos)', request, re.I))
+    return history and not (strict_open or excludes_closed), browsing and not strict_open
+
+
+async def cards_for_ids(session, ids, *, answer=None, include_closed=False, include_unconfirmed=False) -> list[dict]:
+    """Only decorate events actually discussed, never every research candidate.
+
+    Explicit detail/history requests may show closed events. Browsing may show
+    unknown status explicitly, but ordinary advice recommends confirmed-open only.
+    """
     cards = []
     for event_id in list(dict.fromkeys(ids))[:10]:
         event = await crud.get_event(session, int(event_id))
         if event is not None:
-            cards.append(event_card(event))
+            title = _title_key(event.title)
+            if answer is not None and (not title or title not in _title_key(answer)):
+                continue
+            card = event_card(event)
+            if card['registration_open'] is False and not include_closed:
+                continue
+            if card['registration_open'] is None and not include_unconfirmed:
+                continue
+            cards.append(card)
+            if len(cards) == 3:
+                break
     return cards

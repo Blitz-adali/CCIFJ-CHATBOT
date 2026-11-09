@@ -16,8 +16,8 @@ describe('database event cards',()=>{
   });
   it('disables booking for closed registration and never treats missing prices as free',()=>{
     const html=renderToStaticMarkup(<EventCards events={[{...event,registration_open:false,price:null,member_price:null}]} locale="fr" disabled={false} onDetails={noop} onBook={noop}/>);
-    expect(html).toContain('Inscriptions closes');expect(html).toContain('Non précisé');
-    expect(html).toMatch(/disabled=""[^>]*>Préparer la réservation/);
+    expect(html).toContain('Inscriptions closes');expect(html).not.toContain('Non précisé');
+    expect(html).not.toContain('Préparer la réservation');
     expect(html).not.toContain('gratuit');
   });
   it('does not label a missing deadline as open or closed',()=>{
@@ -25,7 +25,15 @@ describe('database event cards',()=>{
     expect(html).toContain('Registration unconfirmed');
     expect(html).not.toContain('Registration open');
     expect(html).not.toContain('Registration closed');
-    expect(html).toMatch(/disabled=""[^>]*>Prepare booking/);
+    expect(html).not.toContain('Prepare booking');
+  });
+  it('keeps missing fields quiet without implying a free event or a booking option',()=>{
+    const html=renderToStaticMarkup(<EventCards events={[{...event,location:null,price:null,member_price:null,registration_open:null}]} locale="en" disabled={false} onDetails={noop} onBook={noop}/>);
+    expect(html).not.toContain('Not specified');
+    expect(html).not.toContain('Prepare booking');
+    expect(html).not.toContain('No payment is taken');
+    expect(html).toContain('Details');
+    expect(html).toContain('Registration unconfirmed');
   });
   it('only labels retrieved, safe URLs as sources',()=>{
     const html=renderToStaticMarkup(<SourceList locale="en" sources={[

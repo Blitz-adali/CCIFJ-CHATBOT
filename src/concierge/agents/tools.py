@@ -1377,11 +1377,13 @@ async def search_member_directory(
         place = ", ".join(p for p in (m.region, m.country) if p) or "region unknown"
         block = f"{m.name} | Industry: {m.sector or 'unknown'} | {place}"
         if m.description:
-            desc = m.description if len(m.description) <= 200 else m.description[:200] + "..."
+            desc = m.description[:2000]
             block += f"\n  {desc}"
         blocks.append(block)
 
-    text = note + "\n\n".join(blocks)
+    text = ("Commercial role: unverified. These are sector/location matches, not a verified buyer, "
+            "importer or distributor shortlist. Recommend a commercial role only when the description "
+            "explicitly supports it; a sector or website alone does not.\n\n" + note + "\n\n".join(blocks))
     if len(members) > PAGE_SIZE:
         text += f"\n\nShowing the first {PAGE_SIZE} results; more companies match. Add another filter to narrow it down."
     return text
@@ -1814,7 +1816,21 @@ def search_vectordb(query: str) -> str:
     except Exception:
         logger.exception('Keyword index unavailable for search')
         record_warning('retrieval_lexical_unavailable')
-    passages = search_passages(retriever, model, query, 20, 10, 5)
+    if not query.strip() or len(query)>4000:
+        raise ValueError('Search query must be nonempty and at most 4000 characters')
+    from concierge.rag.src.search_cache import public_search_cache, cache_key
+    from concierge.evidence import turn_evidence
+    key = cache_key(query,retriever,model) if retriever is not None and model is not None else None
+    passages = public_search_cache.get(key) if key is not None else None
+    if passages is None:
+        passages = search_passages(retriever, model, query, 20, 10, 5)
+        evidence = turn_evidence.get()
+        # Never retain partial/fallback/error answers or cache when diagnostics
+        # are unavailable. SQL availability, user data and writes never use this cache.
+        if key is not None and evidence is not None and not any(w.startswith('retrieval_') for w in evidence.warnings):
+            public_search_cache.put(key,passages)
+    else:
+        logger.info('retrieval_cache hit=true')
     record_passages(passages)
     if not passages:
         return "No relevant source passages found. Say that the knowledge base does not contain enough evidence; offer CCIFJ staff help."

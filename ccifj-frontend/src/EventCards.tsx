@@ -32,14 +32,13 @@ export function EventCards({events = [], locale, disabled, onDetails, onBook}: {
       <div className="event-card-top"><span className="event-category">{event.category}</span><span className={`registration-status ${event.registration_open===null?'unknown':event.registration_open?'open':'closed'}`}>{event.registration_open===null?t.unconfirmed:event.registration_open?t.open:t.closed}</span></div>
       <h3>{event.title}</h3>
       <p className="event-meta"><CalendarDays size={15} aria-hidden="true"/><span>{formatJapanDate(event.start_at,locale)}<small>{t.time}</small></span></p>
-      <p className="event-meta"><MapPin size={15} aria-hidden="true"/>{event.location||t.unknown}</p>
+      {event.location&&<p className="event-meta"><MapPin size={15} aria-hidden="true"/>{event.location}</p>}
       <dl className="event-prices">{([
         [t.price,price(event.price,event.currency)], [t.member,price(event.member_price,event.currency)], [t.nonMember,price(event.non_member_price,event.currency)],
       ] as const).filter(([,value])=>value!==null).map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
-      {event.price===null&&event.member_price===null&&event.non_member_price===null&&<p className="event-deadline">{t.price}: {t.unknown}</p>}
       {event.reg_deadline&&<p className="event-deadline">{t.deadline}: {formatJapanDate(event.reg_deadline,locale)}</p>}
-      <div className="event-card-actions"><button type="button" disabled={disabled} onClick={()=>onDetails(event)}>{t.details}<ArrowUpRight size={14} aria-hidden="true"/></button><button type="button" disabled={disabled||!event.registration_open} onClick={()=>onBook(event)}>{t.book}</button></div>
+      <div className="event-card-actions"><button type="button" disabled={disabled} onClick={()=>onDetails(event)}>{t.details}<ArrowUpRight size={14} aria-hidden="true"/></button>{event.registration_open===true&&<button type="button" disabled={disabled} onClick={()=>onBook(event)}>{t.book}</button>}</div>
     </article>)}
-    <p className="event-disclaimer">{t.noPayment}</p>
+    {events.some(event=>event.registration_open===true)&&<p className="event-disclaimer">{t.noPayment}</p>}
   </section>;
 }

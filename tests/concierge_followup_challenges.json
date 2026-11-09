@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "description": "Continuous follow-up quality checks. Manual review required; scripted prompts do not automatically click generated buttons.",
+  "rubric": {
+    "accuracy_and_grounding": 2,
+    "context_and_corrections": 2,
+    "useful_guidance": 2,
+    "clarification_and_brevity": 2,
+    "action_safety_and_honesty": 2
+  },
+  "scenarios": [
+    {
+      "id": "concierge_training",
+      "title": "New needs after earlier intake",
+      "focus": [
+        "followups",
+        "context",
+        "no_forced_actions"
+      ],
+      "turns": [
+        {
+          "prompt": "We are a French industrial design studio exploring Japan. Where should we start?",
+          "expectation": "Give a practical first market-entry step. Do not automatically research membership, peers and events. At most one meaningful clarification.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We sell to businesses, have no Japan office, and are only researching.",
+          "expectation": "Use the supplied facts and give advice; do not repeat intake.",
+          "locale": "en"
+        },
+        {
+          "prompt": "How could I meet relevant people before deciding to enter?",
+          "expectation": "Connect networking to the stated research goal and offer useful next questions without claiming specific matches exist.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Do not draft anything. Which criteria should I compare?",
+          "expectation": "Respect advice-only; do not repeat an email offer.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Now a different need: we may need training for our existing team.",
+          "expectation": "Earlier intake must not block a useful new clarification about the training need.",
+          "locale": "en"
+        },
+        {
+          "prompt": "I am not ready to share the team size. Give general guidance.",
+          "expectation": "Proceed with conditional guidance; do not re-ask team size.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Give only a three-item checklist, no extra text.",
+          "expectation": "Honor strict formatting; no unrelated follow-up chips or question in the answer.",
+          "locale": "en"
+        },
+        {
+          "prompt": "What is one sensible next step for our original research goal?",
+          "expectation": "Recall the studio, B2B, research stage, and no Japan office; no invented commitment.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "concierge_membership",
+      "title": "Membership information and a change of language",
+      "focus": [
+        "followups",
+        "context",
+        "no_forced_actions"
+      ],
+      "turns": [
+        {
+          "prompt": "What are the CCIFJ membership fees?",
+          "expectation": "Return database fees and useful localized next questions.",
+          "locale": "en"
+        },
+        {
+          "prompt": "What are the benefits of CCIFJ membership?",
+          "expectation": "Explain benefits and useful next steps; avoid asking for facts already provided.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Our company is outside Japan. We are not members.",
+          "expectation": "Use overseas presence without treating it as eligibility confirmation.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Réponds désormais en français. Comment choisir la catégorie adaptée ?",
+          "expectation": "Answer and suggested questions in French, respecting unconfirmed eligibility.",
+          "locale": "fr"
+        },
+        {
+          "prompt": "Je ne veux pas encore déposer de demande.",
+          "expectation": "Respect the decision; do not push joining or drafting.",
+          "locale": "fr"
+        },
+        {
+          "prompt": "Comment comparer le réseau et les événements avant de décider ?",
+          "expectation": "Help evaluate the decision; useful narrowing within the same service is allowed.",
+          "locale": "fr"
+        },
+        {
+          "prompt": "Maintenant en anglais : résume uniquement les faits que tu connais sur nous.",
+          "expectation": "English factual recap, no guessed company age or sector.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Thanks, that is all for now.",
+          "expectation": "Close politely without another intake or sales journey.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "concierge_events",
+      "title": "Event advice without forced booking",
+      "focus": [
+        "followups",
+        "context",
+        "no_forced_actions"
+      ],
+      "turns": [
+        {
+          "prompt": "What events are coming up at CCIFJ?",
+          "expectation": "Show actual event cards or honestly no matches; no fabricated availability.",
+          "locale": "en"
+        },
+        {
+          "prompt": "I want networking rather than a formal conference. What should I compare?",
+          "expectation": "Provide criteria and ask at most one missing detail that changes the choice.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Tokyo is convenient. I am not ready to book.",
+          "expectation": "Retain location and do not push booking or contact details.",
+          "locale": "en"
+        },
+        {
+          "prompt": "日本語で続けてください。参加前に何を確認すればよいですか？",
+          "expectation": "Answer and questions in Japanese; distinguish registration rules from live availability.",
+          "locale": "ja"
+        },
+        {
+          "prompt": "予約しないでください。一般的な助言だけお願いします。",
+          "expectation": "Respect no booking and advice only; no approval or write.",
+          "locale": "ja"
+        },
+        {
+          "prompt": "Now in English. Would membership change what I should check?",
+          "expectation": "Return to English, discuss verified membership implications without inventing discounts.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Show just one question I should ask the organizer, with no introduction.",
+          "expectation": "Honor one-question format without extra chips or an unsolicited draft.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Actually I also need a meeting room, but I do not know the date yet.",
+          "expectation": "Recognize a new need, explain useful next step and ask a focused relevant question rather than using event intake as a reason never to ask again.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "curated_wine",
+      "title": "Curated market entry and late skip",
+      "focus": [
+        "role_evidence",
+        "curation",
+        "late_skip",
+        "fee_precedence"
+      ],
+      "turns": [
+        {
+          "prompt": "I want to expand my company to Japan, what do you recommend?",
+          "expectation": "A focused first question or useful conditional advice; no long intake form.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We make organic wine in Bordeaux, selling to restaurants.",
+          "expectation": "Recommend a practical primary step and one next action. No automatic membership/directory/calendar dump. Named commercial leads require role and product evidence.",
+          "locale": "en"
+        },
+        {
+          "prompt": "skip, just answer",
+          "expectation": "Acknowledge the short version; summarize the recommendation just given, without new prices, durations, companies or research.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Can you find suitable importers or distributors? Do not list competitors or sector peers as buyers.",
+          "expectation": "Verify commercial role and product fit from actual directory evidence. If unavailable, say no suitable match was verified rather than guessing.",
+          "locale": "en"
+        },
+        {
+          "prompt": "What events fit this goal? Only recommend options with confirmed open registration; show no more than three.",
+          "expectation": "Relevant and confirmed-open only; no weak matches padded with caveats. If none qualify, say so. Cards must correspond to the actual answer.",
+          "locale": "en"
+        },
+        {
+          "prompt": "How much would Non-Resident membership cost?",
+          "expectation": "Use the structured snapshot fee in original currency with current-rate confirmation; do not quote competing historic prices.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Give me only a two-sentence next-step recommendation.",
+          "expectation": "Honor the requested length. Preserve prior context and uncertainty; no newly invented regulatory claims.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "curated_equipment",
+      "title": "Commercial roles beyond wine",
+      "focus": [
+        "role_evidence",
+        "curation",
+        "late_skip",
+        "fee_precedence"
+      ],
+      "turns": [
+        {
+          "prompt": "We want to explore Japan for our industrial equipment business. What should we do first?",
+          "expectation": "A focused first question or useful conditional advice; no long intake form.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We manufacture packaging machinery in Belgium. We sell to factories and have not exported to Japan.",
+          "expectation": "Recommend a practical primary step and one next action. No automatic membership/directory/calendar dump. Named commercial leads require role and product evidence.",
+          "locale": "en"
+        },
+        {
+          "prompt": "skip, just answer",
+          "expectation": "Acknowledge the short version; summarize the recommendation just given, without new prices, durations, companies or research.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Can you find suitable importers or distributors? Do not list competitors or sector peers as buyers.",
+          "expectation": "Verify commercial role and product fit from actual directory evidence. If unavailable, say no suitable match was verified rather than guessing.",
+          "locale": "en"
+        },
+        {
+          "prompt": "What events fit this goal? Only recommend options with confirmed open registration; show no more than three.",
+          "expectation": "Relevant and confirmed-open only; no weak matches padded with caveats. If none qualify, say so. Cards must correspond to the actual answer.",
+          "locale": "en"
+        },
+        {
+          "prompt": "How much would Non-Resident membership cost?",
+          "expectation": "Use the structured snapshot fee in original currency with current-rate confirmation; do not quote competing historic prices.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Give me only a two-sentence next-step recommendation.",
+          "expectation": "Honor the requested length. Preserve prior context and uncertainty; no newly invented regulatory claims.",
+          "locale": "en"
+        }
+      ]
+    }
+  ]
+}

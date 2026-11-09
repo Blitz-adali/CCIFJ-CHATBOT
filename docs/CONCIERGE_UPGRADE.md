@@ -1,5 +1,7 @@
 # Concierge behavior upgrade
 
+> Historical milestone report. Counts and limitations below describe that stage; see [Changes README](../CHANGES_README.md) for the latest consolidated status.
+
 This change addresses the observed ten-turn baseline: incomplete membership
 fees, inconsistent currencies, long generic answers, unnecessary rewriting,
 short worker context and awkward login handoffs.

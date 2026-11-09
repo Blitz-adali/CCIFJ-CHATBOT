@@ -1,5 +1,7 @@
 # CCIFJ Concierge
 
+For a complete account of the changes, benefits, tradeoffs and validation limits, see [Changes README](CHANGES_README.md).
+
 An AI concierge for the **Chambre de Commerce et d'Industrie France Japon (CCIFJ)**.
 It answers questions about CCIFJ events, membership, business support, and
 recruitment and training (for employers and job seekers) in
@@ -663,7 +665,7 @@ On `feature/concierge-tweaks` and `feature/concierge-answer-quality`:
 |---|---|
 | Asks for the user's details before advisory answers, once | orchestrator prompt and plan fields |
 | Knows the 8 CCIFJ website sections and suggests related services | `CCIFJ_SERVICES_MAP` |
-| Suggested questions written by the model (the 15 pre-written Q&A answers were removed) | orchestrator and collector |
+| Model-written follow-up suggestions, alongside limited common-question handlers and legacy first-turn FAQ support | orchestrator, collector and API |
 | Link chips: deduplicated, readable labels, shown only for 2+ links, 3 at a time | `presentation.py`, `NextActions.tsx` |
 | No internals in answers or loading messages | `USER_FACING_RULES`, `progress.py` |
 | Guests sign in and continue the same conversation | `body.py`, `agent_backend.py`, `WidgetChat.tsx` |

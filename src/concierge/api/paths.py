@@ -68,11 +68,13 @@ async def run_path_step(body, user, session) -> dict | None:
     actions: list[dict] = []
 
     if definition["tool"] == "list_available_events":
-        events = list(await crud.search_events(session, date_from=japan_now(), limit=10))
+        events = list(await crud.search_events(session, date_from=japan_now(), limit=30))
         heading = {"en": "Upcoming CCIFJ events", "fr": "Événements CCIFJ à venir", "ja": "今後のCCIFJイベント"}[locale]
         note = {"en": "Choose an event to see its details. Times are shown in Japan time (JST).", "fr": "Choisissez un événement pour en savoir plus. Les horaires sont indiqués à l’heure du Japon (JST).", "ja": "イベントを選択して詳細をご確認ください。日時は日本時間（JST）です。"}[locale]
         empty = {"en": "No upcoming events are listed. Ask me to help you contact the events team.", "fr": "Aucun événement à venir n’est répertorié. Je peux vous aider à contacter l’équipe événements.", "ja": "現在、今後のイベントは登録されていません。イベント担当者へのお問い合わせをお手伝いできます。"}[locale]
-        return _guided(f"## {heading}\n\n{note if events else empty}", "events", events=[event_card(event) for event in events])
+        cards = [event_card(event) for event in events]
+        cards = [card for card in cards if card['registration_open'] is not False][:3]
+        return _guided(f"## {heading}\n\n{note if cards else empty}", "events", events=cards)
     elif definition["tool"] == "get_event_details" and body.path_event_id:
         try:
             event_id = int(body.path_event_id)
@@ -88,7 +90,9 @@ async def run_path_step(body, user, session) -> dict | None:
             reply += "\n\n" + {"en": "Languages", "fr": "Langues", "ja": "言語"}[locale] + ": " + ", ".join(languages)
         if speakers:
             reply += "\n\n" + {"en": "Speakers", "fr": "Intervenants", "ja": "登壇者"}[locale] + ": " + ", ".join(speaker.name for speaker in speakers)
-        return _guided(reply, "events", events=[event_card(event)])
+        return _guided(reply, "events", events=[event_card(event)], path_actions=[
+            {"id": "events.booking_info", "label": labels["events.booking_info"], "event_id": str(event_id)}
+        ])
     elif step == "events.booking_info":
         reply = {
             "en": "## Booking this event\n\n1. Sign in to your CCIFJ account.\n2. Ask to book this event and tell me how many people will attend.\n3. Provide each attendee’s name and email address.\n4. Review the booking card and approve it to save the reservation.\n\nNo payment is taken through this reservation step.",

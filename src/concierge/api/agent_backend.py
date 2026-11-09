@@ -409,6 +409,7 @@ class AgentBackend:
 
         locale = response_locale.get()
         approvals = self.pending(result)
+        had_approval = bool(approvals)
         # A pending approval (even a guest's dropped one) must be answered first.
         actions_for_turn = [] if approvals else next_actions(result)
         messages = result.get("messages", [])
@@ -438,7 +439,17 @@ class AgentBackend:
         if not reply:
             raise RuntimeError("Agent returned no reply.")
         # Written by the model for this user, already in the user's language.
-        suggested = [q.strip() for q in (result.get("suggested_questions") or []) if isinstance(q, str) and q.strip()]
+        from .catalog import normalize_question
+        seen = {normalize_question(_text(message.content)) for message in messages if isinstance(message, HumanMessage)}
+        suggested = []
+        if not had_approval:
+            for question in result.get('suggested_questions') or []:
+                if not isinstance(question, str):
+                    continue
+                key = normalize_question(question)
+                if key and key not in seen:
+                    suggested.append(question.strip())
+                    seen.add(key)
         # Actions first, then questions: three buttons in all, but always room for two questions.
         suggested = suggested[:max(2, 3 - len(actions_for_turn))]
         plan = result.get("plan") or {}
@@ -458,10 +469,16 @@ class AgentBackend:
         events = []
         if evidence.get("event_ids"):
             from concierge.db.relationaldb.session import AsyncSessionLocal
-            from .events import cards_for_ids
+            from .events import cards_for_ids, registration_preferences
             try:
                 async with AsyncSessionLocal() as db:
-                    events = await cards_for_ids(db, evidence["event_ids"])
+                    # Closed events remain available for explicit history/detail questions,
+                    # but never appear as ordinary recommendations.
+                    request_text = _text(messages[latest_human].content) if latest_human >= 0 else ''
+                    browsing = intent == 'events' or bool(re.search(r'events?|[ée]v[ée]nements?|イベント', request_text, re.I))
+                    include_closed, include_unconfirmed = registration_preferences(request_text, browsing=browsing)
+                    events = await cards_for_ids(db, evidence["event_ids"], answer=reply,
+                                                 include_closed=include_closed, include_unconfirmed=include_unconfirmed)
             except Exception:
                 # Optional presentation must not hide a successful action.
                 logger.exception("Could not load event cards for this answer")
