@@ -1,26 +1,33 @@
-"""Read-only staff inbox; explicit server-configured account IDs grant access.
-
-Email ownership is not verified by this demo's signup flow, so an email
-allowlist would let an attacker self-register as staff. Never use it here.
+"""Staff inbox. Staff are accounts with role "staff" (set in the admin dashboard) or the
+bootstrap IDs in CCIFJ_STAFF_USER_IDS; email ownership is not verified by the demo signup,
+so staff access is never granted from an email address.
 """
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel
 from sqlmodel import col, select
 
-from concierge.auth.dependencies import CurrentUser, DatabaseSession
-from concierge.config import get_settings
+from concierge.auth.access import require_staff
+from concierge.auth.dependencies import DatabaseSession
 from concierge.db.relationaldb.models import StaffRequest, StaffRequestRecipient, StaffRequestStatus
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 
 
-async def require_staff(user: CurrentUser):
-    if user is None:
-        raise HTTPException(status_code=401, detail="Sign in to access the staff inbox.")
-    if user.user_id not in get_settings().staff_user_ids:
-        raise HTTPException(status_code=403, detail="Staff access required.")
-    return user
+class StatusUpdate(BaseModel):
+    status: StaffRequestStatus
+
+
+@router.patch("/requests/{reference}", dependencies=[Depends(require_staff)])
+async def update_request_status(reference: str, body: StatusUpdate, session: DatabaseSession):
+    request = (await session.exec(select(StaffRequest).where(StaffRequest.reference == reference))).first()
+    if request is None:
+        raise HTTPException(status_code=404, detail="Request not found.")
+    request.status = body.status
+    session.add(request)
+    await session.commit()
+    return {"reference": reference, "status": request.status}
 
 
 @router.get("/requests", dependencies=[Depends(require_staff)])

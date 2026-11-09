@@ -40,7 +40,7 @@ class HackathonApiTest(unittest.TestCase):
                 return request.reference
         reference = self.client.portal.call(seed)
         settings = replace(get_settings(), staff_user_ids=(account['user']['user_id'],))
-        with patch('concierge.api.staff.get_settings', return_value=settings), patch('concierge.api.auth.get_settings', return_value=settings):
+        with patch('concierge.auth.access.get_settings', return_value=settings):
             self.assertTrue(self.client.get('/api/v1/auth/me', headers=headers).json()['is_staff'])
             response = self.client.get('/api/v1/staff/requests?status=new&limit=1', headers=headers)
             self.assertEqual(response.status_code, 200)

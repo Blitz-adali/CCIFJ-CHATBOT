@@ -1422,7 +1422,7 @@ async def list_available_industries_and_regions() -> str:
 #################################################
 
 @tool
-def get_ccifj_contact(
+async def get_ccifj_contact(
     topic: Literal[
         "events",
         "become_speaker",
@@ -1432,11 +1432,12 @@ def get_ccifj_contact(
         "corporate_news",
         "japanese_market_support",
         "recruitment_and_hr",
+        "general_or_unsure",
     ],
 ) -> str:
     """
     Retrieve direct contact person details (name, title, email, phone number)
-    for specific CCIFJ inquiries.
+    for specific CCIFJ inquiries, from the CCIFJ staff directory.
 
     Use this tool when the user wants to:
     - Ask about a CCIFJ event, registration problems, or late registration.
@@ -1447,96 +1448,30 @@ def get_ccifj_contact(
     - Share corporate news or press releases with CCIFJ media.
     - Ask questions about entering or developing in the Japanese market.
     - Inquire about recruitment, hiring, posting job offers, or HR services.
+    - Reach CCIFJ about anything else, or when you are not sure which team fits.
 
     Args:
         topic: The specific subject of inquiry. Must be one of:
-            - 'events': General event questions, registration issues, late registration (Elena SUZUKI).
-            - 'become_speaker': Inquire about speaking at events (Elena SUZUKI).
-            - 'become_sponsor': Inquire about sponsorship opportunities (Marie OZAKI & Elena SUZUKI).
-            - 'bonjour_france': BONJOUR FRANCE, the starting point for companies that want to work in Japan (Mayu HANDA).
-            - 'membership': Membership, joining, dues, and member services (Tomoyo FUNABASHI & Marianne BARGES).
-            - 'corporate_news': Submit or share corporate news with CCIFJ (Communication Dept & Marianne BARGES).
+            - 'events': General event questions, registration issues, late registration.
+            - 'become_speaker': Inquire about speaking at events.
+            - 'become_sponsor': Inquire about sponsorship opportunities.
+            - 'bonjour_france': BONJOUR FRANCE, the starting point for companies that want to work in Japan.
+            - 'membership': Membership, joining, dues, and member services.
+            - 'corporate_news': Submit or share corporate news with CCIFJ.
             - 'japanese_market_support': Advisory & support for French companies entering the Japanese market.
-            - 'recruitment_and_hr': Inquiries regarding job postings, recruitment, and HR support (Nicolas CHAUVET & Haruka KOBAYASHI).
+            - 'recruitment_and_hr': Inquiries regarding job postings, recruitment, and HR support.
+            - 'general_or_unsure': No other topic fits, or the request is unclear; returns the
+              CCIFJ triage contact, who routes it to the right colleague.
 
     Returns:
-        Verified contact details including the officer name, title, email address,
-        and telephone number where available.
+        The contact details on file (name, role, email, phone where available). If no
+        specialist covers the topic, the triage contact; if nobody does, a hint to send
+        a 'team_ticket' instead.
     """
-    contacts = {
-        "events": (
-            "Contact for CCIFJ Events (registration and event questions):\n"
-            "- Name: Elena SUZUKI\n"
-            "- Role: Events Officer\n"
-            "- Phone: 03-4500-6606\n"
-            "- Email: e.suzuki@ccifj.or.jp"
-        ),
-        "bonjour_france": (
-            "Contact for BONJOUR FRANCE (starting point for companies that want to work in Japan):\n"
-            "- Name: Mayu HANDA\n"
-            "- Role: Director, BONJOUR FRANCE\n"
-            "- Phone: 03-4500-6530\n"
-            "- Email: m.handa@ccifj.or.jp"
-        ),
-        "membership": (
-            "Contacts for CCIFJ Membership:\n"
-            "1. Tomoyo FUNABASHI\n"
-            "   - Role: Membership Manager\n"
-            "   - Phone: 03-4500-6644\n"
-            "   - Email: t.funabashi@ccifj.or.jp\n"
-            "2. Marianne BARGES\n"
-            "   - Role: Membership Associate Manager & Communication Coordinator\n"
-            "   - Phone: 03-4500-6522\n"
-            "   - Email: m.barges@ccifj.or.jp"
-        ),
-        "become_speaker": (
-            "Contact for Event Speakers:\n"
-            "- Name: Elena SUZUKI\n"
-            "- Role: Events Officer\n"
-            "- Phone: 03-4500-6606\n"
-            "- Email: e.suzuki@ccifj.or.jp"
-        ),
-        "become_sponsor": (
-            "Contacts for Event Sponsorship:\n"
-            "1. Marie OZAKI\n"
-            "   - Role: Managing Director, Head of Events\n"
-            "   - Phone: 03-4500-6531\n"
-            "   - Email: m.ozaki@ccifj.or.jp\n"
-            "2. Elena SUZUKI\n"
-            "   - Role: Events Officer\n"
-            "   - Phone: 03-4500-6606\n"
-            "   - Email: e.suzuki@ccifj.or.jp"
-        ),
-        "corporate_news": (
-            "Contacts for Sharing Corporate News:\n"
-            "1. Communication Department\n"
-            "   - Email: communication@ccifj.or.jp\n"
-            "2. Marianne BARGES\n"
-            "   - Role: Membership Associate Manager & Communication Coordinator\n"
-            "   - Phone: 03-4500-6522\n"
-            "   - Email: m.barges@ccifj.or.jp"
-        ),
-        "japanese_market_support": (
-            "Contact for Japanese Market Entry & Business Support:\n"
-            "- Department: Business Support / Appui aux Entreprises\n"
-            "- Email: appui.entreprises@ccifj.or.jp\n"
-            "- Note: For commercial inquiries, users can also submit the Business Development Form."
-        ),
-        "recruitment_and_hr": (
-            "Contacts for Recruitment & Job Offers (Employment & Training Department):\n"
-            "1. Nicolas CHAUVET\n"
-            "   - Role: Responsable Recrutement (Recruitment Manager)\n"
-            "   - Phone: 03-4500-6521\n"
-            "   - Email: n.chauvet@ccifj.or.jp\n"
-            "2. Haruka KOBAYASHI\n"
-            "   - Role: Recruitment Officer\n"
-            "   - Phone: 03-4500-6529\n"
-            "   - Email: h.kobayashi@ccifj.or.jp\n"
-            "- Note: Job seekers can also register their resume via the CV Database form."
-        ),
-    }
+    from ..staff_directory import describe_contacts
 
-    return contacts.get(topic, "Contact details not found for this topic.")
+    async with AsyncSessionLocal() as session:
+        return await describe_contacts(session, topic)
 
 
 @tool

@@ -4,7 +4,7 @@ import { WidgetChat } from './WidgetChat';
 import { AUTH_EXPIRED_EVENT, clearAuthSession, getSavedAuthSession, getCurrentUser } from './api';
 import { AuthDialog } from './AuthDialog';
 import { readLocale, saveLocale, siteCopy } from './site-copy';
-import { StaffInbox } from './StaffInbox';
+import { AdminDashboard } from './AdminDashboard';
 import type { AuthSession, Locale } from './types';
 import './widget.css';
 
@@ -46,12 +46,12 @@ export default function App() {
             <option value="en" lang="en">EN</option><option value="fr" lang="fr">FR</option><option value="ja" lang="ja">日本語</option>
           </select>
         </label>
-        {auth?.user.is_staff && <button type="button" className="signin-button" aria-pressed={inboxOpen} onClick={()=>setInboxOpen(!inboxOpen)}>{inboxOpen ? (locale==='fr'?'Conversation':locale==='ja'?'チャット':'Chat') : (locale==='fr'?'Demandes reçues':locale==='ja'?'問い合わせ':'Staff inbox')}</button>}
+        {auth?.user.is_staff && <button type="button" className="signin-button" aria-pressed={inboxOpen} onClick={()=>setInboxOpen(!inboxOpen)}>{inboxOpen ? (locale==='fr'?'Conversation':locale==='ja'?'チャット':'Chat') : (locale==='fr'?'Tableau de bord':locale==='ja'?'ダッシュボード':'Dashboard')}</button>}
         {auth ? <><span className="account-name">{auth.user.name}</span><button className="signin-button" type="button" onClick={()=>{clearAuthSession();setAuth(null);}}>{authLabels[1]}</button></> : <button className="signin-button" type="button" onClick={()=>setAuthOpen(true)}><LogIn size={16}/>{authLabels[0]}</button>}
       </div>
     </header>
     <main id="main-content" className="chat-page">
-      {inboxOpen && auth?.user.is_staff && <StaffInbox key={auth.user.user_id} locale={locale}/>}
+      {inboxOpen && auth?.user.is_staff && <AdminDashboard key={auth.user.user_id} locale={locale} currentUserId={auth.user.user_id}/>}
       <section className="simple-chat" aria-label={t.assistant} hidden={inboxOpen && Boolean(auth?.user.is_staff)}>
         <WidgetChat locale={locale} isAuthenticated={Boolean(auth)} userId={auth?.user.user_id} onLogin={()=>setAuthOpen(true)}/>
       </section>

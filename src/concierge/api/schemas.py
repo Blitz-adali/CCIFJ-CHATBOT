@@ -121,6 +121,8 @@ class UserResponse(BaseModel):
     name: str
     email: str
     is_staff: bool = False
+    # guest | user | member | staff — decides what the agent and the dashboard show.
+    access_level: str = "user"
 
 
 class TokenResponse(BaseModel):

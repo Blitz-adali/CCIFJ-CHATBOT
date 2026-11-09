@@ -305,6 +305,42 @@ export async function getStaffRequests(status = '', offset = 0): Promise<{items:
   return requestJson(`/api/v1/staff/requests?${params}`, { method: 'GET' }, 10000);
 }
 
+export async function updateStaffRequestStatus(reference: string, status: import('./types').StaffRequestItem['status']): Promise<void> {
+  await requestJson(`/api/v1/staff/requests/${encodeURIComponent(reference)}`, { method: 'PATCH', body: JSON.stringify({ status }) }, 10000);
+}
+
+// ---------- Admin dashboard (staff only) ----------
+
+export async function getAdminOverview(): Promise<import('./types').AdminOverview> {
+  return requestJson('/api/v1/admin/overview', { method: 'GET' }, 10000);
+}
+
+export async function getAdminUsers(q = '', offset = 0): Promise<{items: import('./types').AdminUser[]; next_offset: number | null}> {
+  const params = new URLSearchParams({ offset: String(offset) });
+  if (q.trim()) params.set('q', q.trim());
+  return requestJson(`/api/v1/admin/users?${params}`, { method: 'GET' }, 10000);
+}
+
+export async function setUserRole(userId: number, role: 'user' | 'staff'): Promise<import('./types').AdminUser> {
+  return requestJson(`/api/v1/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }, 10000);
+}
+
+export async function getStaffTopics(): Promise<import('./types').StaffTopic[]> {
+  return requestJson('/api/v1/admin/topics', { method: 'GET' }, 10000);
+}
+
+export async function getStaffContacts(): Promise<import('./types').StaffContact[]> {
+  return requestJson('/api/v1/admin/staff-contacts', { method: 'GET' }, 10000);
+}
+
+export type StaffContactInput = Partial<Omit<import('./types').StaffContact, 'contact_id'>>;
+
+export async function saveStaffContact(contactId: number | null, body: StaffContactInput): Promise<import('./types').StaffContact> {
+  return contactId === null
+    ? requestJson('/api/v1/admin/staff-contacts', { method: 'POST', body: JSON.stringify(body) }, 10000)
+    : requestJson(`/api/v1/admin/staff-contacts/${contactId}`, { method: 'PATCH', body: JSON.stringify(body) }, 10000);
+}
+
 export async function getSuggestedQuestions(locale: Locale = "en"): Promise<string[]> {
   try {
     const response = await requestJson<{ suggested_questions?: unknown }>(`${API_ENDPOINTS.suggestions}?locale=${encodeURIComponent(locale)}`);

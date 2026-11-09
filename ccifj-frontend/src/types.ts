@@ -44,6 +44,49 @@ export interface AuthUser {
   name: string;
   email: string;
   is_staff?: boolean;
+  /** guest | user | member | staff, decided by the backend. */
+  access_level?: AccessLevel;
+}
+
+export type AccessLevel = 'guest' | 'user' | 'member' | 'staff';
+
+export interface AdminOverview {
+  users: number;
+  members: number;
+  staff: number;
+  member_companies: number;
+  open_requests: number;
+  new_requests: number;
+  upcoming_events: number;
+  active_contacts: number;
+  has_triage_contact: boolean;
+  uncovered_topics: string[];
+}
+
+export interface AdminUser {
+  user_id: number;
+  name: string;
+  email: string;
+  role: 'user' | 'staff';
+  access_level: AccessLevel;
+  companies: string[];
+  created_at: string;
+}
+
+export interface StaffTopic { key: string; label: string; description: string; }
+
+export interface StaffContact {
+  contact_id: number;
+  name: string | null;
+  role: string | null;
+  mobile: string | null;
+  email: string;
+  category: string;
+  sub_category: string | null;
+  topics: string[];
+  languages: string | null;
+  is_triage: boolean;
+  is_active: boolean;
 }
 
 export interface AuthSession {

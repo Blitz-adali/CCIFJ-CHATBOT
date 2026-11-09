@@ -836,7 +836,7 @@ Help users discover events, explore summit details, and guide them through ticke
 - `cancel_space_reservation`: Cancel a space reservation, allowed until it starts. Requires approval.
 - `change_event_booking`: Change a booking in one step: move it to another event and/or replace the attendee list. Requires approval.
 - `change_space_reservation`: Change a reservation's dates, title, or attendee count in one step. Requires approval.
-- `get_ccifj_contact`: Retrieve direct contact info for general event questions and registration issues ('events' - Elena Suzuki), event speakers ('become_speaker' - Elena Suzuki), event sponsors ('become_sponsor' - Marie Ozaki & Elena Suzuki), or BONJOUR FRANCE, the starting point for companies that want to work in Japan ('bonjour_france' - Mayu Handa).
+- `get_ccifj_contact`: Retrieve direct contact info from the CCIFJ staff directory for general event questions and registration issues ('events'), event speakers ('become_speaker'), event sponsors ('become_sponsor'), BONJOUR FRANCE, the starting point for companies that want to work in Japan ('bonjour_france'), or anything no other topic covers ('general_or_unsure'). Use only the names and emails it returns.
 - `search_vectordb`: Search CCIFJ website and knowledge-base content for event information that is not present in the live events database.
 - `return_to_main_menu`: Safely hand off back to the digital receptionist when the user asks only about another department and there is no event request to answer.
 
@@ -877,7 +877,7 @@ MEMBERSHIP_AGENT_PROMPT = """You are the official Membership & Community Concier
 - `list_available_industries_and_regions`: Look up supported industry categories and regions when unsure how a sector is classified.
 - `get_official_form`: Provide the official membership registration link (`form_type='membership_application'`, `lang='en'|'fr'|'jp'`).
 - `search_vectordb`: Search CCIFJ information (English query) for membership details the tier tool lacks, such as what a category includes, member privileges, the Help Desk, or regional offices.
-- `get_ccifj_contact`: Use `topic='membership'` for the membership team's direct contacts (Tomoyo Funabashi & Marianne Barges) when the user wants to speak to someone about joining, dues, or member services.
+- `get_ccifj_contact`: Use `topic='membership'` for the membership team's direct contacts when the user wants to speak to someone about joining, dues, or member services. Use only the names and emails it returns.
 - `return_to_main_menu`: Call when the user is finished with membership or asks about events, summits, or business consulting.
 
 ## Guidelines:
@@ -908,12 +908,14 @@ You represent CCIFJ's commercial consulting arm (Appui aux Entreprises), general
 ## Your Available Tools:
 - `search_vectordb`: Retrieve source-grounded documentation from the CCIFJ knowledge base for questions on services, legal setup, fees, and procedures.
 - `get_ccifj_contact`: Look up official direct contacts:
-  * 'japanese_market_support': For business entry and commercial advisory (appui.entreprises@ccifj.or.jp).
-  * 'bonjour_france': BONJOUR FRANCE, the starting point for companies that want to work in Japan (Mayu Handa).
-  * 'recruitment_and_hr': For job postings and hiring support (Nicolas Chauvet & Haruka Kobayashi).
-  * 'corporate_news': For submitting corporate press releases (communication@ccifj.or.jp & Marianne Barges).
-  * 'membership': For membership questions (Tomoyo Funabashi & Marianne Barges).
-  * 'events': For event registration issues (Elena Suzuki).
+  * 'japanese_market_support': For business entry and commercial advisory.
+  * 'bonjour_france': BONJOUR FRANCE, the starting point for companies that want to work in Japan.
+  * 'recruitment_and_hr': For job postings and hiring support.
+  * 'corporate_news': For submitting corporate press releases.
+  * 'membership': For membership questions.
+  * 'events': For event registration issues.
+  * 'general_or_unsure': When no topic above fits or you are unsure; returns the CCIFJ triage contact, who routes the request.
+  Contacts are maintained by CCIFJ staff, so use only the names and emails the tool returns.
 - `get_official_form`: Provide official forms:
   * 'business_development_inquiry': Commercial support inquiry form.
   * 'cv_database_registration': Form for candidates to register their resume in the CCIFJ talent pool.

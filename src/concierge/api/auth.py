@@ -2,6 +2,7 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException, Response
 
+from concierge.auth.access import access_level, is_staff
 from concierge.auth.dependencies import CurrentUser, DatabaseSession
 from concierge.auth.security import DUMMY_PASSWORD_HASH, create_token, hash_password, verify_password
 from concierge.config import get_settings
@@ -11,18 +12,19 @@ from .schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def user_response(user) -> UserResponse:
+async def user_response(session, user) -> UserResponse:
     return UserResponse.model_validate(user).model_copy(update={
-        "is_staff": user.user_id in get_settings().staff_user_ids,
+        "is_staff": is_staff(user),
+        "access_level": (await access_level(session, user)).value,
     })
 
 
-def token_response(user, response: Response) -> TokenResponse:
+async def token_response(session, user, response: Response) -> TokenResponse:
     lifetime = get_settings().access_token_seconds
     response.headers["Cache-Control"] = "no-store"
     return TokenResponse(
         access_token=create_token(user.user_id, "access", lifetime),
-        expires_in=lifetime, user=user_response(user),
+        expires_in=lifetime, user=await user_response(session, user),
     )
 
 
@@ -33,7 +35,7 @@ async def register(body: RegisterRequest, session: DatabaseSession, response: Re
         user = await crud.register_user(session, body.name, body.email, password_hash)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return token_response(user, response)
+    return await token_response(session, user, response)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -46,12 +48,12 @@ async def login(body: LoginRequest, session: DatabaseSession, response: Response
             status_code=401, detail="Incorrect email or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return token_response(record[0], response)
+    return await token_response(session, record[0], response)
 
 
 @router.get("/me", response_model=UserResponse)
-async def current_user(user: CurrentUser, response: Response):
+async def current_user(user: CurrentUser, session: DatabaseSession, response: Response):
     if user is None:
         raise HTTPException(status_code=401, detail="Log in to view your account.", headers={"WWW-Authenticate": "Bearer"})
     response.headers["Cache-Control"] = "no-store"
-    return user_response(user)
+    return await user_response(session, user)

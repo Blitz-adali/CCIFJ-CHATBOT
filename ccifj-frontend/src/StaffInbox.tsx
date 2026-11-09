@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getStaffRequests } from './api';
+import { getStaffRequests, updateStaffRequestStatus } from './api';
 import type { Locale, StaffRequestItem } from './types';
 
 const words = {
@@ -27,7 +27,7 @@ export function StaffInbox({locale}: {locale: Locale}) {
     {error&&<p role="alert">{t.failed} <button type="button" onClick={()=>setRevision(value=>value+1)}>{t.retry}</button></p>}
     {!busy&&!error&&!items.length&&<p className="inbox-empty">{t.empty}</p>}
     <div className="inbox-items">{items.map(item=><article className="inbox-request" key={item.reference}>
-      <div className="inbox-request-meta"><code>{item.reference}</code><span>{t[item.status]}</span><time dateTime={item.created_at}>{new Intl.DateTimeFormat(locale,{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(item.created_at))} JST</time></div>
+      <div className="inbox-request-meta"><code>{item.reference}</code><select className="inbox-status" aria-label={`${t.all}: ${item.reference}`} value={item.status} onChange={event=>{const status=event.target.value as StaffRequestItem['status'];const previous=item.status;setItems(old=>old.map(row=>row.reference===item.reference?{...row,status}:row));updateStaffRequestStatus(item.reference,status).catch(()=>{setItems(old=>old.map(row=>row.reference===item.reference?{...row,status:previous}:row));setError(true);});}}>{(['new','in_review','closed'] as const).map(status=><option key={status} value={status}>{t[status]}</option>)}</select><time dateTime={item.created_at}>{new Intl.DateTimeFormat(locale,{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(item.created_at))} JST</time></div>
       <h2>{item.subject}</h2><p>{t.from}: {item.sender_name} &lt;{item.sender_email}&gt;</p><p>{t.to}: {item.recipients.length?item.recipients.join(', '):t.team}</p>
       <details><summary>{locale==='fr'?'Lire le message':locale==='ja'?'メッセージを読む':'Read message'}</summary><p className="inbox-message" dir="auto">{item.message}</p></details>
     </article>)}</div>

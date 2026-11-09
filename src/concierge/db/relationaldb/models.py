@@ -45,6 +45,11 @@ class StaffRequestStatus(str, Enum):
     closed = "closed"
 
 
+class UserRole(str, Enum):
+    user = "user"  # signed-in account; "member" comes from a Belongs link, not from this field
+    staff = "staff"  # can open the admin dashboard
+
+
 class MessageRole(str, Enum):
     user = "user"
     assistant = "assistant"
@@ -61,6 +66,7 @@ class User(SQLModel, table=True):
     email: str = Field(max_length=255, unique=True, index=True)
     mobile: Optional[str] = Field(default=None, max_length=30)
     address: Optional[str] = Field(default=None, max_length=255)
+    role: UserRole = Field(default=UserRole.user, sa_column_kwargs={"server_default": "user"})
     created_at: NaiveDatetime = Field(default_factory=utcnow)
     updated_at: NaiveDatetime = updated_at_field()
 
@@ -233,6 +239,12 @@ class ContactUs(SQLModel, table=True):
     email: str = Field(max_length=255)
     category: str = Field(max_length=100)
     sub_category: str = Field(max_length=255)
+    # Staff directory fields: which agent topics this contact handles (comma-separated keys),
+    # the languages they answer in, and whether they triage requests nobody else fits.
+    topics: Optional[str] = Field(default=None, max_length=255)
+    languages: Optional[str] = Field(default=None, max_length=50)
+    is_triage: bool = Field(default=False, sa_column_kwargs={"server_default": "0"})
+    is_active: bool = Field(default=True, sa_column_kwargs={"server_default": "1"})
     created_at: NaiveDatetime = Field(default_factory=utcnow)
     updated_at: NaiveDatetime = updated_at_field()
 
