@@ -1,7 +1,5 @@
 # CCIFJ Concierge
 
-For a complete account of the changes, benefits, tradeoffs and validation limits, see [Changes README](CHANGES_README.md).
-
 An AI concierge for the **Chambre de Commerce et d'Industrie France Japon (CCIFJ)**.
 It answers questions about CCIFJ events, membership, business support, and
 recruitment and training (for employers and job seekers) in
@@ -12,10 +10,8 @@ only after the user approves them.
 For the demo, staff inbox setup, evaluation commands and rehearsal sequence, see
 the [hackathon runbook](docs/HACKATHON.md). [Deployment](docs/DEPLOYMENT.md) covers
 the TYPO3 / Odoo / GetResponse integration path, no-code content updates, recurring
-costs and maintenance roles; [Hackathon data check](docs/HACKATHON_DATA_CHECK.md)
-compares the implementation with the organisers' data pack.
-The [concierge behavior upgrade](docs/CONCIERGE_UPGRADE.md) explains the current
-memory, database-answer paths, event filters and version-checked conversation tests.
+costs and maintenance roles. The live evaluation is in
+[demo/live_eval_results.md](demo/live_eval_results.md).
 
 ```text
 User ──► React chat ──► FastAPI ──► LangGraph agents ──► tools ──► SQLite · Chroma · BM25 · Cohere
@@ -23,8 +19,86 @@ User ──► React chat ──► FastAPI ──► LangGraph agents ──►
 
 ---
 
+## Hackathon submission
+
+42 Asia Hackathon 2026, Tokyo. This section is the reviewer's entry point.
+
+**Main agent:** Agent 1, the conversational assistant for website visitors.
+**Extra agents claimed as bonuses:** Agent 3 (member matching and introductions) and
+Agent 2 (member engagement). The Prisme bonus is not claimed.
+
+### Try it
+
+1. `cp .env.example .env`, then set `CCIFJ_AUTH_SECRET` and `OPENAI_API_KEY` (see [Getting started](#getting-started)).
+2. `./start.sh`, then open **http://localhost:5173**.
+3. Chat as a guest, or sign in with a demo account. All four use the password `ccifj-demo-2026`:
+
+| Account | What it shows |
+|---|---|
+| `staff@demo.ccifj.test` | The staff dashboard (**Dashboard** button in the header) |
+| `claire.member@demo.ccifj.test` | A member with a booking and the newsletter |
+| `kenji.member@demo.ccifj.test` | A second member |
+| `lucas.guest@demo.ccifj.test` | A signed-in non-member |
+
+The database in the repository already contains these accounts; `uv run concierge-db seed-demo`
+creates them again on a fresh database. They are demo accounts with a published password:
+delete them before the agent is opened to the public.
+
+| Agent | Where to look |
+|---|---|
+| 1. Conversational assistant | The chat on the home page; `ccifj-frontend/public/embed-demo.html` shows the one-`<script>` widget on a host page. Staff side: **Dashboard → Requests** (requests and the **Conversations** tab). |
+| 2. Member engagement | **Dashboard → Onboarding & automation**: rules, a run, and the drafted follow-ups staff review before anything is sent. |
+| 3. Member matching | **Dashboard → Matching & intros**, or ask the chat for a company (for example "Find a French food company with experience in Japanese distribution"). |
+| Staff update information without coding | **Dashboard → Events, Member companies, Knowledge files, Staff directory**. Knowledge files accepts uploads and links (Calameo, web pages, PDFs) that are re-read on a schedule. |
+
+### Evidence
+
+- **Scenarios, fallbacks, languages:** [demo/live_eval_results.md](demo/live_eval_results.md) records a live run of
+  the organisers' question bank: 19 of 20 scenarios pass and 1 is partial, 5 of 5 safe fallbacks, and all 25 answers
+  cite at least one validated source. 13 questions were asked in English, 7 in French and 5 in Japanese, each
+  answered in its own language. The verdicts are a reviewer's reading of each answer, not an automatic score, and
+  "cites a source" is measured per answer, not per sentence. Raw answers are in `demo/*.json`.
+- **Automated tests:** `uv run python -m unittest discover -s tests -p 'test_*.py'` (backend, no API keys needed) and
+  `cd ccifj-frontend && npm test`. See [Testing](#testing).
+- **Sources:** answers cite the crawled ccifj.or.jp pages and the documents staff added; the chat shows them under
+  each answer, and staff see them in the conversation view.
+- **Installation, costs and limits:** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Known limits are also listed under
+  [Current limitations and tickets](#current-limitations-and-tickets).
+
+### Declarations
+
+**Data.** Member companies, contacts and accounts are fictional: the organisers' 50 companies and demo accounts.
+Knowledge content is the public ccifj.or.jp website (crawled) and the organisers' approved source documents.
+
+**External services.**
+
+| Service | Used for | Required |
+|---|---|---|
+| OpenAI API | The chat model, routing, and optional web search | Yes, unless local Ollama models are used |
+| Cohere Rerank | Re-ordering search results | No; search falls back to hybrid ranking |
+| Hugging Face Hub | One-time download of the `intfloat/multilingual-e5-small` embedding model, which then runs locally | Yes, on first start |
+| LangSmith | Tracing during development | No; off by default |
+| Odoo | Creating a CRM lead for each approved request | No; off by default, tested against a simulated server only |
+| Calameo | Reading a linked publication's public page, or the official API when keys are set | No; only when staff link a publication |
+
+Tesseract (OCR) and, optionally, Ollama run on the same machine as the agent.
+
+**Reused code.** The open-source packages listed in `pyproject.toml` / `uv.lock` and
+`ccifj-frontend/package.json`, mainly FastAPI, SQLModel, LangChain and LangGraph, Chroma, bm25s,
+sentence-transformers, pypdf, pypdfium2, pytesseract, React and Vite.
+
+**AI tools.** Claude Code (Anthropic) was used as a coding assistant for parts of the code, tests and
+documentation.
+
+**Simulations.** Nothing leaves the system. Requests to staff and introductions are stored for staff review; no
+email is sent. Member follow-ups by email or LINE go to a mock outbox and are only marked as sent. Event bookings
+are reservations, not payments.
+
+---
+
 ## Contents
 
+- [Hackathon submission](#hackathon-submission)
 - [What the concierge can do](#what-the-concierge-can-do)
 - [Architecture](#architecture)
 - [How a message is answered](#how-a-message-is-answered)
@@ -457,7 +531,12 @@ src/concierge/
 ├── db/
 │   ├── relationaldb/        SQLModel models, CRUD, Alembic migrations, demo seed, system.db
 │   └── vectordb/            Chroma vector store
+├── integrations/        optional Odoo CRM connector
 ├── rag/                 hybrid retrieval (Chroma + BM25 + Cohere) and indexing
+├── knowledge.py         documents staff add: chunking, embedding, keyword index
+├── linked_sources.py    knowledge linked by URL (Calameo, web pages, PDFs) and its scheduled re-sync
+├── matching.py          member matching (Agent 3)
+├── engagement.py        onboarding and engagement rules (Agent 2)
 ├── data/                crawled documents, chunks, Q&A catalogs, guided conversation paths
 ├── index/               BM25 index
 ├── config.py            settings from .env, checked at startup
@@ -471,7 +550,8 @@ scripts/
 ├── ingest_documents.py      loads a folder of brochures into the knowledge base (same as the dashboard upload)
 ├── replace_members.py       replaces the member directory with a CSV/XLSX export, companies and their contact people
 └── refresh_events.py        checks every event against its ccifj.or.jp page, fixes dates, venues, deadlines and prices, adds new events
-docs/                    runbook, deployment and handover, data-pack check, quality notes
+docs/                    HACKATHON.md (demo runbook) and DEPLOYMENT.md (installation, costs, limits, handover)
+demo/                    live evaluation scripts and their results (live_eval_results.md)
 start.sh                 starts the whole stack with one command
 ```
 
@@ -505,7 +585,8 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
 It installs dependencies, applies database migrations, and starts the API on
-port 8000 and the frontend on port 5173.
+port 8001 and the frontend on port 5173 (override with `API_PORT` and `WEB_PORT`).
+Open **http://localhost:5173**; the interactive API docs are at http://localhost:8001/docs.
 
 ### 2b. Or start the pieces yourself
 
@@ -523,18 +604,20 @@ npm ci
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173**. Vite forwards `/api` to the API on port 8000.
+Open **http://127.0.0.1:5173**. Started this way, the API listens on port 8000 and Vite forwards `/api` to it.
 The interactive API docs are at http://127.0.0.1:8000/docs.
 
-### 3. Optional: demo accounts
+### 3. Demo accounts
 
 ```bash
 uv run concierge-db seed-demo
 ```
 
-This creates two member accounts and one non-member account (password
-`ccifj-demo-2026`). The first member also gets an upcoming booking and a
-newsletter subscription. Running it again changes nothing.
+This creates two member accounts, one non-member account and one staff account
+(`staff@demo.ccifj.test`, which opens the dashboard), all with the password
+`ccifj-demo-2026`. The first member also gets an upcoming booking and a newsletter
+subscription. Running it again changes nothing. The database in the repository
+already contains them. Delete these accounts before going public.
 
 ### 4. Load CCIFJ content
 
@@ -607,6 +690,8 @@ Settings come from `.env` and are checked at startup (`src/concierge/config.py`)
 | `trim_messages_max_token` | no | Conversation history kept per turn (default 1000 tokens). |
 | `CCIFJ_AGENT_TIMEOUT_SECONDS` | no | Maximum time for one agent turn (default 180). |
 | `CCIFJ_CORS_ORIGINS` | no | Comma-separated frontend origins allowed to call the API. |
+| `CCIFJ_LINK_SYNC_HOURS` | no | How often linked knowledge sources (Calameo, web pages, PDFs) are re-read; default 6. `off` disables the schedule; **Sync now** in the dashboard still works. |
+| `CALAMEO_API_KEY`, `CALAMEO_API_SECRET` | no | Calameo API keys (Premium/Platinum accounts). When set, linked Calameo publications are read through the official API instead of the public page, which also covers private publications. |
 | `CCIFJ_WEB_SEARCH` | no | `on` (default) or `off`: OpenAI's built-in web search for the events and general agents, used for market context and recent CCIFJ news. Ignored with Ollama models. |
 | `CCIFJ_WEB_SEARCH_DOMAINS` | no | Comma-separated domains the web search may use (e.g. `ccifj.or.jp`); default `*` is the whole web. |
 | `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY` | no | When all four are set, every staff request a visitor approves is also created in Odoo CRM as a lead (`src/concierge/integrations/odoo.py`; JSON-2 API on Odoo 19+, XML-RPC on older versions; not yet run against a real Odoo: check with `uv run python demo/odoo_check.py`). Off by default; an Odoo outage never fails the answer. `ODOO_TIMEOUT` (seconds, default 10). |
@@ -783,7 +868,3 @@ On `feature/concierge-tweaks` and `feature/concierge-answer-quality`:
 - A server restart expires process-local approvals. The UI releases the stale
   approval without replaying a write, allowing a fresh request after checking
   existing bookings or request references.
-
-Failure handling and retest instructions: [Failure recovery](docs/FAILURE_RECOVERY.md).
-
-Latest continuity and retrieval improvements: [Final improvement pass](docs/CONCIERGE_FINAL_PASS.md).

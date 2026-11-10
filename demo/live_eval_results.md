@@ -115,4 +115,3 @@ Bookings, staff requests, and test accounts created by these runs were removed f
 - Verdicts check that an answer is supported by its cited sources and by the records; they are not a line-by-line audit of every sentence.
 - No load beyond four conversations at once, and no test with a production Cohere key.
 - The staff view and the embed script were checked in a headless browser and through the API, not by CCIFJ staff.
-- The 5 November results in `concierge_eval_results*.md` are the team's earlier runs on the earlier build.
