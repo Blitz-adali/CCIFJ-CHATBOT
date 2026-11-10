@@ -440,6 +440,14 @@ class KnowledgeDocument(SQLModel, table=True):
     chunk_count: int = 0
     uploaded_by: Optional[int] = Field(default=None, foreign_key="user.user_id")
     created_at: NaiveDatetime = Field(default_factory=utcnow)
+    # Linked sources (see concierge.linked_sources): set when staff linked a URL instead of
+    # uploading a file; the document is fetched again on a schedule and re-indexed when it changes.
+    sync_url: Optional[str] = Field(default=None, max_length=500)
+    download_url: Optional[str] = Field(default=None, max_length=500)  # full-text PDF for a Calameo link
+    version: Optional[str] = Field(default=None, max_length=300)
+    checked_at: Optional[NaiveDatetime] = None
+    changed_at: Optional[NaiveDatetime] = None
+    sync_error: Optional[str] = Field(default=None, max_length=500)
 
 
 class StaffRequestRecipient(SQLModel, table=True):

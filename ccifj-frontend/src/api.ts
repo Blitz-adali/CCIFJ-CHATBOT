@@ -383,6 +383,14 @@ export async function uploadKnowledgeDoc(file: import('./types').AttachmentUploa
   return requestJson('/api/v1/admin/knowledge', { method: 'POST', body: JSON.stringify({ ...file, title, source_url: sourceUrl || null }) }, 600000);
 }
 
+export async function linkKnowledgeDoc(url: string, title: string, downloadUrl: string): Promise<import('./types').KnowledgeDoc> {
+  return requestJson('/api/v1/admin/knowledge/link', { method: 'POST', body: JSON.stringify({ url, title, download_url: downloadUrl || null }) }, 600000);
+}
+
+export async function syncKnowledgeDoc(docId: number): Promise<import('./types').KnowledgeDoc & { changed: boolean }> {
+  return requestJson(`/api/v1/admin/knowledge/${docId}/sync`, { method: 'POST' }, 600000);
+}
+
 export async function deleteKnowledgeDoc(docId: number): Promise<void> {
   await requestJson(`/api/v1/admin/knowledge/${docId}`, { method: 'DELETE' }, 60000);
 }
