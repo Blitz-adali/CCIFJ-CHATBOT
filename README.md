@@ -58,6 +58,8 @@ User ──► React chat ──► FastAPI ──► LangGraph agents ──►
 | **Newsletter** | Subscribes the user to general news, training announcements, or the @StudioCCIFJ podcast, after approval. |
 | **Files** | Reads attached PDFs, images (PNG, JPEG), Word documents (DOCX), and text files, with OCR in English, French, and Japanese for scans and images. Up to 4 files per conversation, 5 MB each. The text goes to the agent as context; the chat only shows the file name. |
 | **Personal touch** | Asks for the details that change its advice (industry, country, B2B or B2C, stage) before answering an advisory question, once, and lets the user skip. Knows the date and the signed-in user's bookings, membership (with the company's industry and location), and newsletter status. Remembers the last few exchanges, so it builds on earlier advice instead of repeating it. |
+| **Web search** | With an OpenAI model, the events and general agents can search the web for market context (competitors, market size, trade shows) and recent CCIFJ news. CCIFJ facts (fees, events, members, contacts) still come only from the tools. Switch it off with `CCIFJ_WEB_SEARCH=off`. |
+| **Embedding** | `ccifj-frontend/public/embed.js` adds a chat button to any page (TYPO3 included) with one `<script>` tag; `embed-demo.html` is an example host page. |
 | **Safety** | Keeps to CCIFJ topics and refuses unrelated requests. It treats tool results and documents as data, not instructions. Every database write needs explicit approval. It never shows the user its internals (databases, tools, event IDs). |
 
 ---
@@ -573,6 +575,9 @@ Settings come from `.env` and are checked at startup (`src/concierge/config.py`)
 | `trim_messages_max_token` | no | Conversation history kept per turn (default 1000 tokens). |
 | `CCIFJ_AGENT_TIMEOUT_SECONDS` | no | Maximum time for one agent turn (default 180). |
 | `CCIFJ_CORS_ORIGINS` | no | Comma-separated frontend origins allowed to call the API. |
+| `CCIFJ_WEB_SEARCH` | no | `on` (default) or `off`: OpenAI's built-in web search for the events and general agents, used for market context and recent CCIFJ news. Ignored with Ollama models. |
+| `CCIFJ_WEB_SEARCH_DOMAINS` | no | Comma-separated domains the web search may use (e.g. `ccifj.or.jp`); default `*` is the whole web. |
+| `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY` | no | When all four are set, every staff request a visitor approves is also created in Odoo CRM as a lead (`src/concierge/integrations/odoo.py`). Off by default; an Odoo outage never fails the answer. `ODOO_TIMEOUT` (seconds, default 10). |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, … | no | LangSmith tracing. Traces go to the project `<LANGSMITH_AGENT_ID>-<LANGSMITH_AGENT_ENVIRONMENT>` (e.g. `realhackathon-local`). Runs are listed by their start time, taken from this machine's clock: keep it synced, or runs recorded while it was wrong sort above newer ones. |
 
 Frontend settings (`ccifj-frontend/.env.local`): `CCIFJ_API_TARGET` for the

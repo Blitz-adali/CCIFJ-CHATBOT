@@ -238,3 +238,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .analytics-questions small { color: var(--muted); font-size: 11px; }
 .inbox-status { min-height: 30px; padding: 3px 8px; border: 1px solid #bccdd6; border-radius: 20px; background: #e9f2f4; color: #234b60; font-size: 12px; }
 @media(max-width:720px) { .staff-inbox { padding: 20px 16px; } .topbar-right { gap: 6px; } .language-control select { min-height: 36px; padding: 5px; font-size: 12px; } .inbox-request { padding: 18px; } }
+
+/* Compact header when the chat is embedded in another site through public/embed.js. */
+.is-embedded .topbar { height: 54px; flex-basis: 54px; padding: 0 14px; }
+.is-embedded .brand small { display: none; }
+.is-embedded .signin-button { min-height: 34px; padding: 6px 14px; }

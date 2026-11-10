@@ -34,7 +34,9 @@ export default function App() {
     document.documentElement.lang = locale;
     document.title = `CCI ${t.name}`;
   }, [locale, t.name]);
-  return <div className={`concierge-site locale-${locale}`}>
+  // ?embed=1 is set by public/embed.js when the chat runs inside a host page (e.g. TYPO3).
+  const embedded = new URLSearchParams(window.location.search).get('embed') === '1';
+  return <div className={`concierge-site locale-${locale}${embedded ? ' is-embedded' : ''}`}>
     <a className="skip-link" href="#main-content">{t.skip}</a>
     <header className="topbar">
       <a className="brand" href="#main-content" aria-label="CCI France Japon">

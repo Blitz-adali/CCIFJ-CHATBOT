@@ -17,6 +17,9 @@ Optional:
     CCIFJ_AGENT_TIMEOUT_SECONDS    Positive integer, default 180.
     CCIFJ_CORS_ORIGINS             Comma-separated http(s) origins.
     LANGSMITH_TRACING              true/false; when true, LANGSMITH_API_KEY is expected.
+    CCIFJ_WEB_SEARCH               on/off, default on: OpenAI web search for the events and
+                                   general agents (ignored for Ollama models).
+    CCIFJ_WEB_SEARCH_DOMAINS       Comma-separated allowed domains (e.g. ccifj.or.jp); default "*" = whole web.
 
 Run: uv run uvicorn concierge.main:app --app-dir src --reload
 """

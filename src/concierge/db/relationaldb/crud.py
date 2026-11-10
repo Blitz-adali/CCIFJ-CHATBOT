@@ -1,4 +1,5 @@
 import asyncio
+import re
 from datetime import datetime
 from typing import Optional, Sequence
 from uuid import uuid4
@@ -39,6 +40,9 @@ from .models import (
 
 def _now() -> datetime:
     return japan_now()
+
+
+_QUOTES = re.compile(r"[\"'`‘’‚‛“”„]")
 
 
 def _naive(dt: datetime) -> datetime:
@@ -96,7 +100,8 @@ async def search_events(
     if category:
         stmt = stmt.where(col(Event.category).ilike(category))
     if name:
-        stmt = stmt.where(col(Event.title).ilike(f"%{name}%"))
+        # Titles mix straight and curly quotes ("Korea's" vs "Korea’s"); let any quote match any other.
+        stmt = stmt.where(col(Event.title).ilike(f"%{_QUOTES.sub('_', name)}%"))
     if location:
         stmt = stmt.where(col(Event.location).ilike(f"%{location}%"))
     if locations:

@@ -1,0 +1,232 @@
+[
+ {
+  "name": "matching",
+  "locale": "en",
+  "turns": [
+   {
+    "said": "I am looking for a French food company with experience in Japanese distribution.",
+    "status": 200,
+    "seconds": 31.1,
+    "reply": "I couldn’t confirm a company that meets all three criteria: **French origin, food sector, and experience in Japanese distribution**. These are the closest directory entries; the directory information is fictional demo data, and none confirms all three criteria. [1]\n\n- **COMPANY 01** — *Food & Beverage / Food Service & Restaurants*. Specialises in premium ingredients for institutional catering, including seasonal menu development, producer selection and supply traceability; serves companies based in Japan. French origin and distribution experience are not confirmed. Best contact: Ms Sophie DUBOIS, CEO (Japanese). [1]\n- **COMPANY 21** — *Food & Beverage / Food Service & Restaurants*. Offers fresh products and artisan food preparations, with product-range development, quality control and refrigerated delivery; serves companies based in Japan. French origin and distribution experience are not confirmed. Best contact: Ms Sophie PETIT, CEO (Japanese). [1]\n- **COMPANY 31** — *Food & Beverage / Food Service & Restaurants*. Provides culinary specialities for professionals, kitchen-team training and menu development tailored to local markets. French origin and distribution experience are not confirmed. Best contact: Ms Yuki NAKAMURA, Business Development Manager (Japanese). [1]\n\nFor distribution capabilities, **COMPANY 25** — *Retail & Trade / Distribution* — lists supplier sourcing, purchase negotiations and logistics coordination for companies based in Japan; food-sector and French-company expertise are not confirmed. Best contact: Ms Sarah FAURE, CEO (Japanese). [1]\n\nWould you like me to help draft a request to CCIFJ staff to explore an introduction to **COMPANY 01** for review before sending?",
+    "intent": "matching",
+    "approvals": [],
+    "sources": [
+     {
+      "title": "CCIFJ member directory (fictional demo data)",
+      "cited": true
+     }
+    ]
+   },
+   {
+    "said": "Please prepare an introduction to the best contact at COMPANY 25. I am Marie Laurent from Maison Laurent, a French organic jam producer (marie.laurent@example.test). We would like to discuss distributing our jams in Japan.",
+    "status": 200,
+    "seconds": 19.5,
+    "reply": "COMPANY 25 is a relevant potential contact: it lists supplier sourcing, purchase negotiations and logistics coordination for international partners serving companies in Japan. Its directory entry is fictional demo data, so these details should be treated as indicative. The best contact is **Ms Sarah FAURE, CEO**; her preferred language is Japanese. [1]\n\nPlease review this proposed introduction. **Nothing has been stored or sent**; if you approve it, CCIFJ staff will review it before anything is sent.\n\n```email\nTo: Ms Sarah FAURE <sarah.faure@company-25.example.com>\nFrom: Marie Laurent <marie.laurent@example.test>\nSubject: 日本でのオーガニックジャムの流通について\n\nMs FAURE\n\nCCIFJより、フランスのオーガニックジャム生産者であるMaison LaurentのMarie Laurent様をご紹介いたします。\n\nCOMPANY 25が日本企業および海外パートナー向けに提供する、仕入先の開拓、購買交渉、物流調整のサービスを踏まえ、貴社が日本での流通について相談するのに適したお相手としてご紹介しました。\n\nMarie様は、日本でのジャムの流通について貴社と意見交換を希望されています。ご関心がございましたら、お話しいただけますと幸いです。\n\nどうぞよろしくお願いいたします。\nCCIFJ\n```\n\nWould you like to approve this draft, or request changes?",
+    "intent": "matching",
+    "approvals": [],
+    "sources": [
+     {
+      "title": "CCIFJ member directory (fictional demo data)",
+      "cited": true
+     }
+    ]
+   },
+   {
+    "said": "That is good. Please store it for CCIFJ to review.",
+    "status": 200,
+    "seconds": 7.6,
+    "reply": "Please review the introduction below. Confirming stores it for CCIFJ staff, who review it before anything is sent to the member.",
+    "intent": "matching",
+    "approvals": [
+     {
+      "name": "save_introduction_request",
+      "args": {
+       "subject": "日本でのオーガニックジャムの流通について",
+       "message": "Ms FAURE\n\nCCIFJより、フランスのオーガニックジャム生産者であるMaison LaurentのMarie Laurent様をご紹介いたします。\n\nCOMPANY 25が日本企業および海外パートナー向けに提供する、仕入先の開拓、購買交渉、物流調整のサービスを踏まえ、貴社が日本での流通について相談するのに適したお相手としてご紹介しました。\n\nMarie様は、日本でのジャムの流通について貴社と意見交換を希望されています。ご関心がございましたら、お話しいただけますと幸いです。\n\nどうぞよろしくお願いいたします。\nCCIFJ",
+       "sender_name": "Marie Laurent",
+       "sender_email": "marie.laurent@example.test",
+       "recipient_emails": [
+        "sarah.faure@company-25.example.com"
+       ]
+      }
+     }
+    ],
+    "sources": []
+   },
+   {
+    "said": "[approve]",
+    "status": 200,
+    "seconds": 9.2,
+    "reply": "Your introduction has been stored for CCIFJ staff review. **Reference: SR-2026-000001.** Nothing has been sent; a staff member will review the request before anything is sent.\n\nWould you like help exploring another CCIFJ service for Maison Laurent’s Japan plans?",
+    "intent": "matching",
+    "approvals": [],
+    "sources": []
+   }
+  ]
+ },
+ {
+  "name": "engagement",
+  "locale": "en",
+  "turns": [
+   {
+    "said": "Which members need a follow-up right now?",
+    "status": 200,
+    "seconds": 19.1,
+    "reply": "**Eight members are flagged for follow-up**, in urgency order. These are fictional demo data. [1]\n\n1. **Luc ROUX — COMPANY 05:** Re-engage; joined 619 days ago and has had no activity for 210 days (90 days or more).\n2. **Antoine PETIT — COMPANY 19:** Re-engage; joined 273 days ago and has had no activity for 231 days (90 days or more).\n3. **Luc NAKAMURA — COMPANY 45:** Invite to a first event; joined 30 days ago and has attended none.\n4. **Yuki TANAKA — COMPANY 24:** Invite to a first event; joined 21 days ago and has attended none.\n5. **Alain MOREAU — COMPANY 33:** First-year check-in; joined 344 days ago (about one year).\n6. **Alex FAURE — COMPANY 07:** Encourage use of the member area; joined 51 days ago and has never signed in.\n7. **Thomas SUZUKI — COMPANY 41:** Welcome; joined 7 days ago (within the 14-day welcome period).\n8. **Alain NAKAMURA — COMPANY 13:** Explore service needs; joined 148 days ago, attended 2 events, and has used no CCIFJ service.\n\nWould you like me to prepare a personalised follow-up draft for **Luc ROUX** for CCIFJ staff to review before sending?",
+    "intent": "engagement",
+    "approvals": [],
+    "sources": [
+     {
+      "title": "Member engagement records (fictional demo data)",
+      "cited": true
+     }
+    ]
+   },
+   {
+    "said": "Prepare the follow-up for Luc Nakamura. I am Tomoyo Funabashi, t.funabashi@ccifj.or.jp.",
+    "status": 200,
+    "seconds": 33.6,
+    "reply": "Luc is at the **first-event** stage: he joined 30 days ago, has not attended an event, and wants to build business contacts in Japan, with interests in retail and emerging brands. These member details are fictional demo data. [1]\n\nA suitable invitation is **A Table ! Connecting over French Cuisine**, on **18 November 2026, 19:00–21:00**, in Maebashi. It offers a general networking opportunity over a meal, though it is not specifically focused on retail. [2]\n\n```email\nTo: luc.nakamura@company-45.example.com\nFrom: Tomoyo Funabashi <t.funabashi@ccifj.or.jp>\nSubject: A first opportunity to build business connections\n\nDear Luc,\n\nI hope you’re settling in well as a CCIFJ member. You mentioned wanting to build business contacts in Japan, so I’d like to suggest A Table ! Connecting over French Cuisine on 18 November, from 19:00 to 21:00, at 1 Chome-1-1 Jotomachi, Maebashi.\n\nIt’s a welcoming opportunity to meet people over a French meal, and it could be a nice first CCIFJ event for you. You can find the details and register here:\nhttps://www.ccifj.or.jp/en/events/upcoming-events/event-details/event/a-table-echanges-autour-dun-repas-francais.html\n\nI hope you can join us!\n\nBest regards,\nTomoyo\n```\n\nWould you like to approve this draft as written, or change anything before it is stored for CCIFJ staff review?",
+    "intent": "engagement",
+    "approvals": [],
+    "sources": [
+     {
+      "title": "Member engagement records (fictional demo data)",
+      "cited": true
+     },
+     {
+      "title": "A Table ! Connecting over French Cuisine",
+      "cited": true
+     }
+    ]
+   },
+   {
+    "said": "Perfect. Please store it.",
+    "status": 200,
+    "seconds": 6.8,
+    "reply": "Please review the follow-up message below. Confirming stores it for staff review; nothing is sent to the member automatically.",
+    "intent": "engagement",
+    "approvals": [
+     {
+      "name": "save_member_followup",
+      "args": {
+       "subject": "A first opportunity to build business connections",
+       "message": "To: luc.nakamura@company-45.example.com\nFrom: Tomoyo Funabashi <t.funabashi@ccifj.or.jp>\nSubject: A first opportunity to build business connections\n\nDear Luc,\n\nI hope you’re settling in well as a CCIFJ member. You mentioned wanting to build business contacts in Japan, so I’d like to suggest A Table ! Connecting over French Cuisine on 18 November, from 19:00 to 21:00, at 1 Chome-1-1 Jotomachi, Maebashi.\n\nIt’s a welcoming opportunity to meet people over a French meal, and it could be a nice first CCIFJ event for you. You can find the details and register here:\nhttps://www.ccifj.or.jp/en/events/upcoming-events/event-details/event/a-table-echanges-autour-dun-repas-francais.html\n\nI hope you can join us!\n\nBest regards,\nTomoyo",
+       "sender_name": "Tomoyo Funabashi",
+       "sender_email": "t.funabashi@ccifj.or.jp",
+       "recipient_emails": [
+        "luc.nakamura@company-45.example.com"
+       ]
+      }
+     }
+    ],
+    "sources": []
+   },
+   {
+    "said": "[approve]",
+    "status": 200,
+    "seconds": 8.4,
+    "reply": "Stored for CCIFJ staff review as **SR-2026-000002**. The follow-up for Luc Nakamura has **not been sent**.\n\nWould you like to prepare a follow-up for another member?",
+    "intent": "engagement",
+    "approvals": [],
+    "sources": []
+   }
+  ]
+ },
+ {
+  "name": "matching-staff-fr",
+  "locale": "fr",
+  "turns": [
+   {
+    "said": "Trouve-moi 5 membres pertinents pour une startup française de logiciels de gestion d'énergie pour bâtiments, et rédige une proposition de mise en relation.",
+    "status": 200,
+    "seconds": 52.5,
+    "reply": "### Cinq membres à considérer\n\nL’annuaire consulté est constitué de **données fictives de démonstration** : ces pistes et contacts sont à vérifier avant toute démarche.\n\n1. **COMPANY 09 — Energy / Renewable Energy** : membre résident actif au Japon (tarif Kanto), spécialisé dans les capteurs de consommation, les audits de bâtiments et les tableaux de bord. C’est le rapprochement le plus direct avec votre logiciel. L’annuaire ne confirme ni activité de développement logiciel ni recherche de partenaires. Contact suggéré : **Ms Emilie FAURE, CEO** (japonais préféré). [1]\n2. **COMPANY 29 — Energy / Renewable Energy** : membre associé au Japon, actif dans la mesure de la consommation, l’optimisation des équipements et la réduction des usages. Complémentarité possible autour du suivi énergétique ; l’expertise bâtiment et l’activité logicielle restent à confirmer. Contact : **Ms Emilie KOBAYASHI, CEO** (japonais préféré). [1]\n3. **COMPANY 19 — Energy / Renewable Energy** : membre résident actif hors Kanto, proposant des solutions solaires pour des sites commerciaux et de services, avec suivi et maintenance. Proximité avec les enjeux énergétiques de bâtiments ; le suivi logiciel et l’intérêt pour la distribution ne sont pas confirmés. Contact : **Ms Naomi MOREAU, Business Development Manager** (japonais préféré). [1]\n4. **COMPANY 49 — Energy / Renewable Energy** : membre résident actif hors Kanto, spécialisé en conseil de transition énergétique, évaluations de consommation, scénarios d’investissement et suivi des économies. Les besoins des bâtiments et un éventuel partenariat logiciel restent à vérifier. Contact : **Ms Emilie DUBOIS, CEO** (japonais préféré). [1]\n5. **COMPANY 04 — Technology / Software** : membre résident actif hors Kanto, proposant développement d’applications, intégration de données et support utilisateur. Compétences logicielles potentiellement complémentaires, mais aucune expérience énergie/bâtiments n’est confirmée. Contact : **Ms Yuki DURAND, CFO** (anglais préféré ; fonction à valider pour cet échange). [1]\n\n### Proposition de mise en relation\n\n> Bonjour,\n>\n> Nous souhaiterions explorer une mise en relation entre **[nom de la startup]**, startup française spécialisée dans les logiciels de gestion de l’énergie des bâtiments, et **COMPANY 09**. Ses activités de suivi de consommation, d’installation de capteurs, d’audits de bâtiments et de tableaux de bord semblent offrir un point de départ pertinent pour échanger sur les besoins du marché japonais et d’éventuelles complémentarités ou pistes de partenariat.\n>\n> Pourriez-vous nous aider à organiser ce premier échange ?\n>\n> Bien cordialement,\n> **[Nom / coordonnées]**\n\n**COMPANY 09** semble la piste la plus directement alignée ; **COMPANY 29** et **COMPANY 19** sont également des contacts pertinents à envisager. L’équipe CCIFJ peut aider à les approcher. Pour personnaliser la proposition, il me manque le nom de votre startup et votre priorité (partenariat, clients, distribution ou expertise du marché japonais). Souhaitez-vous que je prépare une demande de mise en relation avec **COMPANY 09**, que l’équipe CCIFJ pourra examiner avant tout envoi ?",
+    "intent": "matching",
+    "approvals": [],
+    "sources": [
+     {
+      "title": "CCIFJ member directory (fictional demo data)",
+      "cited": true
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "engagement-inactive-ja",
+  "locale": "ja",
+  "turns": [
+   {
+    "said": "COMPANY 19のAntoine Petitさんは最近活動がありません。再エンゲージメントのための提案とフォローアップ文を用意してください。",
+    "status": 200,
+    "seconds": 36.7,
+    "reply": "### 再エンゲージメントの提案\nAntoineさんは入会から273日、最終活動から231日が経過し、90日以上非活動のため「Inactive: re-engage」に該当します。目標であるエネルギー・不動産分野の意思決定者への認知向上には、エネルギーやグリーンインフラ分野の登壇者もいる**Business Summit 2026**への参加を提案します。開催は**2026年12月1日 9:00〜19:30、東京・大手町**です。 [1] [2] チケットの空き状況は確認できません。イベントの詳細・申込は[Business Summit 2026](https://www.ccifj.or.jp/en/events/upcoming-events/event-details/event/business-summit-register-now.html)をご案内ください。\n\n※以下のメンバー情報は架空のデモデータです。\n\n### フォローアップ文\n```email\nTo: antoine.petit@company-19.example.com\nFrom: [your name] <[your email]>\nSubject: Reconnecting with CCIFJ — Business Summit 2026\n\nDear Antoine,\n\nI hope you’ve been well. It’s been a little while since we were last in touch, and I’d be glad to help you make the most of your CCIFJ membership.\n\nYou mentioned wanting to raise COMPANY 19’s visibility with energy and real-estate decision-makers. Would you consider joining Business Summit 2026 on December 1 in Otemachi? The event brings together business leaders from France, Japan and Asia, including speakers from the energy sector. You can find details and register here: https://ccifj-bs.event-base.io/register/french-japanese-business-summit-2026/registration\n\nIf useful, Tomoyo Funabashi, Membership Manager, would be happy to speak with you: t.funabashi@ccifj.or.jp.\n\nBest regards,\n[your name]\n```\n差出人名・メールアドレスをご記入ください。承認後、文面はスタッフ確認用として保存されます（メールは自動送信されません）。会員担当への連絡先：[お問い合わせページ](https://www.ccifj.or.jp/en/membership/contact-us.html)。\n\nこの案を承認しますか、それとも修正をご希望ですか？",
+    "intent": "engagement",
+    "approvals": [],
+    "sources": [
+     {
+      "title": "Member engagement records (fictional demo data)",
+      "cited": true
+     },
+     {
+      "title": "Business Summit 2026",
+      "cited": true
+     },
+     {
+      "title": "お問い合わせページ",
+      "cited": false
+     },
+     {
+      "title": "Registration",
+      "cited": false
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "matching-no-fit",
+  "locale": "en",
+  "turns": [
+   {
+    "said": "Find me a member company that builds nuclear submarines.",
+    "status": 200,
+    "seconds": 33.2,
+    "reply": "I couldn’t find a CCIFJ member whose directory entry says it builds nuclear submarines. The closest manufacturing entry is **COMPANY 02** (Manufacturing / Automotive); its description covers precision mechanical components, rapid prototyping, small-batch machining, and dimensional inspection, but does **not** confirm submarine building or nuclear expertise. The matching data is fictional demo data. [1]\n\nYou could ask the Membership team whether they know of a suitable company: [2]\n\nTomoyo FUNABASHI, Membership Manager  \nt.funabashi@ccifj.or.jp\n\nMarianne BARGES, Membership Associate Manager & Communication Coordinator  \nm.barges@ccifj.or.jp\n\nWould you like help drafting an inquiry to the Membership team?",
+    "intent": "matching",
+    "approvals": [],
+    "sources": [
+     {
+      "title": "CCIFJ member directory (fictional demo data)",
+      "cited": true
+     },
+     {
+      "title": "Membership: contact us",
+      "cited": true
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "engagement-unknown-member",
+  "locale": "en",
+  "turns": [
+   {
+    "said": "Prepare a follow-up for our member Jean Valjean at COMPANY 99.",
+    "status": 200,
+    "seconds": 21.5,
+    "reply": "I couldn’t find an engagement entry for Jean Valjean at COMPANY 99, so I can’t verify his stage or prepare a tailored recommendation and follow-up draft. The engagement information available here is fictional demo data. [1]\n\nCould you check the spelling of his name or the company details and send the corrected information?",
+    "intent": "engagement",
+    "approvals": [],
+    "sources": [
+     {
+      "title": "Member engagement records (fictional demo data)",
+      "cited": true
+     }
+    ]
+   }
+  ]
+ }
+]

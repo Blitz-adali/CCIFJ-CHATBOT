@@ -27,6 +27,7 @@ from ..db.relationaldb.models import (
 )
 from ..db.relationaldb.session import AsyncSessionLocal
 from ..db.relationaldb.datetimes import japan_now
+from ..integrations import odoo
 
 logger = logging.getLogger(__name__)
 
@@ -1876,6 +1877,16 @@ async def submit_staff_request(
             f"The staff request may have been stored as {reference}, but it could not be verified. "
             "Do not retry automatically; tell the user to contact CCIFJ if they get no reply."
         )
+
+    # Optional: also create it in CCIFJ's Odoo CRM as a lead (off until ODOO_* is configured).
+    # The request is already stored; Odoo being slow or down never fails the answer.
+    if odoo.enabled():
+        import asyncio
+        await asyncio.to_thread(odoo.push_staff_request, {
+            "reference": reference, "request_type": request_type, "category": category,
+            "subject": subject.strip(), "message": message.strip(), "sender_name": sender_name.strip(),
+            "sender_email": sender_email, "recipient_emails": recipients,
+        })
 
     recipient = ", ".join(recipients) or "the CCIFJ team"
     return (

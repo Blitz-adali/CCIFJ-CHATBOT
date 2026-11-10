@@ -37,9 +37,19 @@ Edit `CCIFJ_API_TARGET` for the development/preview proxy. Restart Vite after ch
 
 ## Languages
 
-The interface follows the browser language (English, French or Japanese); `?lang=en`, `?lang=fr` or `?lang=ja` overrides it. Each message is sent with the locale detected from its text, falling back to the interface language.
+The interface follows `?lang=en`, `?lang=fr` or `?lang=ja` when present, then the language the visitor picked in the header's language menu (remembered in the browser), then the browser language (English, French or Japanese). Each message is sent with the locale detected from its text, falling back to the interface language.
 
 Site translations: `src/site-copy.ts`. Chat translations: `src/i18n.ts` and `src/WidgetChat.tsx`.
+
+## Embedding in another website
+
+`public/embed.js` adds a chat button to any page and opens this app in a panel:
+
+```html
+<script src="https://CONCIERGE-HOST/embed.js" data-lang="fr" defer></script>
+```
+
+`public/embed-demo.html` is an example host page (http://127.0.0.1:5173/embed-demo.html in development). Options are documented at the top of `public/embed.js`; the installation path is in `docs/DEPLOYMENT.md`. Opened this way the app gets `?embed=1`: a compact header, and the host page chooses the language.
 
 ## Build and preview
 
