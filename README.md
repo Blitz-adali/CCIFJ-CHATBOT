@@ -15,6 +15,7 @@ dashboard, without coding.
 | Review the hackathon submission | [Hackathon submission](#hackathon-submission) |
 | Understand how it is built | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Install it for CCIFJ, and see the costs | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| Use it from Prisme.ai | [prisme/README.md](prisme/README.md) |
 | Rehearse the demo | [docs/HACKATHON.md](docs/HACKATHON.md) |
 
 ---
@@ -226,6 +227,7 @@ environment is described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 | **Personal touch** | Asks for the details that change its advice (industry, country, B2B or B2C, stage) before answering an advisory question, once, and lets the user skip. Knows the date and the signed-in user's bookings, membership (with the company's industry and location), and newsletter status. Remembers the last few exchanges, so it builds on earlier advice instead of repeating it. |
 | **Web search** | With an OpenAI model, the events and general agents can search the web for market context (competitors, market size, trade shows) and recent CCIFJ news. CCIFJ facts (fees, events, members, contacts) still come only from the tools. Switch it off with `CCIFJ_WEB_SEARCH=off`. |
 | **Embedding** | `ccifj-frontend/public/embed.js` adds a chat button to any page (TYPO3 included) with one `<script>` tag; `embed-demo.html` is an example host page. |
+| **Prisme.ai** | A published Prisme agent passes each question to this backend through one custom function, so the concierge can be used inside CCIFJ's Prisme workspace with the same answers as on the website. The exported agent is in [`prisme/`](prisme/README.md) for another chamber to import. Text only: bookings and approvals stay in the web chat. |
 | **Safety** | Keeps to CCIFJ topics and refuses unrelated requests. It treats tool results and documents as data, not instructions. Every database write needs explicit approval. It never shows the user its internals (databases, tools, event IDs). |
 
 ---
@@ -236,7 +238,10 @@ environment is described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 **Main agent:** Agent 1, the conversational assistant for website visitors.
 **Extra agents claimed as bonuses:** Agent 3 (member matching and introductions) and
-Agent 2 (member engagement). The Prisme bonus is not claimed.
+Agent 2 (member engagement).
+**Prisme reuse bonus:** claimed. The concierge runs as a published Prisme.ai agent that calls this
+backend, and the agent is exported for another chamber to import. It is a thin wrapper: the knowledge
+and the agents stay in this backend. See [prisme/README.md](prisme/README.md).
 
 | Agent | Where to look |
 |---|---|
@@ -244,6 +249,7 @@ Agent 2 (member engagement). The Prisme bonus is not claimed.
 | 2. Member engagement | **Dashboard → Onboarding & automation**: the rules, a run, and the drafted follow-ups staff review before anything is sent. |
 | 3. Member matching | **Dashboard → Matching & intros**, or ask the chat for a company. |
 | Staff update information without coding | **Dashboard → Events, Member companies, Knowledge files, Staff directory**. |
+| Prisme.ai agent | [prisme/README.md](prisme/README.md): how it works, the exported agent, and the tests run in the Prisme Playground. |
 
 ### Evidence
 
@@ -256,6 +262,10 @@ Agent 2 (member engagement). The Prisme bonus is not claimed.
   `cd ccifj-frontend && npm test`. See [Testing](#testing).
 - **Sources:** answers cite the crawled ccifj.or.jp pages and the documents staff added; the chat shows them under
   each answer, and staff see them in the conversation view.
+- **Prisme.ai:** on 10 November 2026 the published Prisme agent answered in English, French and Japanese through
+  the backend and kept a follow-up question in the same conversation. The exported agent file was then imported
+  as a new agent, which worked after one address was set. Screenshots and the test table are in
+  [prisme/README.md](prisme/README.md).
 - **Installation, integration and costs:** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Declarations
@@ -273,6 +283,8 @@ Knowledge content is the public ccifj.or.jp website (crawled) and the organisers
 | LangSmith | Tracing during development | No; off by default |
 | Odoo | Creating a CRM lead for each approved request | No; off by default |
 | Calameo | Reading a linked publication's public page, or the official API when keys are set | No; only when staff link a publication |
+| Prisme.ai | Hosting the optional Prisme agent, which sends each question to this backend's chat endpoint | No; only for the Prisme agent |
+| Cloudflare quick tunnel | Giving the laptop's backend a public address for the Prisme agent during the hackathon | No; a deployed backend has its own address |
 
 Tesseract (OCR) and, optionally, Ollama run on the same machine as the agent.
 
@@ -348,6 +360,7 @@ cd ccifj-frontend && npm test
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Installing it in CCIFJ's environment (TYPO3, Odoo, GetResponse), keeping content current, running costs and who maintains what |
 | [docs/HACKATHON.md](docs/HACKATHON.md) | The demo runbook: staff access, the walkthrough and the evaluation commands |
 | [demo/live_eval_results.md](demo/live_eval_results.md) | The live evaluation on the organisers' question bank |
+| [prisme/README.md](prisme/README.md) | The Prisme.ai agent: set-up, the backend's address, the exported agent, reuse by another chamber, limits |
 | [src/concierge/api/README.md](src/concierge/api/README.md) | The full API reference |
 | [src/concierge/db/README.md](src/concierge/db/README.md) | The database tables |
 | [ccifj-frontend/README.md](ccifj-frontend/README.md) | The website and dashboard code |
