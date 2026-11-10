@@ -3,8 +3,10 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
+from langgraph.errors import GraphBubbleUp
 import json
 import logging
+import os
 import re
 from .schema_prompts import (
         AgentState,
@@ -25,6 +27,7 @@ from .schema_prompts import (
         normalize_lang,
     )
 from .model import llm, llm_routing
+from .sources import apply_citations, number_tags, sources_in_tool_output, sources_note, strip_tracking
 from ..db.relationaldb.datetimes import japan_now
 from .utlis import (
     last_humain_message,
@@ -38,6 +41,8 @@ from .langchain_agents import (
     event_agent,
     membership_agent,
     general_agent,
+    matching_agent,
+    engagement_agent,
 )
 
 logger = logging.getLogger(__name__)
@@ -378,6 +383,9 @@ async def orchestrator_node(state: AgentState):
 
     structured_llm = llm_routing.with_structured_output(OrchestratorPlan)
     attachment_context = _attachment_context_prompt(state.get("context", []))
+    previous = [str(target) for target in state.get("last_targets") or [] if target]
+    if previous:
+        attachment_context += f"\n\nPrevious turn handled by: {', '.join(previous)}."
     response: OrchestratorPlan = await structured_llm.ainvoke(
         [{"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT + _user_context_prompt(state) + attachment_context}]
         + recent_context
@@ -506,6 +514,53 @@ async_supervisor_node = orchestrator_node
 #>>>>>>> Worker Nodes <<<<<<#
 #############################
 
+_WORKER_UNAVAILABLE = (
+    "This part of the request could not be checked right now because of a temporary technical problem. "
+    "Nothing was booked, changed, or stored. Tell the user this part could not be checked, do not guess "
+    "the missing facts, and offer the relevant CCIFJ contact or a message to the CCIFJ team."
+)
+
+
+async def _run_specialist(agent, domain: str, input_messages: list, state: dict, config) -> dict | None:
+    """Run one specialist. A failure in one specialist (a tool or model error) must not
+    take down the whole answer: the others still answer and the collector says what
+    could not be checked. Approval pauses are not failures and pass through."""
+    try:
+        return await agent.ainvoke({"messages": input_messages, "user_id": state.get("user_id")}, config=config)
+    except GraphBubbleUp:
+        raise
+    except Exception:
+        logger.exception("The %s specialist failed; answering without it", domain)
+        return None
+
+
+_REJECTED_NOTE = "\n\n[The user rejected the approval for this action in this turn.]"
+_WRITE_ACTIONS = {"event.book", "space.book", "newsletter.subscribe"}
+
+
+def _rejection_note(messages: list) -> str:
+    """Mark a turn in which the user declined an approval, so the answer does not
+    put a button for the same action right under "nothing was booked"."""
+    for message in messages:
+        if (
+            isinstance(message, ToolMessage)
+            and getattr(message, "status", None) == "error"
+            and isinstance(message.content, str)
+            and "rejected" in message.content.casefold()
+        ):
+            return _REJECTED_NOTE
+    return ""
+
+
+def _retrieved_sources(messages: list) -> list[dict]:
+    """The official pages and documents named by this turn's tool results."""
+    found: list[dict] = []
+    for message in messages:
+        if isinstance(message, ToolMessage) and isinstance(message.content, str):
+            found.extend(sources_in_tool_output(message.content))
+    return found
+
+
 async def events_node(state: AgentState, config: RunnableConfig = None) -> dict:
     """Specialist worker for events, summits, ticket bookings, space rentals, and sponsorships."""
     plan = state.get("plan") or {}
@@ -538,9 +593,9 @@ async def events_node(state: AgentState, config: RunnableConfig = None) -> dict:
     else:
         input_messages = agent_messages
 
-    result = await event_agent.ainvoke(
-        {"messages": input_messages, "user_id": state.get("user_id")}, config=config
-    )
+    result = await _run_specialist(event_agent, "events", input_messages, state, config)
+    if result is None:
+        return {"worker_results": {"events": _WORKER_UNAVAILABLE}}
     result_messages = result["messages"]
     # Do not assume the agent returns the input messages byte-for-byte and in
     # the same shape. Find the latest user turn in the returned transcript, then
@@ -587,7 +642,8 @@ async def events_node(state: AgentState, config: RunnableConfig = None) -> dict:
         }.get(locale, "I can help with event tickets. Which event would you like to attend? To place a booking, I’ll need the attendee details and your confirmation.")
 
     return {
-        "worker_results": {"events": response_text + _referenced_events(new_messages)},
+        "worker_results": {"events": response_text + _referenced_events(new_messages) + _rejection_note(new_messages)},
+        "retrieved_sources": _retrieved_sources(new_messages),
     }
 
 
@@ -657,9 +713,9 @@ async def membership_node(state: AgentState, config: RunnableConfig = None) -> d
     else:
         input_messages = agent_messages
 
-    result = await membership_agent.ainvoke(
-        {"messages": input_messages, "user_id": state.get("user_id")}, config=config
-    )
+    result = await _run_specialist(membership_agent, "membership", input_messages, state, config)
+    if result is None:
+        return {"worker_results": {"membership": _WORKER_UNAVAILABLE}}
     new_messages = result["messages"][len(input_messages):]
 
     response_text = ""
@@ -675,6 +731,7 @@ async def membership_node(state: AgentState, config: RunnableConfig = None) -> d
 
     return {
         "worker_results": {"membership": response_text},
+        "retrieved_sources": _retrieved_sources(new_messages),
     }
 
 
@@ -694,9 +751,9 @@ async def general_node(state: AgentState, config: RunnableConfig = None) -> dict
     else:
         input_messages = agent_messages
 
-    result = await general_agent.ainvoke(
-        {"messages": input_messages, "user_id": state.get("user_id")}, config=config
-    )
+    result = await _run_specialist(general_agent, "general", input_messages, state, config)
+    if result is None:
+        return {"worker_results": {"general": _WORKER_UNAVAILABLE}}
     new_messages = result["messages"][len(input_messages):]
 
     response_text = ""
@@ -711,8 +768,46 @@ async def general_node(state: AgentState, config: RunnableConfig = None) -> dict
         response_text = _message_text(getattr(last_m, "content", ""))
 
     return {
-        "worker_results": {"general": response_text},
+        "worker_results": {"general": response_text + _rejection_note(new_messages)},
+        "retrieved_sources": _retrieved_sources(new_messages),
     }
+
+
+async def _extra_agent_node(state: AgentState, config, domain: str, agent, title: str) -> dict:
+    """Shared body of the two extra agents (member matching, member engagement)."""
+    plan = state.get("plan") or {}
+    sub_query = " | ".join(t.get("sub_query", "") for t in plan.get("tasks", []) if t.get("target") == domain)
+    input_messages = _worker_messages(state)
+    if sub_query:
+        input_messages = input_messages + [
+            HumanMessage(content=f"[Focus Task for {title}]: {sub_query}" + _focus_details(plan))
+        ]
+    result = await _run_specialist(agent, domain, input_messages, state, config)
+    if result is None:
+        return {"worker_results": {domain: _WORKER_UNAVAILABLE}}
+    new_messages = result["messages"][len(input_messages):]
+    response_text = ""
+    for msg in reversed(new_messages):
+        if isinstance(msg, AIMessage) and msg.content:
+            response_text = _message_text(msg.content)
+            if response_text.strip():
+                break
+    if not response_text and new_messages:
+        response_text = _message_text(getattr(new_messages[-1], "content", ""))
+    return {
+        "worker_results": {domain: response_text + _rejection_note(new_messages)},
+        "retrieved_sources": _retrieved_sources(new_messages),
+    }
+
+
+async def matching_node(state: AgentState, config: RunnableConfig = None) -> dict:
+    """Extra agent: finds member companies that fit a need and prepares introductions."""
+    return await _extra_agent_node(state, config, "matching", matching_agent, "Member Matching Agent")
+
+
+async def engagement_node(state: AgentState, config: RunnableConfig = None) -> dict:
+    """Extra agent: member onboarding and engagement follow-ups for CCIFJ staff."""
+    return await _extra_agent_node(state, config, "engagement", engagement_agent, "Member Engagement Agent")
 
 
 #############################
@@ -727,6 +822,14 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
     results = state.get("worker_results") or {}
     if not results:
         return {"worker_results": {}}
+    # Turn the specialists' "(source: ...)" tags into numbered markers; only
+    # pages and documents the tools returned this turn can be cited.
+    retrieved = state.get("retrieved_sources") or []
+    raw_results = results
+    results, numbered_sources = number_tags(results, retrieved)
+    if os.getenv("CCIFJ_DEBUG_FINDINGS"):
+        # Diagnostic: what each specialist returned and which sources it tagged.
+        logger.warning("FINDINGS %s\nRETRIEVED %s\nNUMBERED %s", raw_results, retrieved, numbered_sources)
 
     lang = state.get("lang", "en")
     last_human = ""
@@ -744,6 +847,7 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
 
     details = _user_details_note(state.get("plan") or {})
     user_context += f"\n{details}\n" if details else "\nNo details about the user matter for this request.\n"
+    user_context += sources_note(numbered_sources)
 
     user_context += (
         f"\nTask: Synthesize the above specialist findings into one unified, elegant, and structured response in the language of the user's latest message (ISO 639-1 code '{lang}'). "
@@ -769,17 +873,27 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
             if len(kept) < len(proposed):
                 # WARNING so it shows with the default logging setup.
                 logger.warning("next_actions filtered: proposed=%s kept=%s", proposed, kept)
-            next_actions = await _with_booking_action(next_actions, state, findings, booked_ids)
+            if _REJECTED_NOTE.strip() in findings:
+                # The user just said no: only a new request can start that action again.
+                next_actions = [action for action in next_actions if action["id"] not in _WRITE_ACTIONS]
+            else:
+                next_actions = await _with_booking_action(next_actions, state, findings, booked_ids)
             suggested = _clean_suggestions(output.suggested_questions, next_actions)
     except Exception:
         logger.exception("Structured collector synthesis failed; falling back to plain text")
 
-    if answer:
-        synthesized_response = AIMessage(content=answer)
-    else:
+    if not answer:
         # Never lose the answer because structured output failed.
-        synthesized_response = await llm.ainvoke(synthesis_messages, config=config)
+        fallback = await llm.ainvoke(synthesis_messages, config=config)
+        answer = _message_text(fallback.content).strip()
         next_actions = []
+    answer, sources = apply_citations(strip_tracking(answer), numbered_sources)
+    if not sources and retrieved:
+        # The answer came from CCIFJ information but kept no marker (a table, a
+        # very short answer): still show where it came from, starting with the
+        # sources the specialists tagged, then the best-ranked ones consulted.
+        sources = (numbered_sources or retrieved)[:2]
+    synthesized_response = AIMessage(content=answer)
 
     return {
         "messages": [synthesized_response],
@@ -788,6 +902,7 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
         "target_route": None,
         "next_actions": next_actions,
         "suggested_questions": suggested,
+        "sources": sources,
     }
 
 
@@ -843,7 +958,7 @@ async def final_policy_node(state: AgentState) -> dict:
     replacement = [AIMessage(content=refusal)]
     if answer_message.id:
         replacement.insert(0, RemoveMessage(id=answer_message.id))
-    return {"messages": replacement, "suggested_questions": [], "next_actions": []}
+    return {"messages": replacement, "suggested_questions": [], "next_actions": [], "sources": []}
 
 
 #############################
@@ -858,6 +973,8 @@ parent_builder.add_node("orchestrator_node", orchestrator_node)
 parent_builder.add_node("events_node", events_node)
 parent_builder.add_node("membership_node", membership_node)
 parent_builder.add_node("general_node", general_node)
+parent_builder.add_node("matching_node", matching_node)
+parent_builder.add_node("engagement_node", engagement_node)
 parent_builder.add_node("collector_node", collector_node)
 parent_builder.add_node("final_policy_node", final_policy_node)
 
@@ -872,6 +989,8 @@ parent_builder.add_conditional_edges(
         "events_node": "events_node",
         "membership_node": "membership_node",
         "general_node": "general_node",
+        "matching_node": "matching_node",
+        "engagement_node": "engagement_node",
         "END": "final_policy_node",
     },
 )
@@ -880,6 +999,8 @@ parent_builder.add_conditional_edges(
 parent_builder.add_edge("events_node", "collector_node")
 parent_builder.add_edge("membership_node", "collector_node")
 parent_builder.add_edge("general_node", "collector_node")
+parent_builder.add_edge("matching_node", "collector_node")
+parent_builder.add_edge("engagement_node", "collector_node")
 
 # Collector -> END
 parent_builder.add_edge("collector_node", "final_policy_node")

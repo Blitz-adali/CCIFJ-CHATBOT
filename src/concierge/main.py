@@ -11,7 +11,7 @@ from datetime import timedelta
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from concierge.api import auth, chat, health, sessions
+from concierge.api import auth, chat, health, sessions, staff
 from concierge.api.agent_backend import warm_agent
 from concierge.config import get_settings
 from concierge.db.relationaldb import crud
@@ -68,7 +68,8 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(chat.router)
-for router in (health.router, auth.router, sessions.router, chat.router):
+app.include_router(staff.router)
+for router in (health.router, auth.router, sessions.router, chat.router, staff.router):
     app.include_router(router, prefix="/api/v1")
 
 # Only explicit frontend origins are allowed; no permissive wildcard default.
@@ -76,5 +77,5 @@ settings = get_settings()
 if settings.cors_origins:
     app.add_middleware(
         CORSMiddleware, allow_origins=list(settings.cors_origins),
-        allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"],
+        allow_methods=["GET", "POST", "PUT"], allow_headers=["Authorization", "Content-Type", "X-Staff-Key"],
     )

@@ -37,7 +37,11 @@ def web_search_tools() -> list[dict]:
     if os.getenv("CCIFJ_WEB_SEARCH", "on").strip().lower() in {"0", "false", "no", "off"}:
         return []
     raw = os.getenv("CCIFJ_WEB_SEARCH_DOMAINS", _DEFAULT_WEB_DOMAINS).strip()
+    # A small search context keeps answers fast; "medium" or "high" read more per search.
+    context = os.getenv("CCIFJ_WEB_SEARCH_CONTEXT", "low").strip().lower()
     tool: dict = {"type": "web_search"}
+    if context in {"low", "medium", "high"}:
+        tool["search_context_size"] = context
     if raw and raw != "*":
         domains = [d.strip() for d in raw.split(",") if d.strip()]
         tool["filters"] = {"allowed_domains": domains}

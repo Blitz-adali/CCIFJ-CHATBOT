@@ -65,7 +65,12 @@ export interface PendingApproval {
 export interface ChatSource {
   id?: string;
   title: string;
-  url: string;
+  /** Missing for an approved CCIFJ document that has no public page. */
+  url?: string | null;
+  /** True when the answer cites this source with a numbered marker such as [1]. */
+  cited?: boolean;
+  /** CCIFJ's own page or document, as opposed to a public web page. */
+  official?: boolean;
   snippet?: string;
   locale?: Locale | string;
   last_checked?: string;

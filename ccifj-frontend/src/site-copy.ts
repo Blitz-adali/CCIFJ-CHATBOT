@@ -20,10 +20,26 @@ export const siteCopy = {
   },
 } satisfies Record<Locale, {name:string;chamber:string;language:string;title:string;subtitle:string;assistant:string;checking:string;online:string;offline:string;footer:string;skip:string}>;
 
-/** Explicit embed setting wins; otherwise use the browser's preferred language. */
+const LOCALE_STORAGE_KEY = 'ccifj.locale';
+export const localeNames: Record<Locale, string> = { en: 'English', fr: 'Français', ja: '日本語' };
+
+function isLocale(value: unknown): value is Locale {
+  return value === 'fr' || value === 'en' || value === 'ja';
+}
+
+/** Remember the language the visitor picked; storage may be unavailable (private mode, embeds). */
+export function saveLocale(locale: Locale): void {
+  try { window.localStorage.setItem(LOCALE_STORAGE_KEY, locale); } catch { /* the choice still applies to this visit */ }
+}
+
+/** Explicit embed setting wins, then the visitor's saved choice, then the browser's preferred language. */
 export function readLocale(): Locale {
   const query = new URLSearchParams(window.location.search).get('lang');
-  if (query === 'fr' || query === 'en' || query === 'ja') return query;
+  if (isLocale(query)) return query;
+  try {
+    const saved = window.localStorage?.getItem(LOCALE_STORAGE_KEY);
+    if (isLocale(saved)) return saved;
+  } catch { /* fall through to the browser language */ }
   const preferences = typeof navigator === 'undefined' ? [] : [...(navigator.languages ?? []), navigator.language];
   for (const preference of preferences) {
     const language = preference.toLowerCase().split(/[-_]/)[0];

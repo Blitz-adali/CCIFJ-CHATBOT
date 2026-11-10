@@ -413,7 +413,7 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(formatted["intent"], {"code": "events"})
         self.assertEqual(formatted["suggested_questions"], ["a", "b", "c"])
         self.assertEqual(formatted["path_actions"], [])
-        self.assertEqual(formatted["agent_state"], {"out_of_scope_count": 2})
+        self.assertEqual(formatted["agent_state"], {"out_of_scope_count": 2, "last_targets": ["events"]})
         self.assertEqual(formatted["attachment_count"], 1)
         self.assertEqual(formatted["sources"][0]["url"], "https://www.ccifj.or.jp/en/events.html")
         token = response_locale.set("ja")

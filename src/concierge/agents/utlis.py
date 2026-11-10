@@ -60,6 +60,8 @@ def route_from_orchestrator(state: AgentState):
         "events": "events_node",
         "membership": "membership_node",
         "general": "general_node",
+        "matching": "matching_node",
+        "engagement": "engagement_node",
     }
     targets = [node_map[t["target"]] for t in tasks if t.get("target") in node_map]
     if not targets:

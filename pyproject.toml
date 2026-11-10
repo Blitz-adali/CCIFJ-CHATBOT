@@ -39,6 +39,7 @@ dependencies = [
 [project.scripts]
 concierge = "concierge:main"
 concierge-db = "concierge.db.relationaldb.migrate:main"
+concierge-kb = "concierge.rag.src.documents:main"
 
 [build-system]
 requires = ["uv_build>=0.13.4,<0.14.0"]

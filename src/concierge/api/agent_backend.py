@@ -61,6 +61,16 @@ APPROVAL_PROMPTS = {
         "fr": "Vérifiez ci-dessous votre message au personnel de la CCIFJ. La confirmation l’enregistrera pour l’équipe ; aucun e-mail n’est envoyé automatiquement.",
         "ja": "下のCCIFJスタッフへのメッセージをご確認ください。確定するとチーム向けに保存されます。メールは自動送信されません。",
     },
+    "save_introduction_request": {
+        "en": "Please review the introduction below. Confirming stores it for CCIFJ staff, who review it before anything is sent to the member.",
+        "fr": "Vérifiez la mise en relation ci-dessous. La confirmation l’enregistre pour l’équipe CCIFJ, qui la relit avant tout envoi au membre.",
+        "ja": "下のご紹介内容をご確認ください。確定するとCCIFJスタッフ向けに保存され、スタッフが確認した後に会員へ送られます。",
+    },
+    "save_member_followup": {
+        "en": "Please review the follow-up message below. Confirming stores it for staff review; nothing is sent to the member automatically.",
+        "fr": "Vérifiez le message de suivi ci-dessous. La confirmation l’enregistre pour relecture ; rien n’est envoyé automatiquement au membre.",
+        "ja": "下のフォローアップメッセージをご確認ください。確定すると確認用に保存されます。会員へ自動送信はされません。",
+    },
     "cancel_event_booking": {
         "en": "Please check the booking below. Confirming will cancel it and all its tickets.",
         "fr": "Vérifiez la réservation ci-dessous. La confirmation l’annulera, ainsi que tous ses billets.",
@@ -90,7 +100,7 @@ APPROVAL_PROMPTS = {
 
 
 # Approvals a guest may answer; every other write tool needs an account.
-GUEST_APPROVAL_TOOLS = {"submit_staff_request"}
+GUEST_APPROVAL_TOOLS = {"submit_staff_request", "save_introduction_request", "save_member_followup"}
 NEWSLETTER_NAMES = {
     "general_news": "CCIFJ General Corporate News",
     "training_announcements": "CCIFJ Training & Workshops Announcements",
@@ -121,6 +131,33 @@ def next_actions(result) -> list[dict]:
             item["event_id"] = action["event_id"]
         actions.append(item)
     return actions[:2]
+
+
+def answer_sources(result, linked) -> list[dict]:
+    """The pages and documents behind an answer.
+
+    The sources the answer cites come first, in marker order (``[1]`` is the
+    first item), each marked ``cited``. Links written in the answer follow.
+    ``official`` separates CCIFJ's own pages and documents from public web pages.
+    """
+    from concierge.agents.sources import is_official, source_key
+
+    sources, seen = [], set()
+    for source in result.get("sources") or []:
+        if not isinstance(source, dict) or not str(source.get("title") or "").strip():
+            continue
+        key = source_key(source)
+        if key in seen:
+            continue
+        seen.add(key)
+        url = source.get("url") or None
+        sources.append({"title": str(source["title"]).strip(), "url": url, "cited": True, "official": is_official(url)})
+    for link in linked:
+        key = source_key(link)
+        if key not in seen:
+            seen.add(key)
+            sources.append({**link, "cited": False, "official": is_official(link.get("url"))})
+    return sources
 
 
 def _text(content) -> str:
@@ -315,10 +352,13 @@ class AgentBackend:
         from langchain_core.messages import AIMessage, HumanMessage
 
         inputs = agent_inputs.get() or {}
+        from concierge.agents.sources import strip_markers
+
+        # Citation markers belong to the answer they were written for; a later
+        # turn has its own numbered sources.
         messages = [
-            (HumanMessage if row.role.value == "user" else AIMessage)(
-                content=row.content, id=f"db:{row.message_id}"
-            )
+            HumanMessage(content=row.content, id=f"db:{row.message_id}") if row.role.value == "user"
+            else AIMessage(content=strip_markers(row.content), id=f"db:{row.message_id}")
             for row in history if row.role.value in {"user", "assistant"}
         ]
         override = inputs.get("agent_message")
@@ -330,6 +370,7 @@ class AgentBackend:
             "user_id": str(user_id) if user_id is not None else None,
             "context": list(inputs.get("context") or []),
             "out_of_scope_count": int(inputs.get("out_of_scope_count") or 0),
+            "last_targets": [str(t) for t in inputs.get("last_targets") or []][:5],
             "user_context": inputs.get("user_context"),
         }
         config = self.config(thread_id)
@@ -399,7 +440,9 @@ class AgentBackend:
         plan = result.get("plan") or {}
         tasks = plan.get("tasks", []) if isinstance(plan, dict) else []
         intent = ", ".join(dict.fromkeys(t.get("target", "") for t in tasks if isinstance(t, dict) and t.get("target")))
-        sources, actions = linked_resources(reply)
+        linked, actions = linked_resources(reply)
+        # An approval prompt or a login notice replaces the answer, so it has no sources.
+        sources = answer_sources({} if approvals or warnings else result, linked)
         return {
             "reply": reply, "pending_approvals": approvals, "sources": sources, "actions": actions,
             "suggested_questions": suggested, "warnings": warnings,
@@ -408,7 +451,12 @@ class AgentBackend:
             "path_actions": [],
             "next_actions": actions_for_turn,
             "attachment_count": len(result.get("context") or []),
-            "agent_state": {"out_of_scope_count": int(result.get("out_of_scope_count") or 0)},
+            # Carried to the next turn: the refusal counter, and which specialists
+            # handled this turn so a short reply ("yes, store it") returns to them.
+            "agent_state": {
+                "out_of_scope_count": int(result.get("out_of_scope_count") or 0),
+                "last_targets": [t for t in intent.split(", ") if t] or [str(t) for t in result.get("last_targets") or []][:5],
+            },
         }
 
 

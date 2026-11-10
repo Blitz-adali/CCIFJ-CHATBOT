@@ -98,7 +98,7 @@ def blocks_to_markdown(blocks: list[dict]) -> str:
     return "\n".join(lines).strip()
 
 
-def chunk(max_chunk_size: int, documents: list[dict[str, str]]) -> list[MinimalSource]:
+def chunk(max_chunk_size: int, documents: list[dict[str, str]], start_id: int = 0) -> list[MinimalSource]:
     """Split document content into token-sized source chunks.
 
     Args:
@@ -106,7 +106,7 @@ def chunk(max_chunk_size: int, documents: list[dict[str, str]]) -> list[MinimalS
         documents: Documents containing ``url`` and ``content`` fields.
 
     Returns:
-        Source chunks with their URL, content, and sequential ID.
+        Source chunks with their URL, content, and sequential ID (from ``start_id``).
     """
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_MODEL_NAME)
     sources = []
@@ -124,14 +124,20 @@ def chunk(max_chunk_size: int, documents: list[dict[str, str]]) -> list[MinimalS
         ],
     )
 
-    id = 0
+    id = start_id
 
     for document in documents:
         content = document["content"]
         docs = splitter.create_documents([content])
+        # Every passage names where it comes from: a web page by its URL, an
+        # approved document (see documents.py) by its name. Answers cite these.
+        if document.get("kind") == "document":
+            origin = f"\ndocument: {document["title"]}\n"
+        else:
+            origin = f"\nurl: {document["url"]}\n"
 
         for doc in docs:
-            doc.page_content = f"\nurl: {document["url"]}\n" + doc.page_content
+            doc.page_content = origin + doc.page_content
             doc.page_content = f"# {document["title"]}\n" + doc.page_content
             source = MinimalSource(
                 url=document["url"],

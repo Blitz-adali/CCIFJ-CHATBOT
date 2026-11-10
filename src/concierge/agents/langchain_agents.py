@@ -101,3 +101,42 @@ general_agent = create_agent(
 )
 # Alias for backwards-compatibility with body.py
 business_agent = general_agent
+
+
+#################################################
+# 4. Member Matching Agent (extra agent: challenge 3)
+#################################################
+matching_agent = create_agent(
+    model.llm,
+    tools=[
+        t.find_member_matches,
+        t.get_member_record,
+        t.save_introduction_request,
+        t.get_ccifj_contact,
+        t.return_to_main_menu,
+    ],
+    middleware=[_write_approval(["save_introduction_request"])],
+    state_schema=ConciergeAgentState,
+    system_prompt=schema_prompts.MATCHING_AGENT_PROMPT,
+)
+
+
+#################################################
+# 5. Member Onboarding & Engagement Agent (extra agent: challenge 2)
+#################################################
+engagement_agent = create_agent(
+    model.llm,
+    tools=[
+        t.list_members_to_follow_up,
+        t.get_member_engagement,
+        t.list_available_events,
+        t.get_event_details,
+        t.search_vectordb,
+        t.get_ccifj_contact,
+        t.save_member_followup,
+        t.return_to_main_menu,
+    ],
+    middleware=[_write_approval(["save_member_followup"])],
+    state_schema=ConciergeAgentState,
+    system_prompt=schema_prompts.ENGAGEMENT_AGENT_PROMPT,
+)

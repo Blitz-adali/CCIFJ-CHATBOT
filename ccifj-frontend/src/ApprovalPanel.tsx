@@ -6,7 +6,7 @@ import type {ApprovalAction, Locale, PendingApproval} from './types';
 type Args = Record<string, unknown>;
 
 /** Approvals a guest may answer; every other action needs an account. */
-const GUEST_ACTIONS = new Set(['submit_staff_request']);
+const GUEST_ACTIONS = new Set(['submit_staff_request', 'save_introduction_request', 'save_member_followup']);
 const CANCEL_ACTIONS = new Set(['cancel_event_booking', 'cancel_space_reservation']);
 
 const words = {
@@ -23,6 +23,8 @@ const words = {
       book_event_ticket: {title: 'Book event tickets', approve: 'Confirm booking', reject: 'Don’t book', note: 'Your ticket reservation will be created in your CCIFJ account. No payment will be taken.'},
       book_space: {title: 'Reserve a CCIFJ space', approve: 'Confirm reservation', reject: 'Don’t reserve', note: 'Confirming submits this reservation to CCIFJ.'},
       subscribe_newsletter: {title: 'Subscribe to a newsletter', approve: 'Subscribe', reject: 'Don’t subscribe', note: 'You will receive this newsletter at the email shown.'},
+      save_introduction_request: {title: 'Introduction to a member', approve: 'Store for staff review', reject: 'Don’t store it', note: 'CCIFJ staff review every introduction before anything is sent to the member.'},
+      save_member_followup: {title: 'Follow-up message to a member', approve: 'Store for review', reject: 'Don’t store it', note: 'The message is stored for staff review. Nothing is sent to the member automatically.'},
       submit_staff_request: {title: 'Message for CCIFJ staff', approve: 'Store my message', reject: 'Don’t store it', note: 'Your message is stored for the CCIFJ team. No email is sent automatically.'},
       cancel_event_booking: {title: 'Cancel booking', approve: 'Cancel booking', reject: 'Keep booking', note: 'This cannot be undone. You can book again while registration is open.'},
       cancel_space_reservation: {title: 'Cancel reservation', approve: 'Cancel reservation', reject: 'Keep reservation', note: 'This cannot be undone. The space becomes available to others.'},
@@ -43,6 +45,8 @@ const words = {
       book_event_ticket: {title: 'Réserver des billets', approve: 'Confirmer la réservation', reject: 'Ne pas réserver', note: 'La réservation sera enregistrée dans votre compte CCIFJ. Aucun paiement ne sera effectué.'},
       book_space: {title: 'Réserver un espace CCIFJ', approve: 'Confirmer la réservation', reject: 'Ne pas réserver', note: 'La confirmation transmet cette réservation à la CCIFJ.'},
       subscribe_newsletter: {title: 'S’abonner à une newsletter', approve: 'S’abonner', reject: 'Ne pas s’abonner', note: 'Vous recevrez cette newsletter à l’adresse indiquée.'},
+      save_introduction_request: {title: 'Mise en relation avec un membre', approve: 'Enregistrer pour relecture', reject: 'Ne pas l’enregistrer', note: 'L’équipe CCIFJ relit chaque mise en relation avant tout envoi au membre.'},
+      save_member_followup: {title: 'Message de suivi à un membre', approve: 'Enregistrer pour relecture', reject: 'Ne pas l’enregistrer', note: 'Le message est enregistré pour relecture. Rien n’est envoyé automatiquement au membre.'},
       submit_staff_request: {title: 'Message au personnel CCIFJ', approve: 'Enregistrer mon message', reject: 'Ne pas l’enregistrer', note: 'Votre message est enregistré pour l’équipe CCIFJ. Aucun e-mail n’est envoyé automatiquement.'},
       cancel_event_booking: {title: 'Annuler la réservation', approve: 'Annuler la réservation', reject: 'Garder la réservation', note: 'Cette action est définitive. Vous pourrez réserver à nouveau tant que les inscriptions sont ouvertes.'},
       cancel_space_reservation: {title: 'Annuler la réservation d’espace', approve: 'Annuler la réservation', reject: 'Garder la réservation', note: 'Cette action est définitive. L’espace redevient disponible.'},
@@ -63,6 +67,8 @@ const words = {
       book_event_ticket: {title: 'イベントチケットを予約', approve: '予約を確定', reject: '予約しない', note: '承認するとCCIFJアカウントにチケット予約が登録されます。支払いは発生しません。'},
       book_space: {title: 'CCIFJスペースを予約', approve: '予約を確定', reject: '予約しない', note: '確定するとこの予約がCCIFJに送信されます。'},
       subscribe_newsletter: {title: 'ニュースレターに登録', approve: '登録する', reject: '登録しない', note: '表示されたメールアドレスにニュースレターが届きます。'},
+      save_introduction_request: {title: '会員へのご紹介', approve: '確認用に保存', reject: '保存しない', note: 'CCIFJスタッフが内容を確認してから会員に送ります。'},
+      save_member_followup: {title: '会員へのフォローアップ', approve: '確認用に保存', reject: '保存しない', note: 'メッセージは確認用に保存されます。会員へ自動送信はされません。'},
       submit_staff_request: {title: 'CCIFJスタッフへのメッセージ', approve: 'メッセージを保存', reject: '保存しない', note: 'メッセージはCCIFJチーム向けに保存されます。メールは自動送信されません。'},
       cancel_event_booking: {title: '予約をキャンセル', approve: '予約をキャンセル', reject: '予約を維持', note: 'この操作は取り消せません。受付期間中は再度予約できます。'},
       cancel_space_reservation: {title: 'スペース予約をキャンセル', approve: '予約をキャンセル', reject: '予約を維持', note: 'この操作は取り消せません。スペースは他の方が予約できるようになります。'},
@@ -193,11 +199,11 @@ function NewsletterDetails({args, t}: {args: Args; t: Words}) {
   </div></div>;
 }
 
-function StaffRequestDetails({args, locale, t}: {args: Args; locale: Locale; t: Words}) {
+function StaffRequestDetails({args, locale, t, label}: {args: Args; locale: Locale; t: Words; label?: string}) {
   const isTicket = text(args, 'request_type') === 'team_ticket';
   const recipients = Array.isArray(args.recipient_emails) ? args.recipient_emails.map(String).filter(Boolean) : [];
   const sender = [text(args, 'sender_name'), text(args, 'sender_email') && `<${text(args, 'sender_email')}>`].filter(Boolean).join(' ');
-  return <DraftCard kind={isTicket ? 'ticket' : 'email'} label={isTicket ? t.teamTicket : t.staffEmail} locale={locale}
+  return <DraftCard kind={isTicket ? 'ticket' : 'email'} label={label ?? (isTicket ? t.teamTicket : t.staffEmail)} locale={locale}
     fields={{to: recipients.join(', ') || undefined, from: sender || undefined, subject: text(args, 'subject'), body: text(args, 'message') ?? ''}}/>;
 }
 
@@ -288,6 +294,8 @@ function ActionDetails({action, locale, t}: {action: ApprovalAction; locale: Loc
     case 'book_space': return <SpaceDetails args={args} locale={locale} t={t}/>;
     case 'subscribe_newsletter': return <NewsletterDetails args={args} t={t}/>;
     case 'submit_staff_request': return <StaffRequestDetails args={args} locale={locale} t={t}/>;
+    case 'save_introduction_request':
+    case 'save_member_followup': return <StaffRequestDetails args={args} locale={locale} t={t} label={(t.actions[action.name] ?? t.generic).title}/>;
     case 'cancel_event_booking': return <CancelBookingDetails args={args} locale={locale} t={t}/>;
     case 'cancel_space_reservation': return <CancelReservationDetails args={args} locale={locale} t={t}/>;
     case 'change_event_booking': return <ChangeBookingDetails args={args} locale={locale} t={t}/>;

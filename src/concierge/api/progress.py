@@ -19,6 +19,12 @@ _NODE_LABELS = {
     "general_node": {
         "en": "Our Business Support Agent is looking through CCIFJ resources…", "fr": "Notre agent Appui aux entreprises consulte les ressources CCIFJ…", "ja": "ビジネスサポート担当エージェントが、CCIFJの情報を確認しています…",
     },
+    "matching_node": {
+        "en": "Our Member Matching Agent is searching the member directory…", "fr": "Notre agent de mise en relation recherche dans l’annuaire des membres…", "ja": "会員マッチング担当エージェントが、会員ディレクトリを検索しています…",
+    },
+    "engagement_node": {
+        "en": "Our Member Engagement Agent is reviewing member activity…", "fr": "Notre agent d’engagement des membres analyse l’activité des membres…", "ja": "会員エンゲージメント担当エージェントが、会員の活動状況を確認しています…",
+    },
     "collector_node": {
         "en": "The CCIFJ Concierge is putting your answer together…", "fr": "Le concierge CCIFJ prépare votre réponse…", "ja": "CCIFJコンシェルジュが回答をまとめています…",
     },
@@ -28,6 +34,8 @@ _WORKER_NAMES = {
     "events_node": {"en": "Events", "fr": "Événements", "ja": "イベント"},
     "membership_node": {"en": "Membership", "fr": "Adhésion", "ja": "会員"},
     "general_node": {"en": "Business Support", "fr": "Appui aux entreprises", "ja": "ビジネスサポート"},
+    "matching_node": {"en": "Member Matching", "fr": "Mise en relation", "ja": "会員マッチング"},
+    "engagement_node": {"en": "Member Engagement", "fr": "Engagement des membres", "ja": "会員エンゲージメント"},
 }
 
 _TOOL_LABELS = {
@@ -41,10 +49,16 @@ _TOOL_LABELS = {
     "get_official_form": {"en": "Finding the official CCIFJ form…", "fr": "Recherche du formulaire officiel de la CCIFJ…", "ja": "CCIFJの公式フォームを探しています…"},
     "book_event_ticket": {"en": "Preparing the event booking for your review…", "fr": "Préparation de la réservation pour votre validation…", "ja": "イベント予約の確認準備をしています…"},
     "book_space": {"en": "Preparing the space booking for your review…", "fr": "Préparation de la réservation d’espace pour votre validation…", "ja": "スペース予約の確認準備をしています…"},
+    "find_member_matches": {"en": "Matching your need with member companies…", "fr": "Recherche des membres correspondant à votre besoin…", "ja": "ご要望に合う会員企業を探しています…"},
+    "get_member_record": {"en": "Reading the member's directory record…", "fr": "Lecture de la fiche du membre dans l’annuaire…", "ja": "会員企業の登録情報を確認しています…"},
+    "list_members_to_follow_up": {"en": "Checking which members need a follow-up…", "fr": "Vérification des membres à relancer…", "ja": "フォローが必要な会員を確認しています…"},
+    "get_member_engagement": {"en": "Reading the member's profile and activity…", "fr": "Lecture du profil et de l’activité du membre…", "ja": "会員のプロフィールと活動状況を確認しています…"},
+    "save_introduction_request": {"en": "Preparing the introduction for your review…", "fr": "Préparation de la mise en relation pour votre validation…", "ja": "ご紹介内容の確認準備をしています…"},
+    "save_member_followup": {"en": "Preparing the follow-up for your review…", "fr": "Préparation du message de suivi pour votre validation…", "ja": "フォローアップの確認準備をしています…"},
     "subscribe_newsletter": {"en": "Preparing your newsletter subscription for review…", "fr": "Préparation de votre inscription à la newsletter pour validation…", "ja": "ニュースレター登録の確認準備をしています…"},
 }
 
-_WORKERS = ("events_node", "membership_node", "general_node")
+_WORKERS = ("events_node", "membership_node", "general_node", "matching_node", "engagement_node")
 
 
 def initial_label(locale: str) -> str:

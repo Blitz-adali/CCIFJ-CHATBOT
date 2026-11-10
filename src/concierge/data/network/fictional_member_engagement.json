@@ -1,0 +1,63 @@
+{
+  "note": "FICTIONAL data written for the hackathon prototype. The people and companies come from fictional_members.csv; the join dates, goals, and activity below are invented so the engagement agent has something to work on. In production this comes from Odoo (join date, membership), the event registrations, and the member area's sign-in log.",
+  "members": [
+    {
+      "company": "COMPANY 45", "contact": "Luc NAKAMURA", "email": "luc.nakamura@company-45.example.com",
+      "joined_on": "2026-10-11", "goal": "Business contacts in Japan",
+      "interests": ["retail", "emerging brands", "networking"],
+      "events_attended": [], "services_used": [], "member_area_login": true, "last_activity_on": "2026-10-11"
+    },
+    {
+      "company": "COMPANY 41", "contact": "Thomas SUZUKI", "email": "thomas.suzuki@company-41.example.com",
+      "joined_on": "2026-11-03", "goal": "Find distributors for plant-based food products",
+      "interests": ["food and beverage", "distribution"],
+      "events_attended": [], "services_used": [], "member_area_login": false, "last_activity_on": "2026-11-03"
+    },
+    {
+      "company": "COMPANY 24", "contact": "Yuki TANAKA", "email": "yuki.tanaka@company-24.example.com",
+      "joined_on": "2026-10-20", "goal": "Understand HR and salary practices in Japan before hiring",
+      "interests": ["human resources", "recruitment", "data and AI"],
+      "events_attended": [], "services_used": [], "member_area_login": true, "last_activity_on": "2026-10-22"
+    },
+    {
+      "company": "COMPANY 07", "contact": "Alex FAURE", "email": "alex.faure@company-07.example.com",
+      "joined_on": "2026-09-20", "goal": "Meet hotels and travel partners",
+      "interests": ["tourism", "hospitality"],
+      "events_attended": ["Vive l'Art de Vivre !"], "services_used": [], "member_area_login": false, "last_activity_on": "2026-10-04"
+    },
+    {
+      "company": "COMPANY 13", "contact": "Alain NAKAMURA", "email": "alain.nakamura@company-13.example.com",
+      "joined_on": "2026-06-15", "goal": "Recruit two bilingual consultants",
+      "interests": ["recruitment", "consulting"],
+      "events_attended": ["Communicating with Impact in a VUCA World", "European Joint Chamber Networking Party 2026"],
+      "services_used": [], "member_area_login": true, "last_activity_on": "2026-10-19"
+    },
+    {
+      "company": "COMPANY 19", "contact": "Antoine PETIT", "email": "antoine.petit@company-19.example.com",
+      "joined_on": "2026-02-10", "goal": "Visibility with energy and real-estate decision-makers",
+      "interests": ["energy", "sustainability", "sponsoring"],
+      "events_attended": ["Kyoto Spring Cocktail"], "services_used": [], "member_area_login": true, "last_activity_on": "2026-03-24"
+    },
+    {
+      "company": "COMPANY 05", "contact": "Luc ROUX", "email": "luc.roux@company-05.example.com",
+      "joined_on": "2025-03-01", "goal": "New retail partners outside Tokyo",
+      "interests": ["retail", "distribution", "Kansai"],
+      "events_attended": ["GALA NAGOYA 2026"], "services_used": ["France Japon Eco advertisement"],
+      "member_area_login": true, "last_activity_on": "2026-04-14"
+    },
+    {
+      "company": "COMPANY 33", "contact": "Alain MOREAU", "email": "alain.moreau@company-33.example.com",
+      "joined_on": "2025-12-01", "goal": "Generate B2B leads among French companies in Japan",
+      "interests": ["business development", "networking"],
+      "events_attended": ["Mobility Conference - Business Leaders Forum 2026", "Turn More Sales Calls into Sales Results", "Autumn Networking 2026"],
+      "services_used": ["Members' Privileges listing"], "member_area_login": true, "last_activity_on": "2026-10-23"
+    },
+    {
+      "company": "COMPANY 01", "contact": "Thomas MOREAU", "email": "thomas.moreau@company-01.example.com",
+      "joined_on": "2026-03-15", "goal": "Supply premium ingredients to hotels and caterers",
+      "interests": ["food and beverage", "hospitality"],
+      "events_attended": ["Dîner Gourmand Prestige - Chez Olivier x BONJOUR FRANCE 2026", "Vive l'Art de Vivre !", "Gourmet Dinner: in Collaboration with a Meilleur Ouvrier de France"],
+      "services_used": ["Business Connect"], "member_area_login": true, "last_activity_on": "2026-11-02"
+    }
+  ]
+}

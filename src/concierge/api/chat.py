@@ -148,6 +148,7 @@ async def chat(
         inputs_token = agent_inputs.set({
             "context": files, "agent_message": agent_message,
             "out_of_scope_count": state.get("out_of_scope_count", 0),
+            "last_targets": state.get("last_targets") or [],
             "user_context": user_context,
         })
         try:

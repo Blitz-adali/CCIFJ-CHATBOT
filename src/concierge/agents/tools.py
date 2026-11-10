@@ -1,4 +1,8 @@
+import asyncio
+import logging
+import os
 import re
+import threading
 from collections import Counter
 from datetime import datetime, time, timedelta
 from typing import Literal, Optional
@@ -21,15 +25,45 @@ from ..db.relationaldb.models import (
 )
 from ..db.relationaldb.session import AsyncSessionLocal
 from ..db.relationaldb.datetimes import japan_now
+from ..integrations import odoo
+from . import network
+from . import contacts as contacts_data
+
+logger = logging.getLogger(__name__)
 
 # Cached embedding model singleton to avoid reloading weights on every invocation
 _embed_model = None
 
+_embed_model_lock = threading.Lock()
+
+
+def _load_embed_model():
+    """Load the embedding model on the best device that actually works.
+
+    A GPU that PyTorch detects but cannot run on (an old card, a driver
+    mismatch) loads fine and then fails on the first search, so try one
+    encode and fall back to the CPU. CCIFJ_EMBED_DEVICE forces a device.
+    """
+    device = os.getenv("CCIFJ_EMBED_DEVICE", "").strip() or None
+    try:
+        model = SentenceTransformer(EMBED_MODEL_NAME, device=device)
+        model.encode("query: test", normalize_embeddings=True)
+        return model
+    except Exception:
+        if device == "cpu":
+            raise
+        logger.warning("Embedding model cannot run on the default device (unsupported GPU?); using the CPU instead")
+        model = SentenceTransformer(EMBED_MODEL_NAME, device="cpu")
+        model.encode("query: test", normalize_embeddings=True)
+        return model
+
+
 def _get_embed_model():
     global _embed_model
-    if _embed_model is None:
-        _embed_model = SentenceTransformer(EMBED_MODEL_NAME)
-    return _embed_model
+    with _embed_model_lock:
+        if _embed_model is None:
+            _embed_model = _load_embed_model()
+        return _embed_model
 
 # Cached bm25s retriever singleton to avoid reloading weights on every invocation
 _retriever = None
@@ -54,6 +88,47 @@ def warm_up() -> None:
 #################################################
 
 PAGE_SIZE = 10
+
+# The official CCIFJ page each kind of record comes from. Record tools end their
+# result with one of these so every fact in an answer can be traced to a page.
+_SITE = "https://www.ccifj.or.jp/en"
+RECORD_SOURCES = {
+    "membership": ("How to become a member", f"{_SITE}/membership/how-to-become-a-member.html"),
+    "directory": ("Company Members' Directory", f"{_SITE}/membership/members-directory.html"),
+    "events": ("Upcoming events", f"{_SITE}/events/upcoming-events.html"),
+    "space": ("L'Espace@CCIFJ", f"{_SITE}/events/lespaceccifj.html"),
+    "contact.events": ("Events: contact us", f"{_SITE}/events/contact-us.html"),
+    "contact.sponsor": ("Sponsor an event", f"{_SITE}/events/sponsor-an-event.html"),
+    "contact.membership": ("Membership: contact us", f"{_SITE}/membership/contact-us.html"),
+    "contact.business": ("Commercial Support: contact us", f"{_SITE}/commercial-support/contact-us.html"),
+    "contact.recruitment": ("Recruitment/Training: contact us", f"{_SITE}/recruitmenttraining/contact-us.html"),
+    "contact.publications": ("Publications: contact us", f"{_SITE}/publications/contact-us.html"),
+}
+_CONTACT_SOURCES = {
+    "events": "contact.events",
+    "become_speaker": "contact.events",
+    "become_sponsor": "contact.sponsor",
+    "bonjour_france": "contact.business",
+    "membership": "contact.membership",
+    "corporate_news": "contact.publications",
+    "japanese_market_support": "contact.business",
+    "recruitment_and_hr": "contact.recruitment",
+}
+_EVENT_PAGE_PATTERN = re.compile(r"Event details:\s*(https://www\.ccifj\.or\.jp/[^\s)]+)")
+
+
+def _source_line(key: str) -> str:
+    title, url = RECORD_SOURCES[key]
+    return f"\nSource: [{title}]({url})"
+
+
+def _event_source_line(event) -> str:
+    """The event's own page when its record has one, else the upcoming-events page."""
+    match = _EVENT_PAGE_PATTERN.search(event.description or "")
+    if match:
+        title = " ".join(str(event.title).replace("[", "(").replace("]", ")").split())
+        return f"\nSource: [{title}]({match.group(1).rstrip('.,;')})"
+    return _source_line("events")
 
 
 def _now() -> datetime:
@@ -355,7 +430,7 @@ async def list_available_events(
         )
     else:
         text += f"\n\n{min(len(events), PAGE_SIZE)} matching event(s)."
-    return text
+    return text + _source_line("events")
 
 
 @tool
@@ -404,7 +479,7 @@ async def get_event_details(
         lines.append("Speakers:")
         for s in speakers:
             lines.append(f"- {s.name}" + (f" ({s.role})" if s.role else ""))
-    return "\n".join(lines)
+    return "\n".join(lines) + _event_source_line(event)
 
 
 @tool
@@ -1044,7 +1119,7 @@ async def change_event_booking(
     names = ", ".join(person["name"] for person in people)
     return (
         "Booking changed.\n"
-        f"New reference: {_booking_ref(new_booking.booking_id)} (replaces {_booking_ref(booking_id)})\n"
+        f"Reference to keep: {_booking_ref(new_booking.booking_id)} (the earlier reference {_booking_ref(booking_id)} is no longer valid)\n"
         f"Event: {target.title} ({_when(target.start_at)}, {target.location or 'location unknown'})\n"
         f"Tickets: {len(people)} ({names})\n"
         "This is a registration only; no payment was taken."
@@ -1137,7 +1212,7 @@ async def change_space_reservation(
 
     return (
         "Space reservation changed.\n"
-        f"New reference: {_reservation_ref(new.reservation_id)} (replaces {_reservation_ref(reservation_id)})\n"
+        f"Reference to keep: {_reservation_ref(new.reservation_id)} (the earlier reference {_reservation_ref(reservation_id)} is no longer valid)\n"
         f"Space: {space.name if space else 'unknown'}\n"
         f"From: {_when(new.start_at)}\nTo: {_when(new.end_at)}\n"
         f"Title: {new.title}{f' | {new.expected_attendees} attendees' if new.expected_attendees else ''}"
@@ -1183,7 +1258,7 @@ async def get_membership_tier_info(
         if tier_or_category_name:
             category = await crud.get_member_category(session, tier_or_category_name)
             if category is not None:
-                return describe(category)
+                return describe(category) + _source_line("membership")
         categories = await crud.list_member_categories(session)
 
     if not categories:
@@ -1192,7 +1267,7 @@ async def get_membership_tier_info(
     prefix = ""
     if tier_or_category_name:
         prefix = f"No category matched '{tier_or_category_name}'. Available categories:\n\n"
-    return prefix + "\n\n".join(describe(c) for c in categories)
+    return prefix + "\n\n".join(describe(c) for c in categories) + _source_line("membership")
 
 
 # Member regions are stored as written in each company's address: Tokyo wards
@@ -1318,7 +1393,7 @@ async def search_member_directory(
     text = note + "\n\n".join(blocks)
     if len(members) > PAGE_SIZE:
         text += f"\n\nShowing the first {PAGE_SIZE} results; more companies match. Add another filter to narrow it down."
-    return text
+    return text + _source_line("directory")
 
 
 @tool
@@ -1395,80 +1470,15 @@ def get_ccifj_contact(
         Verified contact details including the officer name, title, email address,
         and telephone number where available.
     """
-    contacts = {
-        "events": (
-            "Contact for CCIFJ Events (registration and event questions):\n"
-            "- Name: Elena SUZUKI\n"
-            "- Role: Events Officer\n"
-            "- Phone: 03-4500-6606\n"
-            "- Email: e.suzuki@ccifj.or.jp"
-        ),
-        "bonjour_france": (
-            "Contact for BONJOUR FRANCE (starting point for companies that want to work in Japan):\n"
-            "- Name: Mayu HANDA\n"
-            "- Role: Director, BONJOUR FRANCE\n"
-            "- Phone: 03-4500-6530\n"
-            "- Email: m.handa@ccifj.or.jp"
-        ),
-        "membership": (
-            "Contacts for CCIFJ Membership:\n"
-            "1. Tomoyo FUNABASHI\n"
-            "   - Role: Membership Manager\n"
-            "   - Phone: 03-4500-6644\n"
-            "   - Email: t.funabashi@ccifj.or.jp\n"
-            "2. Marianne BARGES\n"
-            "   - Role: Membership Associate Manager & Communication Coordinator\n"
-            "   - Phone: 03-4500-6522\n"
-            "   - Email: m.barges@ccifj.or.jp"
-        ),
-        "become_speaker": (
-            "Contact for Event Speakers:\n"
-            "- Name: Elena SUZUKI\n"
-            "- Role: Events Officer\n"
-            "- Phone: 03-4500-6606\n"
-            "- Email: e.suzuki@ccifj.or.jp"
-        ),
-        "become_sponsor": (
-            "Contacts for Event Sponsorship:\n"
-            "1. Marie OZAKI\n"
-            "   - Role: Managing Director, Head of Events\n"
-            "   - Phone: 03-4500-6531\n"
-            "   - Email: m.ozaki@ccifj.or.jp\n"
-            "2. Elena SUZUKI\n"
-            "   - Role: Events Officer\n"
-            "   - Phone: 03-4500-6606\n"
-            "   - Email: e.suzuki@ccifj.or.jp"
-        ),
-        "corporate_news": (
-            "Contacts for Sharing Corporate News:\n"
-            "1. Communication Department\n"
-            "   - Email: communication@ccifj.or.jp\n"
-            "2. Marianne BARGES\n"
-            "   - Role: Membership Associate Manager & Communication Coordinator\n"
-            "   - Phone: 03-4500-6522\n"
-            "   - Email: m.barges@ccifj.or.jp"
-        ),
-        "japanese_market_support": (
-            "Contact for Japanese Market Entry & Business Support:\n"
-            "- Department: Business Support / Appui aux Entreprises\n"
-            "- Email: appui.entreprises@ccifj.or.jp\n"
-            "- Note: For commercial inquiries, users can also submit the Business Development Form."
-        ),
-        "recruitment_and_hr": (
-            "Contacts for Recruitment & Job Offers (Employment & Training Department):\n"
-            "1. Nicolas CHAUVET\n"
-            "   - Role: Responsable Recrutement (Recruitment Manager)\n"
-            "   - Phone: 03-4500-6521\n"
-            "   - Email: n.chauvet@ccifj.or.jp\n"
-            "2. Haruka KOBAYASHI\n"
-            "   - Role: Recruitment Officer\n"
-            "   - Phone: 03-4500-6529\n"
-            "   - Email: h.kobayashi@ccifj.or.jp\n"
-            "- Note: Job seekers can also register their resume via the CV Database form."
-        ),
-    }
-
-    return contacts.get(topic, "Contact details not found for this topic.")
+    # Contacts are data (data/contacts.json), edited by staff without code.
+    try:
+        details = contacts_data.describe(topic)
+    except Exception:
+        logger.exception("Could not read the contacts file")
+        details = ""
+    if not details:
+        return "Contact details not found for this topic."
+    return details + _source_line(_CONTACT_SOURCES[topic])
 
 
 @tool
@@ -1712,6 +1722,14 @@ async def submit_staff_request(
             "Do not retry automatically; tell the user to contact CCIFJ if they get no reply."
         )
 
+    # Optional: also create it in CCIFJ's Odoo CRM (off until ODOO_* is configured).
+    if odoo.enabled():
+        await asyncio.to_thread(odoo.push_staff_request, {
+            "reference": reference, "request_type": request_type, "category": category,
+            "subject": subject.strip(), "message": message.strip(), "sender_name": sender_name.strip(),
+            "sender_email": sender_email, "recipient_emails": recipients,
+        })
+
     recipient = ", ".join(recipients) or "the CCIFJ team"
     return (
         f"Staff request stored. Reference: {reference}. "
@@ -1719,6 +1737,249 @@ async def submit_staff_request(
         f"CCIFJ staff will reply to {sender_email}. "
         "No email has been sent yet; staff review stored requests."
     )
+
+
+#################################################
+#
+# 4. Member network tools: matching and engagement (fictional demo data)
+#
+#################################################
+
+def _encode_texts(texts: list[str]):
+    return _get_embed_model().encode(texts, normalize_embeddings=True)
+
+
+@tool
+def find_member_matches(need: str, sector: str = "", limit: int = 5) -> str:
+    """
+    Find member companies that fit a business need, with the directory record of each as evidence.
+
+    Use this tool when someone looks for a company, partner, supplier, distributor, client, or
+    expert in the CCIFJ network ("a food company that knows distribution in Japan", "5 relevant
+    members for this company"). It searches the directory's sectors and descriptions by meaning
+    and by keyword.
+
+    Args:
+        need: The business need in plain English: what kind of company, doing what, for whom.
+            Translate the user's request to English and keep its specifics (products, channels,
+            customers); the directory is in English.
+        sector: Optional exact sector to restrict to (e.g. "Food & Beverage", "Logistics").
+            Leave empty unless the user asked for one sector only.
+        limit: How many companies to return (1 to 10, default 5).
+
+    Returns:
+        The best-matching companies. For each: name, sectors, country, membership type, the
+        full directory description, the words of the request found in the record, and its
+        contacts (name, job title, email, preferred language).
+    """
+    need = (need or "").strip()
+    if not need and not sector:
+        return "Describe the business need (what kind of company, doing what) to search the directory."
+    try:
+        matches = network.match_companies(need, sector=sector, limit=limit, encode=_encode_texts)
+    except Exception:
+        logger.exception("Member matching failed for need %r", need)
+        return (
+            "The member directory could not be searched right now. Do not name any company from "
+            "memory; say the search is unavailable and offer the membership team's contact."
+        )
+    if not matches:
+        return (
+            "No member company in the directory fits this need. Do not stretch a weak match: say so, "
+            f"and offer the membership team's help. Sectors in the directory: {', '.join(network.sectors())}."
+        )
+    blocks = [network.describe_match(match) for match in matches]
+    return (
+        f"{len(matches)} matching member compan{'y' if len(matches) == 1 else 'ies'}, best first. "
+        "Every line below is copied from the directory record; use only these facts as reasons.\n\n"
+        + "\n\n".join(blocks)
+        + f"\nSource document: {network.DIRECTORY_NAME}"
+    )
+
+
+@tool
+def get_member_record(company: str) -> str:
+    """
+    Get one member company's directory record by name, with its contacts.
+
+    Use this tool when the user names a company ("COMPANY 25", "introduce me to COMPANY 12")
+    and you need its record or its contacts.
+
+    Args:
+        company: The company name as the user wrote it, e.g. "COMPANY 25" or "company 7".
+
+    Returns:
+        The record: sectors, country, membership type, description, and contacts
+        (name, job title, email, preferred language).
+    """
+    found = network.find_company(company or "")
+    if found is None:
+        return f"No member company named '{company}' is in the directory. Do not invent one; search by need instead."
+    return network.describe_match(network.Match(found, 1.0, ())) + f"\nSource document: {network.DIRECTORY_NAME}"
+
+
+@tool
+def list_members_to_follow_up(stage: str = "") -> str:
+    """
+    List the members who need a follow-up now, most urgent first, with the rule that selected each.
+
+    Use this tool when CCIFJ staff ask who to contact, who is inactive, which new members need
+    attention, or for an overview of member engagement.
+
+    Args:
+        stage: Optional filter: 'welcome', 'first_event', 'member_area', 'discover_services',
+            'inactive', or 'first_anniversary'. Empty lists every member who needs a follow-up.
+
+    Returns:
+        One line per member: name, company, email, days since joining, stage, and the rule
+        (with its numbers) that put them there. Active members are not listed.
+    """
+    today = japan_now().date()
+    due = network.members_to_follow_up(today, stage.strip().lower())
+    if not due:
+        return "No member needs a follow-up" + (f" in stage '{stage}'." if stage else " right now.")
+    lines = [
+        f"{record['contact']} | {record['company']} | <{record['email']}> | {stage_.label} | Rule: {stage_.why} | Goal: {record.get('goal') or 'not stated'}"
+        for record, stage_ in due
+    ]
+    return (
+        f"{len(due)} member(s) need a follow-up as of {today.isoformat()}, most urgent first:\n"
+        + "\n".join(lines)
+        + f"\nSource document: {network.ENGAGEMENT_NAME}"
+    )
+
+
+@tool
+def get_member_engagement(member: str) -> str:
+    """
+    Get one member's profile and activity, their engagement stage, and what the follow-up should do.
+
+    Use this tool before recommending anything to a member or drafting a follow-up message.
+
+    Args:
+        member: The member's name, email, or company (e.g. "Luc Nakamura", "COMPANY 45").
+
+    Returns:
+        Job title, preferred language, company sector and description, join date, stated goal,
+        interests, events attended, services used, member-area use, last activity, the stage
+        with the rule that set it, and the kind of action the follow-up should propose.
+    """
+    record = network.find_engagement(member or "")
+    if record is None:
+        return (
+            f"No engagement record was found for '{member}'. Use list_members_to_follow_up to see "
+            "the members on record; do not invent a profile."
+        )
+    return network.describe_engagement(record, japan_now().date()) + f"\nSource document: {network.ENGAGEMENT_NAME}"
+
+
+async def _store_network_draft(
+    category: str, subject: str, message: str, sender_name: str, sender_email: str, recipient_emails: list[str], runtime,
+) -> str:
+    """Store an introduction or a member follow-up for CCIFJ staff to review. Nothing is sent."""
+    sender_email = (sender_email or "").strip()
+    recipients = list(dict.fromkeys(email.strip() for email in recipient_emails or [] if email.strip()))
+    missing = [
+        label for label, value in (("subject", subject), ("message", message), ("your name", sender_name)) if not (value or "").strip()
+    ]
+    if missing:
+        return f"Draft not stored: missing {', '.join(missing)}. Ask the user for it."
+    if not _EMAIL_PATTERN.match(sender_email):
+        return "Draft not stored: your email is missing or invalid. Ask the user for a valid email."
+    known = {contact.email.casefold() for company in network.load_directory() for contact in company.contacts}
+    known |= {company.email.casefold() for company in network.load_directory()}
+    unknown = [email for email in recipients if email.casefold() not in known]
+    if not recipients or unknown:
+        return (
+            "Draft not stored: the recipient must be a contact from the member directory"
+            + (f" (not found: {', '.join(unknown)})" if unknown else "")
+            + ". Use the email shown in the directory record."
+        )
+    body = f"To: {'; '.join(recipients)}\n\n{message.strip()}"
+    try:
+        async with AsyncSessionLocal() as session:
+            stored = await crud.add_staff_request(
+                session, request_type="team_ticket", category=category, subject=subject.strip(), message=body,
+                sender_name=sender_name.strip(), sender_email=sender_email, recipient_emails=[],
+                user_id=_get_user_id(runtime), session_id=_chat_session_id(runtime),
+            )
+            reference = stored.reference
+        async with AsyncSessionLocal() as verify_session:
+            saved = await crud.get_staff_request(verify_session, reference)
+    except Exception:
+        logger.exception("Could not store a %s draft", category)
+        return "The draft may not have been stored. Do not retry automatically; tell the user to contact the membership team."
+    if saved is None:
+        return "The draft could not be verified after saving. Do not retry automatically; tell the user to contact the membership team."
+    return (
+        f"Draft stored for CCIFJ staff review. Reference: {reference}. Addressed to {', '.join(recipients)}. "
+        "Nothing has been sent: a CCIFJ staff member reviews it and sends it."
+    )
+
+
+@tool
+async def save_introduction_request(
+    subject: str,
+    message: str,
+    sender_name: str,
+    sender_email: str,
+    recipient_emails: list[str],
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Store an introduction between the requester and a member contact, for CCIFJ staff to review and send.
+
+    Use this tool only after the user has seen the full introduction draft and explicitly agreed.
+    Nothing is sent to the member: CCIFJ staff review every introduction first.
+
+    Args:
+        subject: The subject line agreed with the user.
+        message: The full introduction message agreed with the user.
+        sender_name: The requester's name.
+        sender_email: The requester's email, so staff and the member can reply.
+        recipient_emails: The member contact(s) to be introduced to, exactly as in the directory record.
+        runtime: Injected ToolRuntime providing access to the current graph state.
+
+    Returns:
+        The stored reference, or what is missing.
+    """
+    return await _store_network_draft("member_introduction", subject, message, sender_name, sender_email, recipient_emails, runtime)
+
+
+@tool
+async def save_member_followup(
+    subject: str,
+    message: str,
+    sender_name: str,
+    sender_email: str,
+    recipient_emails: list[str],
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Store a personalised follow-up message to a member, for CCIFJ staff to review and send.
+
+    Use this tool only after the staff member has seen the full draft and explicitly agreed.
+    Nothing is sent to the member automatically.
+
+    Args:
+        subject: The subject line agreed with the staff member.
+        message: The full follow-up message, in the member's preferred language.
+        sender_name: The CCIFJ staff member the message is from.
+        sender_email: That staff member's email.
+        recipient_emails: The member's email, exactly as in their engagement record.
+        runtime: Injected ToolRuntime providing access to the current graph state.
+
+    Returns:
+        The stored reference, or what is missing.
+    """
+    return await _store_network_draft("member_followup", subject, message, sender_name, sender_email, recipient_emails, runtime)
+
+
+SEARCH_UNAVAILABLE = (
+    "CCIFJ information search is temporarily unavailable, so nothing could be looked up. "
+    "Do not answer this part from memory and do not invent facts. Tell the user you could not "
+    "check this right now, give the relevant CCIFJ contact, and offer to write to the team."
+)
 
 
 @tool
@@ -1740,10 +2001,19 @@ def search_vectordb(query: str) -> str:
     Returns:
         Relevant content chunks retrieved and reranked from the knowledge database.
     """
-    model = _get_embed_model()
-    retriever = _get_retriever()
-    chunks = search(retriever, model, query, 20, 10, 5)
-    return ('\n' + "=" * 80).join(chunks)
+    try:
+        model = _get_embed_model()
+        retriever = _get_retriever()
+        chunks = search(retriever, model, query, 20, 10, 5)
+    except Exception:
+        # A search problem must not fail the whole answer.
+        logger.exception("Knowledge search failed for query %r", query)
+        return SEARCH_UNAVAILABLE
+    if not chunks:
+        return "No CCIFJ information matched this search. Do not guess; offer the relevant CCIFJ contact instead."
+    # Each passage starts on its own line with "# title" and its "url:" or
+    # "document:" line; answers cite passages by those (see agents/sources.py).
+    return ("\n" + "=" * 80 + "\n").join(chunk.strip() for chunk in chunks)
 
 
 @tool

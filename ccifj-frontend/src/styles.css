@@ -52,6 +52,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   background: var(--navy); color: #fff; font-size: 12px; font-weight: 600;
   transition: background .15s, transform .15s;
 }
+.is-embedded .topbar { height: 54px; flex-basis: 54px; padding: 0 14px; }
+.is-embedded .brand small { display: none; }
+.is-embedded .signin-button { min-height: 34px; padding: 6px 14px; }
+.language-select {
+  min-height: 40px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 24px;
+  background: #fff; color: var(--navy); font-size: 12px; font-weight: 600;
+}
 .signin-button:hover { background: #005686; transform: translateY(-1px); }
 .chat-page { display: flex; flex: 1; min-height: 0; }
 .simple-chat { width: 100%; min-width: 0; min-height: 0; }

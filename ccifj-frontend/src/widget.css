@@ -151,6 +151,14 @@
 .answer-markdown blockquote { margin: 12px 0; padding: 5px 13px; border-left: 3px solid #b35970; color: #607481; background: #f7f4ef; }
 .answer-markdown pre { overflow: auto; padding: 12px; border-radius: 10px; background: #e5e8e5; font-size: .9em; }
 .answer-markdown code { padding: 1px 4px; border-radius: 4px; background: #e5e8e5; }
+.answer-markdown .citation { margin-left: 1px; font-size: .68em; line-height: 0; }
+.answer-markdown .citation a, .answer-markdown .citation span { padding: 0 3px; border-radius: 4px; background: #e5eef3; color: #005781; font-weight: 700; text-decoration: none; }
+.answer-markdown .citation a:hover { background: #cfe2ec; }
+.answer-sources { padding-bottom: 0; }
+.source-list { margin: 0; padding-left: 1.6em; color: #5d6f79; font-size: 12px; }
+.source-list li { margin: 3px 0; }
+.source-list a { color: #005781; text-decoration: underline; text-decoration-color: #b9d2de; text-underline-offset: 2px; }
+.source-list small { color: #84939a; }
 .answer-primary-source { margin-top: 8px; color: #7d8d96; font-size: 11px; }
 
 /* Booking and action approval */

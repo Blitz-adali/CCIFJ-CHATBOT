@@ -27,6 +27,7 @@ from .models import (
     Speaker,
     StaffRequest,
     StaffRequestRecipient,
+    StaffRequestStatus,
     StaffRequestType,
     SpeaksAt,
     ContactUs,
@@ -340,17 +341,22 @@ async def claim_chat_session(session: AsyncSession, session_id: int, user_id: in
 
 
 async def _delete_guest_sessions(session: AsyncSession, guest_sessions) -> int:
-    """Delete guest sessions (a subquery of ids) with their messages; owned sessions are never matched."""
+    """Delete guest sessions (a subquery of ids) with their messages; owned sessions are never matched.
+
+    A guest conversation that produced a staff request is kept: the visitor asked
+    for CCIFJ to follow up, and staff need the conversation to do that.
+    """
+    with_request = select(StaffRequest.session_id).where(col(StaffRequest.session_id).is_not(None))
     ids = select(ChatSession.session_id).where(
-        col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None)
-    )
-    # Staff keep any request a guest sent; it just loses the link to the deleted chat.
-    await session.exec(
-        update(StaffRequest).where(col(StaffRequest.session_id).in_(ids)).values(session_id=None)
+        col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None),
+        col(ChatSession.session_id).not_in(with_request),
     )
     await session.exec(delete(Message).where(col(Message.session_id).in_(ids)))
     result = await session.exec(
-        delete(ChatSession).where(col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None))
+        delete(ChatSession).where(
+            col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None),
+            col(ChatSession.session_id).not_in(with_request),
+        )
     )
     await session.commit()
     return result.rowcount or 0
@@ -997,3 +1003,60 @@ async def list_staff_request_recipients(session: AsyncSession, request_id: int) 
         select(StaffRequestRecipient).where(StaffRequestRecipient.request_id == request_id).order_by(StaffRequestRecipient.email)
     )
     return result.all()
+
+
+# ---------- Staff view (read-only lists, plus the status of a request) ----------
+
+async def list_staff_requests(session: AsyncSession, status: Optional[str] = None, limit: int = 200) -> list[tuple[StaffRequest, list[str]]]:
+    query = select(StaffRequest).order_by(col(StaffRequest.request_id).desc()).limit(limit)
+    if status:
+        query = query.where(StaffRequest.status == StaffRequestStatus(status))
+    requests = (await session.exec(query)).all()
+    listed = []
+    for request in requests:
+        recipients = await list_staff_request_recipients(session, request.request_id)
+        listed.append((request, [recipient.email for recipient in recipients]))
+    return listed
+
+
+async def set_staff_request_status(session: AsyncSession, reference: str, status: str) -> Optional[StaffRequest]:
+    request = await get_staff_request(session, reference)
+    if request is None:
+        return None
+    request.status = StaffRequestStatus(status)
+    session.add(request)
+    await session.commit()
+    await session.refresh(request)
+    return request
+
+
+async def list_conversations(session: AsyncSession, limit: int = 100) -> list[dict]:
+    """Recent conversations, newest first, with who they belong to and how they started."""
+    rows = (await session.exec(
+        select(ChatSession, User)
+        .join(User, col(User.user_id) == col(ChatSession.user_id), isouter=True)
+        .order_by(col(ChatSession.session_id).desc()).limit(limit)
+    )).all()
+    conversations = []
+    for chat, user in rows:
+        count = (await session.exec(
+            select(func.count()).select_from(Message).where(Message.session_id == chat.session_id)
+        )).one()
+        if not count:
+            continue
+        first = (await session.exec(
+            select(Message).where(Message.session_id == chat.session_id, Message.role == MessageRole.user)
+            .order_by(col(Message.message_id)).limit(1)
+        )).first()
+        latest = await get_latest_message(session, chat.session_id)
+        references = (await session.exec(
+            select(StaffRequest.reference).where(StaffRequest.session_id == chat.session_id)
+        )).all()
+        conversations.append({
+            "session_id": chat.session_id,
+            "user": {"name": user.name, "email": user.email} if user else None,
+            "started_at": chat.created_at, "last_message_at": latest.created_at if latest else chat.created_at,
+            "messages": count, "first_message": (first.content if first else "")[:200],
+            "staff_requests": list(references),
+        })
+    return conversations

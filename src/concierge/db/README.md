@@ -17,7 +17,7 @@ never sees the integer id: it holds a signed session token that expires
 | First message (logged in) | `session` row created with `user_id` set. |
 | Guest logs in | The frontend calls `POST /sessions/{token}/claim` right away, without waiting for a new message, so `user_id` is set immediately. If the guest's first message is still running, it claims as soon as the reply arrives. |
 | Logged-in user sends a message to a guest session | `user_id` is set too (the chat endpoint also claims it). |
-| Guest closes the tab or reloads | The page sends `POST /sessions/{token}/discard` (a `sendBeacon` on `pagehide`). The session, its `message` rows, and the link from any `staff_request` are removed. |
+| Guest closes the tab or reloads | The page sends `POST /sessions/{token}/discard` (a `sendBeacon` on `pagehide`). The session and its `message` rows are removed, unless the conversation produced a `staff_request`: then it is kept, so staff can read what led to the request. |
 | Guest session left behind | Deleted by the hourly sweep once it is older than the token lifetime, since nobody can open it again. |
 | Logged-in user closes the app | Nothing is deleted. |
 
@@ -29,8 +29,9 @@ never sees the integer id: it holds a signed session token that expires
 - `discard` waits for the session's running turn (the same per-session lock as
   chat and claim), so a reply still being generated is never cut off by the
   delete.
-- `staff_request` rows a guest sent are kept for staff; their `session_id` is
-  set to `NULL`.
+- `staff_request` rows a guest sent are kept for staff, and so is the guest
+  conversation they came from (since 2026-11-10; before, the link was set to
+  `NULL` and the conversation deleted). Neither `discard` nor the sweep removes it.
 - Foreign keys are enforced (`PRAGMA foreign_keys=ON`) and nothing cascades, so
   `crud._delete_guest_sessions` removes the dependent rows explicitly in one
   transaction.

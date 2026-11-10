@@ -4,6 +4,8 @@ import type { ChatSource, Locale } from './types';
 import { isSafeExternalUrl } from './api';
 import { DraftCard, parseDraft, type DraftKind } from './DraftCard';
 
+const DOCUMENT_MARKER = '#ccifj-source-';
+
 type HastNode = { type: string; tagName?: string; value?: string; properties?: { className?: unknown }; children?: HastNode[] };
 
 function draftKind(language: string | undefined): DraftKind | undefined {
@@ -28,8 +30,14 @@ function draftFences(text: string) {
 function markdownComponents(locale: Locale, drafts: { count: number; lastOpen: boolean }): Components {
   let seen = 0;
   return {
-    a({ href, children }) {
+    a({ href, title, children }) {
+      // A marker for an approved document that has no public page: same look, no link.
+      if (href?.startsWith(DOCUMENT_MARKER)) return <sup className="citation"><span title={title} aria-label={`${children}: ${title}`}>{children}</span></sup>;
       if (!isSafeExternalUrl(href)) return <span>{children}</span>;
+      // A numbered source marker: small, and it names its page on hover.
+      if (typeof children === 'string' && /^\d{1,2}$/.test(children) && title) {
+        return <sup className="citation"><a href={href} target="_blank" rel="noreferrer noopener" title={title} aria-label={`${children}: ${title}`}>{children}</a></sup>;
+      }
       return <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>;
     },
     pre({ node, children }) {
@@ -77,15 +85,18 @@ function compactMarkdown(text: string) {
 
 /** Render model answers as Markdown without enabling raw HTML. */
 export function AnswerText({ text, sources = [], locale = 'en' }: { text: string; sources?: ChatSource[]; locale?: Locale }) {
-  const markdown = compactMarkdown(text).replace(/\[(\d+)\](?!\()/g, (citation, number: string) => {
+  // "[2]" points to the second source. With a page it becomes a small link;
+  // a document without a page shows the same number without a link; anything else is dropped.
+  const markdown = compactMarkdown(text).replace(/[ \t]?\[(\d{1,2})\](?!\()/g, (citation, number: string) => {
     const source = sources[Number(number) - 1];
-    return source && isSafeExternalUrl(source.url)
-      ? `[${source.title}](${source.url})`
-      : '';
+    if (!source || source.cited === false) return '';
+    if (isSafeExternalUrl(source.url ?? undefined)) return `[${number}](${source.url} "${source.title.replace(/["\\\n]/g, ' ')}")`;
+    return source.url ? '' : `[${number}](${DOCUMENT_MARKER}${number} "${source.title.replace(/["\\\n]/g, ' ')}")`;
   });
   const hasSafeLink = [...markdown.matchAll(/https:\/\/[^\s)>\]]+/g)]
     .some(([url]) => isSafeExternalUrl(url.replace(/[.,;:!?]+$/, '')));
-  const primarySource = sources.find(source => isSafeExternalUrl(source.url));
+  const hasCitedSources = sources.some(source => source.cited);
+  const primarySource = hasCitedSources ? undefined : sources.find(source => isSafeExternalUrl(source.url ?? undefined));
 
   return (
     <div className="answer-markdown">
@@ -94,7 +105,7 @@ export function AnswerText({ text, sources = [], locale = 'en' }: { text: string
       </ReactMarkdown>
       {!hasSafeLink && primarySource && (
         <p className="answer-primary-source">
-          <a href={primarySource.url} target="_blank" rel="noreferrer noopener">{primarySource.title}</a>
+          <a href={primarySource.url ?? undefined} target="_blank" rel="noreferrer noopener">{primarySource.title}</a>
         </p>
       )}
     </div>

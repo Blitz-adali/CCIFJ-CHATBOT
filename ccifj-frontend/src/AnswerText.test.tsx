@@ -1,14 +1,35 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AnswerText } from './AnswerText';
+import { Sources } from './Sources';
 const sources=[{title:'Set up and Business Center',url:'https://www.ccifj.or.jp/en/services.html',snippet:'Long extracted material should not appear'}];
 describe('compact answer',()=>{
- it('replaces numbered references with inline clickable page titles',()=>{
-  const html=renderToStaticMarkup(<AnswerText text="CCIFJ can help through [1]." sources={sources}/>);
+ it('turns numbered references into small links that name their page',()=>{
+  const html=renderToStaticMarkup(<AnswerText text="CCIFJ can help with setup [1]." sources={[{...sources[0],cited:true}]}/>);
+  expect(html).toContain('<sup class="citation">');
   expect(html).toContain('href="https://www.ccifj.or.jp/en/services.html"');
-  expect(html).toContain('Set up and Business Center</a>');
+  expect(html).toContain('title="Set up and Business Center"');
   expect(html).not.toContain('[1]');
   expect(html).not.toContain('Long extracted');
+  // The cited page is listed under the answer, so it is not repeated as a primary source.
+  expect(html).not.toContain('answer-primary-source');
+ });
+ it('keeps the number of a cited document that has no page, and drops uncited numbers',()=>{
+  const html=renderToStaticMarkup(<AnswerText text="Rates start at ¥30,000 [1]. See also [2]." sources={[{title:'Media Kit FJE 2026',url:null,cited:true},{title:'Events',url:'https://www.ccifj.or.jp/en/events.html',cited:false}]}/>);
+  expect(html).toContain('¥30,000<sup class="citation"><span title="Media Kit FJE 2026"');
+  expect(html).not.toContain('<a');
+  expect(html).not.toContain('See also 2');
+  expect(html).not.toContain('[2]');
+ });
+ it('lists cited sources with their numbers, official pages and documents alike',()=>{
+  const html=renderToStaticMarkup(<Sources locale="fr" sources={[{title:'Membership',url:'https://www.ccifj.or.jp/en/membership.html',cited:true},{title:'Media Kit FJE 2026',url:null,cited:true},{title:'Form',url:'https://survey.ccifi.net/1',cited:false},{title:'bad',url:'javascript:alert(1)',cited:true}]}/>);
+  expect(html).toContain('Sources officielles');
+  expect(html).toContain('<li value="1"><a href="https://www.ccifj.or.jp/en/membership.html"');
+  expect(html).toContain('<li value="2">');
+  expect(html).toContain('document CCIFJ');
+  expect(html).not.toContain('survey.ccifi.net');
+  expect(html).not.toContain('javascript:');
+  expect(renderToStaticMarkup(<Sources locale="en" sources={[{title:'Form',url:'https://survey.ccifi.net/1',cited:false}]}/>)).toBe('');
  });
  it('links the primary source when the answer has no reference',()=>{
   const html=renderToStaticMarkup(<AnswerText text="CCIFJ can help." sources={sources}/>);

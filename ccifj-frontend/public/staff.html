@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex" />
+<title>CCIFJ Concierge — Staff</title>
+<style>
+  :root { --navy:#073f69; --blue:#00669b; --red:#e50046; --ink:#18374b; --muted:#67747c; --canvas:#f2eee8; --line:#dcdedb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 Arial, "Hiragino Sans", "Yu Gothic", sans-serif; color:var(--ink); background:var(--canvas); }
+  header { display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:14px 24px; background:var(--navy); color:#fff; }
+  header h1 { margin:0; font-size:17px; letter-spacing:.03em; flex:1; }
+  header select, header button { font:inherit; padding:6px 10px; border-radius:8px; border:1px solid #ffffff55; background:transparent; color:#fff; cursor:pointer; }
+  header select option { color:#000; }
+  nav { display:flex; gap:4px; padding:0 24px; background:#fff; border-bottom:1px solid var(--line); overflow-x:auto; }
+  nav button { font:inherit; padding:12px 16px; border:0; border-bottom:3px solid transparent; background:none; color:var(--muted); cursor:pointer; white-space:nowrap; }
+  nav button[aria-selected="true"] { color:var(--navy); border-bottom-color:var(--red); font-weight:700; }
+  main { max-width:1100px; margin:0 auto; padding:24px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:12px; }
+  .row { display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  .row h2 { margin:0; font-size:15px; flex:1; min-width:200px; }
+  .meta { color:var(--muted); font-size:12.5px; }
+  .tag { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11.5px; font-weight:700; background:#e5eef3; color:#005781; }
+  .tag.new { background:#fde4ec; color:#a1002f; } .tag.in_review { background:#fff1cf; color:#7a5400; } .tag.closed { background:#e3efe4; color:#2d6a35; }
+  .tag.urgent { background:#fde4ec; color:#a1002f; }
+  pre { white-space:pre-wrap; word-break:break-word; margin:10px 0 0; padding:12px; border-radius:8px; background:#f6f4ef; font:13.5px/1.5 inherit; }
+  button.action, .card select, .card input, .card textarea { font:inherit; padding:7px 12px; border-radius:8px; border:1px solid var(--line); background:#fff; color:var(--ink); }
+  button.action { cursor:pointer; } button.primary { background:var(--navy); border-color:var(--navy); color:#fff; }
+  button.link { border:0; background:none; padding:0; color:var(--blue); text-decoration:underline; cursor:pointer; font:inherit; }
+  .bubble { max-width:80%; margin:8px 0; padding:10px 14px; border-radius:12px; white-space:pre-wrap; word-break:break-word; }
+  .bubble.user { margin-left:auto; background:var(--navy); color:#fff; } .bubble.assistant { background:#f6f4ef; }
+  .grid { display:grid; grid-template-columns:1.2fr 1.4fr 1fr 1.6fr auto; gap:8px; margin-top:8px; align-items:center; }
+  .grid input { width:100%; }
+  .notice { padding:10px 14px; border-radius:8px; background:#fff1cf; color:#5f4200; margin-bottom:14px; font-size:13.5px; }
+  .error { background:#fde4ec; color:#a1002f; } .ok { background:#e3efe4; color:#2d6a35; }
+  #gate { max-width:420px; margin:12vh auto; } #gate input { width:100%; margin:10px 0; padding:10px; font:inherit; border-radius:8px; border:1px solid var(--line); }
+  @media (max-width:760px) { .grid { grid-template-columns:1fr; } .bubble { max-width:95%; } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title"></h1>
+  <select id="lang" aria-label="Language"><option value="en">English</option><option value="fr">Français</option><option value="ja">日本語</option></select>
+  <button id="signout" type="button" hidden></button>
+</header>
+<nav id="tabs" role="tablist" hidden></nav>
+<main id="main"></main>
+
+<script>
+(function () {
+  'use strict';
+  var API = '/api/v1/staff';
+  var KEY_NAME = 'ccifj.staff.key';
+  var TEXT = {
+    en: { title: 'CCIFJ Concierge — Staff view', requests: 'Requests', conversations: 'Conversations', engagement: 'Member follow-ups', contacts: 'Contacts',
+      gate: 'Enter the staff key to continue.', key: 'Staff key', open: 'Open', signout: 'Sign out', wrong: 'That key was not accepted.', off: 'The staff view is not turned on for this server (CCIFJ_STAFF_KEY is not set).',
+      none: 'Nothing here yet.', from: 'From', to: 'To', status: 'Status', new: 'New', in_review: 'In review', closed: 'Closed', conversation: 'Show the conversation', hide: 'Hide',
+      guest: 'Guest', messages: 'messages', all: 'All', fictional: 'Fictional demo data. Stages are set by fixed rules on join date and activity. Ask the concierge "Prepare the follow-up for <name>" to get the recommendation and the draft.',
+      rule: 'Rule', goal: 'Goal', next: 'What the follow-up should do', save: 'Save contacts', saved: 'Saved. The next answer uses these contacts.', add: 'Add a contact', remove: 'Remove',
+      name: 'Name', role: 'Role', phone: 'Phone', email: 'Email', note: 'Note', contactsHelp: 'These are the contacts the concierge gives to visitors, by topic. Changes apply to the next answer; no restart is needed.',
+      loadError: 'Could not load this page. Check that the API is running.', category: 'Category' },
+    fr: { title: 'Concierge CCIFJ — Espace équipe', requests: 'Demandes', conversations: 'Conversations', engagement: 'Suivi des membres', contacts: 'Contacts',
+      gate: 'Saisissez la clé d’accès de l’équipe.', key: 'Clé d’accès', open: 'Ouvrir', signout: 'Se déconnecter', wrong: 'Cette clé n’a pas été acceptée.', off: 'L’espace équipe n’est pas activé sur ce serveur (CCIFJ_STAFF_KEY n’est pas défini).',
+      none: 'Rien pour le moment.', from: 'De', to: 'À', status: 'Statut', new: 'Nouveau', in_review: 'En cours', closed: 'Clos', conversation: 'Voir la conversation', hide: 'Masquer',
+      guest: 'Visiteur', messages: 'messages', all: 'Toutes', fictional: 'Données fictives de démonstration. Les étapes sont fixées par des règles sur la date d’adhésion et l’activité. Demandez au concierge « Prépare le suivi pour <nom> » pour obtenir la recommandation et le brouillon.',
+      rule: 'Règle', goal: 'Objectif', next: 'Ce que le suivi doit proposer', save: 'Enregistrer les contacts', saved: 'Enregistré. La prochaine réponse utilisera ces contacts.', add: 'Ajouter un contact', remove: 'Retirer',
+      name: 'Nom', role: 'Fonction', phone: 'Téléphone', email: 'E-mail', note: 'Note', contactsHelp: 'Ce sont les contacts que le concierge communique aux visiteurs, par sujet. Les modifications s’appliquent à la réponse suivante, sans redémarrage.',
+      loadError: 'Impossible de charger cette page. Vérifiez que l’API fonctionne.', category: 'Catégorie' },
+    ja: { title: 'CCIFJ コンシェルジュ — スタッフ画面', requests: 'リクエスト', conversations: '会話', engagement: '会員フォロー', contacts: '連絡先',
+      gate: 'スタッフキーを入力してください。', key: 'スタッフキー', open: '開く', signout: 'サインアウト', wrong: 'このキーは受け付けられませんでした。', off: 'このサーバーではスタッフ画面が有効になっていません（CCIFJ_STAFF_KEY が未設定です）。',
+      none: 'まだ何もありません。', from: '差出人', to: '宛先', status: 'ステータス', new: '新規', in_review: '対応中', closed: '完了', conversation: '会話を表示', hide: '閉じる',
+      guest: 'ゲスト', messages: '件のメッセージ', all: 'すべて', fictional: '架空のデモデータです。ステージは入会日と活動状況に基づく固定ルールで決まります。コンシェルジュに「<名前>さんのフォローアップを用意して」と依頼すると、提案と文案が作成されます。',
+      rule: 'ルール', goal: '目標', next: 'フォローアップで提案すること', save: '連絡先を保存', saved: '保存しました。次の回答から反映されます。', add: '連絡先を追加', remove: '削除',
+      name: '氏名', role: '役職', phone: '電話', email: 'メール', note: '備考', contactsHelp: 'コンシェルジュが訪問者に案内する連絡先です（トピック別）。変更は次の回答から反映され、再起動は不要です。',
+      loadError: 'ページを読み込めませんでした。API が起動しているか確認してください。', category: 'カテゴリー' }
+  };
+  var lang = (function () {
+    var asked = new URLSearchParams(location.search).get('lang') || (navigator.language || 'en').toLowerCase().split('-')[0];
+    return TEXT[asked] ? asked : 'en';
+  })();
+  var t = TEXT[lang];
+  var tab = 'requests';
+  var main = document.getElementById('main');
+
+  function el(tag, attributes, children) {
+    var node = document.createElement(tag);
+    Object.keys(attributes || {}).forEach(function (name) {
+      if (name === 'text') node.textContent = attributes[name];
+      else if (name.slice(0, 2) === 'on') node.addEventListener(name.slice(2), attributes[name]);
+      else if (attributes[name] !== null && attributes[name] !== undefined) node.setAttribute(name, attributes[name]);
+    });
+    (children || []).forEach(function (child) { if (child) node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child); });
+    return node;
+  }
+  function key() { try { return sessionStorage.getItem(KEY_NAME) || ''; } catch (error) { return window.__staffKey || ''; } }
+  function setKey(value) { window.__staffKey = value; try { value ? sessionStorage.setItem(KEY_NAME, value) : sessionStorage.removeItem(KEY_NAME); } catch (error) { /* kept in memory */ } }
+  function when(value) { return value ? new Date(value).toLocaleString(lang, { dateStyle: 'medium', timeStyle: 'short' }) : ''; }
+
+  function api(path, options) {
+    options = options || {};
+    options.headers = Object.assign({ 'X-Staff-Key': key(), 'Content-Type': 'application/json' }, options.headers || {});
+    return fetch(API + path, options).then(function (response) {
+      if (response.status === 401) { setKey(''); gate(t.wrong); throw new Error('unauthorized'); }
+      if (response.status === 404 && path === '/requests') { gate(t.off); throw new Error('off'); }
+      return response.json().then(function (body) {
+        if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : t.loadError);
+        return body;
+      });
+    });
+  }
+
+  function gate(message) {
+    document.getElementById('tabs').hidden = true;
+    document.getElementById('signout').hidden = true;
+    main.replaceChildren();
+    var input = el('input', { type: 'password', placeholder: t.key, 'aria-label': t.key, autocomplete: 'off' });
+    var form = el('form', { id: 'gate', class: 'card', onsubmit: function (event) { event.preventDefault(); setKey(input.value.trim()); start(); } }, [
+      el('p', { text: t.gate }), message ? el('div', { class: 'notice error', text: message }) : null, input,
+      el('button', { class: 'action primary', type: 'submit', text: t.open })
+    ]);
+    main.appendChild(form);
+    input.focus();
+  }
+
+  function shell() {
+    var out = document.getElementById('signout');
+    out.textContent = t.signout; out.hidden = false;
+    out.onclick = function () { setKey(''); gate(); };
+    var tabs = document.getElementById('tabs');
+    tabs.hidden = false;
+    tabs.replaceChildren.apply(tabs, ['requests', 'conversations', 'engagement', 'contacts'].map(function (name) {
+      return el('button', { type: 'button', role: 'tab', 'aria-selected': String(name === tab), text: t[name], onclick: function () { tab = name; shell(); render(); } });
+    }));
+  }
+
+  function fail(error) {
+    if (error.message === 'unauthorized' || error.message === 'off') return;
+    main.replaceChildren(el('div', { class: 'notice error', text: error.message || t.loadError }));
+  }
+
+  function conversationView(holder, id) {
+    if (holder.childNodes.length) { holder.replaceChildren(); return; }
+    api('/conversations/' + id).then(function (body) {
+      holder.replaceChildren.apply(holder, body.messages.map(function (message) {
+        return el('div', { class: 'bubble ' + message.role, text: message.content, title: when(message.created_at) });
+      }));
+      if (!body.messages.length) holder.appendChild(el('p', { class: 'meta', text: t.none }));
+    }).catch(fail);
+  }
+
+  function renderRequests() {
+    api('/requests').then(function (body) {
+      main.replaceChildren();
+      if (!body.requests.length) main.appendChild(el('p', { class: 'meta', text: t.none }));
+      body.requests.forEach(function (request) {
+        var holder = el('div');
+        var status = el('select', { 'aria-label': t.status, onchange: function () {
+          api('/requests/' + encodeURIComponent(request.reference) + '/status', { method: 'POST', body: JSON.stringify({ status: status.value }) }).then(renderRequests).catch(fail);
+        } }, ['new', 'in_review', 'closed'].map(function (value) { return el('option', { value: value, text: t[value] }); }));
+        status.value = request.status;
+        main.appendChild(el('div', { class: 'card' }, [
+          el('div', { class: 'row' }, [
+            el('h2', { text: request.subject }),
+            el('span', { class: 'tag ' + request.status, text: t[request.status] }),
+            el('span', { class: 'tag', text: request.category }),
+            el('span', { class: 'meta', text: request.reference + ' · ' + when(request.created_at) })
+          ]),
+          el('div', { class: 'meta', text: t.from + ': ' + request.sender_name + ' <' + request.sender_email + '>' + (request.recipients.length ? '  ·  ' + t.to + ': ' + request.recipients.join(', ') : '') }),
+          el('pre', { text: request.message }),
+          el('div', { class: 'row', style: 'margin-top:10px' }, [
+            status,
+            request.conversation_id ? el('button', { class: 'link', type: 'button', text: t.conversation, onclick: function () { conversationView(holder, request.conversation_id); } }) : null
+          ]),
+          holder
+        ]));
+      });
+    }).catch(fail);
+  }
+
+  function renderConversations() {
+    api('/conversations').then(function (body) {
+      main.replaceChildren();
+      if (!body.conversations.length) main.appendChild(el('p', { class: 'meta', text: t.none }));
+      body.conversations.forEach(function (item) {
+        var holder = el('div');
+        main.appendChild(el('div', { class: 'card' }, [
+          el('div', { class: 'row' }, [
+            el('h2', { text: item.first_message || '—' }),
+            item.staff_requests.length ? el('span', { class: 'tag new', text: item.staff_requests.join(', ') }) : null,
+            el('span', { class: 'meta', text: (item.user ? item.user.name + ' <' + item.user.email + '>' : t.guest) + ' · ' + item.messages + ' ' + t.messages + ' · ' + when(item.last_message_at) })
+          ]),
+          el('button', { class: 'link', type: 'button', text: t.conversation, onclick: function () { conversationView(holder, item.session_id); } }),
+          holder
+        ]));
+      });
+    }).catch(fail);
+  }
+
+  function renderEngagement() {
+    api('/engagement').then(function (body) {
+      main.replaceChildren(el('div', { class: 'notice', text: t.fictional }));
+      body.members.forEach(function (member) {
+        main.appendChild(el('div', { class: 'card' }, [
+          el('div', { class: 'row' }, [
+            el('h2', { text: member.contact + ' — ' + member.company }),
+            el('span', { class: 'tag ' + (member.stage === 'inactive' || member.stage === 'first_event' ? 'urgent' : ''), text: member.stage_label }),
+            el('span', { class: 'meta', text: member.email })
+          ]),
+          el('div', { class: 'meta', text: t.rule + ': ' + member.rule }),
+          el('div', { text: t.goal + ': ' + (member.goal || '—') }),
+          el('div', { class: 'meta', text: t.next + ': ' + member.action })
+        ]));
+      });
+    }).catch(fail);
+  }
+
+  function renderContacts() {
+    api('/contacts').then(function (body) {
+      var contacts = body.contacts;
+      var notice = el('div');
+      main.replaceChildren(el('div', { class: 'notice', text: t.contactsHelp }), notice);
+      function field(person, name, type) {
+        return el('input', { type: type || 'text', value: person[name] || '', placeholder: t[name], 'aria-label': t[name], oninput: function (event) { person[name] = event.target.value; } });
+      }
+      function draw() {
+        Array.prototype.slice.call(main.querySelectorAll('.card, .save')).forEach(function (node) { node.remove(); });
+        body.topics.forEach(function (topic) {
+          var entry = contacts[topic];
+          var card = el('div', { class: 'card' }, [
+            el('div', { class: 'row' }, [el('h2', { text: entry.title }), el('span', { class: 'tag', text: topic })])
+          ]);
+          entry.people.forEach(function (person, index) {
+            card.appendChild(el('div', { class: 'grid' }, [
+              field(person, 'name'), field(person, 'role'), field(person, 'phone'), field(person, 'email', 'email'),
+              el('button', { class: 'action', type: 'button', text: t.remove, onclick: function () { if (entry.people.length > 1) { entry.people.splice(index, 1); draw(); } } })
+            ]));
+          });
+          var note = el('input', { type: 'text', value: entry.note || '', placeholder: t.note, 'aria-label': t.note, style: 'width:100%;margin-top:8px', oninput: function (event) { entry.note = event.target.value; } });
+          card.appendChild(note);
+          card.appendChild(el('div', { style: 'margin-top:8px' }, [
+            el('button', { class: 'action', type: 'button', text: t.add, onclick: function () { entry.people.push({ name: '', role: '', phone: '', email: '' }); draw(); } })
+          ]));
+          main.appendChild(card);
+        });
+        main.appendChild(el('div', { class: 'save' }, [
+          el('button', { class: 'action primary', type: 'button', text: t.save, onclick: function () {
+            api('/contacts', { method: 'PUT', body: JSON.stringify({ contacts: contacts }) }).then(function (saved) {
+              contacts = saved.contacts; notice.replaceChildren(el('div', { class: 'notice ok', text: t.saved })); draw(); window.scrollTo(0, 0);
+            }).catch(function (error) { notice.replaceChildren(el('div', { class: 'notice error', text: error.message })); window.scrollTo(0, 0); });
+          } })
+        ]));
+      }
+      draw();
+    }).catch(fail);
+  }
+
+  function render() {
+    main.replaceChildren(el('p', { class: 'meta', text: '…' }));
+    ({ requests: renderRequests, conversations: renderConversations, engagement: renderEngagement, contacts: renderContacts })[tab]();
+  }
+
+  function start() {
+    document.getElementById('title').textContent = t.title;
+    document.documentElement.lang = lang;
+    var select = document.getElementById('lang');
+    select.value = lang;
+    select.onchange = function () { var url = new URL(location.href); url.searchParams.set('lang', select.value); location.href = url.href; };
+    if (!key()) { gate(); return; }
+    shell();
+    render();
+  }
+  start();
+})();
+</script>
+</body>
+</html>
