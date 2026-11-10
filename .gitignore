@@ -234,6 +234,8 @@ backend
 /docs/NEXT_SESSION_HANDOFF.md
 /src/concierge/db/relationaldb/*.db*
 /src/concierge/db/vectordb/chroma_db/
+# Raw crawler database (83 MB): not read by the application; the indexed content is in data/ and chroma_db/.
+/src/concierge/db/vectordb/ccifj.db
 
 # Never commit runtime secrets
 /config/secret_key
