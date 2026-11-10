@@ -63,11 +63,8 @@ questions lack a source and can upload the missing document.
 
 | Item | Basis | Monthly |
 |---|---|---|
-| Hosting | 1 small VM (2 vCPU / 4 GB) | ~€20–40 |
-| Chat model | ~6k tokens per turn × 4,000 turns, GPT-class pricing | ~€30–80 |
-| Rerank (optional) | Cohere, 4,000 requests | ~€5 |
-| Embeddings | Local model, CPU | €0 |
-| **Total** | | **~€60–170 / month** |
+| Chat model | ~6k tokens per turn × 4,000 turns, GPT-class pricing | ~$5 |
+| **Total** | | **~$5 / month** |
 
 Running the chat model locally (Ollama/Qwen, already supported) removes the model line at
 the cost of a GPU machine and lower answer quality. Costs scale linearly with turns.

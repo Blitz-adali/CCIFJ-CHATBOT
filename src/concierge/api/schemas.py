@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .attachments import MAX_FILE_BYTES
+
 
 class RequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -18,8 +20,8 @@ class AttachmentUpload(RequestModel):
     """A PDF, PNG, JPEG, DOCX, or UTF-8 text file sent inline; text is extracted server-side (OCR for scans)."""
     name: str = Field(default="attachment", max_length=200)
     mime_type: str = Field(max_length=100)
-    # 5 MB of binary data is at most ~7 MB of base64 text.
-    data_base64: str = Field(min_length=1, max_length=7_000_000)
+    # Base64 is 4/3 of the binary size; a little headroom so extract_attachment gives the clear "too large" message.
+    data_base64: str = Field(min_length=1, max_length=MAX_FILE_BYTES * 4 // 3 + 1024)
 
 
 class ChatRequest(RequestModel):

@@ -259,7 +259,7 @@ signing in, the conversation continues in the same session.
 
 Chat requests accept up to four `attachments` per request
 (`{"name", "mime_type", "data_base64"}`): PDF, PNG, JPEG, DOCX, or UTF-8 text
-(TXT, MD, CSV, JSON, XML, HTML), 5 MB each, PDFs up to 20 pages. Text is
+(TXT, MD, CSV, JSON, XML, HTML), 20 MB each, PDFs up to 20 pages. Text is
 extracted on the server (HTML without scripts and styles); images and scan-only
 PDF pages are OCRed with Tesseract (`eng+fra+jpn`). Install the Tesseract executable and
 those language packs on the API host; without them, image OCR returns 503.
