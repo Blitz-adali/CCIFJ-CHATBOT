@@ -92,16 +92,17 @@ _DRAFT_LANGUAGE_CHOICE = re.compile(
 # Explicit directives are parsed only outside quoted code/document bodies.
 # What may follow the language name. "to", "asking" and the like cover the usual way of asking
 # for a draft: "write an email in English to the Business Support team asking about ...".
-_LANGUAGE_TAIL = (r"(?=\s*(?:$|[,.!?;:()\[\]]|please\b|for\b|from\b|now\b|but\b|and\b|about\b|what\b|how\b|which\b|mais\b|pour\b"
+_LANGUAGE_TAIL = (r"(?=\s*(?:$|[,.!?;:()\[\]]|please\b|s['’]il\b|svp\b|for\b|from\b|now\b|but\b|and\b|about\b|what\b|how\b|which\b|mais\b|pour\b"
                   r"|to\b|with\b|so\b|then\b|that\b|asking\b|regarding\b|concerning\b|saying\b|explaining\b|telling\b"
                   r"|à\b|au\b|aux\b|afin\b|concernant\b|adressé\b|destiné\b))")
 _LANGUAGE_REQUEST = re.compile(
-    r'(?P<role>write|draft|email|e-mail|letter|message|reply|respond|answer|explain|explanations?|speak|talk|switch|réponds|répondez|explique|rédige|brouillon)'
+    r'(?P<role>write|draft|email|e-mail|letter|message|reply|respond|answer|explain|explanations?|speak|talk|switch|réponds|répondez|explique|rédigez|rédige|écrivez|écris|brouillon)'
     r'\b[^.!?;,\n]{0,65}?\b(?:in|en)\s+(?:simple\s+|plain\s+)?(?P<language>'+_LANGUAGE_NAMES+r')\b'+_LANGUAGE_TAIL, re.I)
 _LANGUAGE_BEFORE_ROLE = re.compile(r'(?P<language>'+_LANGUAGE_NAMES+r')\s+(?P<role>draft|email|message|explanations?|replies|answers)\b', re.I)
 _SWITCH_LANGUAGE_REQUEST = re.compile(r'(?P<role>switch)\s+to\s+(?P<language>'+_LANGUAGE_NAMES+r')\b'+_LANGUAGE_TAIL, re.I)
 _NOW_LANGUAGE = re.compile(r'(?:^|[,;.!?]\s*)(?P<role>now|maintenant)\s+(?:in|en)\s+(?P<language>'+_LANGUAGE_NAMES+r')\b'+_LANGUAGE_TAIL, re.I)
 _DRAFT_ROLES = {'draft','email','e-mail','letter','message','brouillon'}
+_WRITE_ROLES = {'write','rédige','rédigez','écris','écrivez'}
 _EXPLANATION_ROLES = {'explain','explanation','explanations','explique'}
 _PERSISTENT = re.compile(r'\b(?:always|from now on|for the rest|keep speaking|continue in|toujours|dorénavant|à partir de maintenant)\b|今後|これから', re.I)
 _ONE_TURN = re.compile(r'\b(?:next (?:answer|reply)|this (?:answer|reply)|now answer|cette réponse|prochaine réponse)\b|次の回答|今回', re.I)
@@ -150,6 +151,15 @@ def apply_language_requests(brief, text, awaiting_draft_language=False):
         # Fast path for a bare answer; anything looser is read by the routing model
         # (OrchestratorPlan.draft_language_reply) and recorded with set_draft_language.
         choice = _DRAFT_LANGUAGE_CHOICE.fullmatch(directive)
+        if not choice:
+            # The same bare answer given with other details in one message:
+            # "En français. Je m'appelle Paul Martin, paul.martin@example.test."
+            parts = [_DRAFT_LANGUAGE_CHOICE.fullmatch(part) for part in re.split(r'[.!?。！？;:,、\n]+', directive)]
+            named = {_SHORT_LANGUAGE_CHOICES.get(part['language'].casefold(), part['language']).casefold(): part
+                     for part in parts if part and part['language'].casefold() not in _SHORT_LANGUAGE_CHOICES}
+            # Another language named anywhere in the message ("English. Or French, I am not sure.") decides nothing.
+            mentioned = {_LANGUAGE_CODES[name.casefold()] for name in re.findall(_LANGUAGE_NAMES, directive, re.I)}
+            choice = next(iter(named.values())) if len(named) == 1 and len(mentioned) == 1 else None
         if choice:
             name = choice['language']
             brief['draft_language'] = _language_entry(_SHORT_LANGUAGE_CHOICES.get(name.casefold(), name), text, 'document')
@@ -159,8 +169,11 @@ def apply_language_requests(brief, text, awaiting_draft_language=False):
         if match.re is _LANGUAGE_REQUEST and re.search(r'(?:'+_LANGUAGE_NAMES+r')\s+$', directive[:match.start()], re.I):
             continue
         role = match['role'].casefold()
+        # "Write it in English" names the draft when the draft language was just asked for;
+        # otherwise "write" needs a document word ("write the email in English").
         document = (role in _DRAFT_ROLES or
-                    role in {'write','rédige'} and bool(re.search(r'\b(?:draft|email|e-mail|letter|message|brouillon|courriel)\b',match[0],re.I)))
+                    role in _WRITE_ROLES and (awaiting_draft_language or
+                        bool(re.search(r'\b(?:draft|email|e-mail|letter|message|brouillon|courriel)\b',match[0],re.I))))
         if document:
             brief['draft_language'] = _language_entry(match['language'], text, 'document')
         elif role in _EXPLANATION_ROLES and brief.get('draft_language'):
@@ -172,7 +185,7 @@ def apply_language_requests(brief, text, awaiting_draft_language=False):
             brief['conversation_language'] = _language_entry(match['language'], text, scope)
     for match in re.finditer(r'(?P<language>英語|日本語|フランス語)で[^。\n]{0,35}?(?P<role>説明|返答|回答|答えて|話して|書いて|下書き|メール)', directive):
         role = match['role']
-        if role in {'下書き','メール'} or role == '書いて' and brief.get('draft_language'):
+        if role in {'下書き','メール'} or role == '書いて' and (brief.get('draft_language') or awaiting_draft_language):
             brief['draft_language'] = _language_entry(match['language'],text,'document')
         elif role == '説明' and brief.get('draft_language'):
             brief['explanation_language'] = _language_entry(match['language'],text,'draft_explanations')
@@ -344,8 +357,15 @@ def asks_draft_language(previous_answer):
     # The fixed question above, or the same question in the model's own words
     # ("Which language would you like the email in: English, French, or Japanese?").
     document = re.search(r'draft|e-?mail|message|ticket|inquiry|request|brouillon|courriel|demande|下書き|メール|問い合わせ', answer, re.I)
-    language = re.search(r'language|langue|言語', answer, re.I)
-    return bool(document and language and re.search(r'[?？]|お選びください', answer))
+    # The word "language", or the choices themselves: 「メール本文は日本語・英語・フランス語のどれにしますか？」
+    # or one language put forward for confirmation: 「…confirmez que vous souhaitez le message en français」
+    named = {_LANGUAGE_CODES[name.casefold()] for name in re.findall(_LANGUAGE_NAMES, answer, re.I)}
+    language = (re.search(r'language|langue|言語', answer, re.I) or len(named) >= 2
+                or named and re.search(r'confirm|souhait|pr[ée]f[èe]r|would you like|ご希望|よろしいですか', answer, re.I))
+    # It also comes as one item of a list: "Before I write the draft, please tell me: the draft
+    # language (English, French or Japanese), your name, ..." / 「次の3点を教えてください」.
+    return bool(document and language and re.search(
+        r'[?？]|お選びください|教えてください|お知らせください|\b(?:tell me|let me know|indiquez|précisez|dites-moi|confirmez|confirm)\b', answer, re.I))
 
 
 def draft_text_language(text):

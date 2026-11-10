@@ -3,6 +3,7 @@
 The mutable record is shared with child async tasks and tool worker threads via
 contextvars. Every API turn installs a fresh record and resets it afterwards.
 """
+import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
@@ -17,6 +18,10 @@ class TurnEvidence:
     warnings: list[str] = field(default_factory=list)
     resources: list[str] = field(default_factory=list)
     database_sources: list[dict] = field(default_factory=list)
+    # CCIFJ records an answer relied on (staff directory, member directory). Unlike
+    # database_sources they are not offered to the collector for selection: they are
+    # listed under the answer whenever the answer uses that record.
+    references: list[dict] = field(default_factory=list)
 
 
 turn_evidence: ContextVar[TurnEvidence | None] = ContextVar("turn_evidence", default=None)
@@ -52,6 +57,56 @@ def record_database_source(title: str, url: str, record_type: str) -> None:
         item = {'title': title, 'url': url, 'record_type': record_type, 'provenance': 'database'}
         if item not in evidence.database_sources:
             evidence.database_sources.append(item)
+
+
+def record_reference(title: str, url: str, record_type: str) -> None:
+    evidence = turn_evidence.get()
+    if evidence is not None:
+        item = {'title': title, 'url': url, 'record_type': record_type, 'provenance': 'database'}
+        if item not in evidence.references:
+            evidence.references.append(item)
+
+
+_STAFF_CONTACT = re.compile(r'[\w.+-]+@ccifj\.or\.jp', re.I)
+_FEE_AMOUNT = re.compile(r'(?:¥|€|JPY|EUR|円|ユーロ)\s?\d|\d[\d,.\s]*\s?(?:¥|€|JPY|EUR|円|ユーロ|yen|euros?)', re.I)
+
+
+def with_reference_sources(sources, reply, evidence, intent='', categories=()):
+    """Add the CCIFJ record behind facts that no retrieved page carries.
+
+    Staff contacts come from the staff directory and membership categories from the
+    membership table; both reach the answer without a search, so no page was "retrieved".
+    The visitor still deserves to see where such a fact comes from. A reference is added
+    only when the answer visibly uses it: a CCIFJ email address, a directory lookup that
+    returned companies, or a membership answer with no other source that compares
+    categories or quotes their fees (the fee source when it quotes amounts).
+    """
+    from concierge.resources import TEAM_PAGE, MEMBERSHIP_PAGE, MEMBERSHIP_FEE_SOURCE
+    sources = list(sources or [])
+    present = {source.get('url') for source in sources}
+    text = reply or ''
+
+    def add(title, url, record_type):
+        if url not in present:
+            present.add(url)
+            sources.append({'title': title, 'url': url, 'record_type': record_type, 'provenance': 'database'})
+
+    if _STAFF_CONTACT.search(text):
+        add('CCIFJ team and contacts', TEAM_PAGE, 'staff_contact')
+    for item in (evidence or {}).get('references') or []:
+        if item.get('record_type') != 'staff_contact':
+            add(item['title'], item['url'], item['record_type'])
+    named = [name for name in categories if name and re.search(r'(?<![\w-])' + re.escape(name) + r'(?![\w-])', text, re.I)]
+    fees = bool(_FEE_AMOUNT.search(text))
+    # One category named in passing ("your Active membership") does not make the answer a
+    # description of the categories: the reference would then sit under a claim it does not carry.
+    if 'membership' in (intent or '') and not sources and named and (fees or len(named) > 1):
+        if fees:
+            # The same source the fee tool records: where the stored fees were taken from.
+            add('Membership annual fees', MEMBERSHIP_FEE_SOURCE, 'member_category')
+        else:
+            add('CCIFJ membership categories', MEMBERSHIP_PAGE, 'member_category')
+    return sources
 
 
 def space_check_memory(previous, current=()):

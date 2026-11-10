@@ -27,6 +27,33 @@ MATCH = matching.Match(7, 'Agri Distribution KK', 0.86, 'Distributes French chee
                         'description': 'Distributes French cheese to supermarkets.', 'contact': 'info@agri.example'})
 
 
+class CoverFacetsTest(unittest.TestCase):
+    """A request naming two activities shows companies for both."""
+    NEED = 'French food company with experience in Japanese distribution'
+
+    def wording(self, **found):
+        return {rid: (0.3, terms) for rid, terms in found.items()}
+
+    def test_distributors_join_a_list_that_ranking_filled_with_food_companies(self):
+        ranked = ['f1', 'f2', 'f3', 'f4', 'f5', 'd1', 'd2', 'd3', 'x1']
+        wording = self.wording(**{rid: ['food'] for rid in ranked[:5]}, d1=['distribution'], d2=['distribution'],
+                               d3=['distribution'], x1=[])
+        self.assertEqual(matching.cover_facets(ranked, wording, self.NEED, 5), ['f1', 'f2', 'f3', 'd1', 'd2'])
+        # Fewer places: one of them goes to the missing activity.
+        self.assertEqual(matching.cover_facets(ranked, wording, self.NEED, 3), ['f1', 'f2', 'd1'])
+
+    def test_ranking_is_kept_when_both_activities_are_already_shown_or_only_one_is_named(self):
+        ranked = ['f1', 'b1', 'f2', 'f3', 'f4', 'd1']
+        wording = self.wording(f1=['food'], b1=['distribution', 'food'], f2=['food'], f3=['food'], f4=['food'], d1=['distribution'])
+        self.assertEqual(matching.cover_facets(ranked, wording, self.NEED, 5), ranked[:5])
+        self.assertEqual(matching.cover_facets(ranked, wording, 'an HR consultant in Osaka', 5), ranked[:5])
+
+    def test_nothing_changes_when_no_company_matches_the_missing_activity(self):
+        ranked = ['f1', 'f2', 'f3', 'f4', 'f5', 'x1']
+        wording = self.wording(**{rid: ['food'] for rid in ranked[:5]}, x1=[])
+        self.assertEqual(matching.cover_facets(ranked, wording, self.NEED, 5), ranked[:5])
+
+
 class WhyExcerptTest(unittest.TestCase):
     def test_prefers_prose_and_skips_directory_field_lines(self):
         description = 'Sector: Food & Beverage\nWebsite: https://x.example\nWe import French wine and cheese for Japanese retail chains.'

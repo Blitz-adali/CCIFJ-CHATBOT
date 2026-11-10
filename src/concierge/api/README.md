@@ -72,8 +72,10 @@ Authorization: Bearer <access_token>
 ```
 
 Use `"reject"` to decline. The response has the same shape as `/chat`; further
-approvals may be required. New chat messages return 409 until outstanding
-approvals are resolved. Guests retain `user_id=None` in agent state, so the
+approvals may be required. A new chat message sent while an approval is
+outstanding closes that approval without running its action (the stored
+conversation gets a note saying nothing was saved) and is then answered
+normally; the closed approval can no longer be approved. Guests retain `user_id=None` in agent state, so the
 existing booking tools reject unauthenticated booking attempts. Guests may only
 answer `submit_staff_request` approvals (omit `Authorization`; the session token
 proves ownership); any other approval for a guest is replaced by a login prompt.

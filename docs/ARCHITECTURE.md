@@ -397,9 +397,10 @@ The concierge uses this to:
 
 **Knowing the user.** For advisory questions, the orchestrator decides which
 details would change the answer (`known_user_details`, `missing_user_details`
-in its plan) and asks for the missing ones once, before answering. Every
-specialist gets those details with its task. If the user skips, the answer is
-general and never asks again.
+in its plan). It does not hold the answer back for them: the specialist gets
+the known and missing details with its task, answers with guidance that holds
+in general, and ends with one question about the detail that would change the
+advice. A detail the user declined is not asked again.
 
 Guests get the same answers, without the personal parts. A guest who tries to
 book is asked to sign in and keeps the same conversation; after signing in from

@@ -239,3 +239,6 @@ backend
 
 # Never commit runtime secrets
 /config/secret_key
+
+# Answers saved by demo/suite.py, demo/network_eval.py and demo/run_tests.sh
+/demo/runs/

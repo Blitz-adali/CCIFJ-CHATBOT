@@ -12,8 +12,8 @@ from pydantic import BaseModel
 from ..rag import search, get_collection, EMBED_MODEL_NAME
 from ..rag.src.config import INDEX_PATH
 from ..rag.src.rag_search import search_passages, get_tokenizer, get_collection
-from concierge.evidence import record_passages, record_events, record_resource, record_database_source, record_warning
-from concierge.resources import membership_form, BUSINESS_INQUIRY, CV_REGISTRATION, MEMBERSHIP_FEE_SOURCE
+from concierge.evidence import record_passages, record_events, record_resource, record_database_source, record_warning, record_reference
+from concierge.resources import membership_form, BUSINESS_INQUIRY, CV_REGISTRATION, MEMBERSHIP_FEE_SOURCE, MEMBERS_DIRECTORY_PAGE
 from sentence_transformers import SentenceTransformer
 import bm25s
 
@@ -1539,6 +1539,7 @@ async def search_member_directory(
         block += _contacts_line(contacts.get(getattr(m, "member_id", None), []))
         blocks.append(block)
 
+    record_reference("CCIFJ member directory", MEMBERS_DIRECTORY_PAGE, "member")
     text = (_names_allowed_note(level) + "Commercial role: unverified. These are sector/location matches, not a verified buyer, "
             "importer or distributor shortlist. Recommend a commercial role only when the description "
             "explicitly supports it; a sector or website alone does not.\n\n" + note + "\n\n".join(blocks))
@@ -1577,6 +1578,7 @@ async def _directory_by_name(query: str, runtime) -> str:
             block += f"\n  {m.description[:2000]}"
         block += _contacts_line(contacts.get(getattr(m, "member_id", None), []))
         blocks.append(block)
+    record_reference("CCIFJ member directory", MEMBERS_DIRECTORY_PAGE, "member")
     head = (f"Directory records for \"{query}\" (exact name matches first). If several are listed, "
             "the user's spelling was close to more than one: show them and ask which one is meant.\n\n")
     return _names_allowed_note(level) + head + "\n\n".join(blocks)
@@ -1679,10 +1681,19 @@ async def find_matching_members(
             block += f"\n  Public contact: {match.fields['contact']}"
         block += _contacts_line(match.fields.get("contacts", []))
         blocks.append(block)
-    advice = ("Explain in one line per company why it fits, using only the sector, place and text above; "
+    advice = ("These are the directory's closest matches. Always show them to the user as candidates to confirm "
+              "(at most three per activity asked for, five in total); never answer that no company can be "
+              "recommended when companies are listed here. "
+              "Explain in one line per company why it fits, using only the sector, place and text above; "
               "a sector match is not proof of a commercial role. When a company lists contact people, suggest the "
-              "one whose role fits the request and who works in the user's language. ")
+              "one whose role fits the request and who works in the user's language. "
+              "Lead with the companies, not with what could not be checked. When the request names several things "
+              "(for example a product and a role such as distribution), group the companies by the part they match "
+              "(see 'Matches the request on') and say plainly if no single company covers every part. The directory "
+              "records where a company is based and what it does, not its country of origin: if the user asked for a "
+              "nationality, say once, after the list, that origin is not recorded and can be confirmed through an introduction. ")
     advice = _names_allowed_note(level) + advice
+    record_reference("CCIFJ member directory", MEMBERS_DIRECTORY_PAGE, "member")
     if level == "member":
         advice += ("Offer to ask CCIFJ to introduce the user to one or more of them (request_introduction, "
                    "with the exact company names above).")
