@@ -26,8 +26,9 @@ dashboard, without coding.
 - Python **3.12 or later** and [uv](https://docs.astral.sh/uv/)
 - Node.js and npm
 - An **OpenAI API key**
-- Optional: a Cohere API key (better search ranking), and Tesseract with English, French and
-  Japanese language data (only for reading scanned PDFs and images)
+- Optional: a Cohere API key (better search ranking)
+- Optional: OCR, only for reading scanned PDFs and images. One script sets it up; see
+  [Optional: OCR for scans and images](#optional-ocr-for-scans-and-images)
 
 ### Start it
 
@@ -57,6 +58,44 @@ dashboard, without coding.
 
 The agent loads its models in the background when the API starts (about 12–18 seconds, longer
 the first time because the search model is downloaded). A message sent before that simply waits.
+
+### Optional: OCR for scans and images
+
+**You can skip this step.** The chat, the three agents and the staff dashboard all work without
+it. OCR is used for one thing only: reading scanned PDFs and images that a visitor attaches or
+staff upload. Text PDFs, Word files and text files are read without it.
+
+To add it, run one script. It is safe to run again, and it never changes the concierge itself.
+
+macOS, Linux, WSL or Git Bash:
+
+```bash
+bash scripts/install_ocr.sh
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_ocr.ps1
+```
+
+What the script does:
+
+1. Installs the Tesseract program with the package manager your system has (Homebrew, apt, dnf,
+   yum, pacman, zypper or apk; winget, Chocolatey or Scoop on Windows).
+2. If English, French and Japanese are not all available, downloads those three language files
+   (under 10 MB) from the official Tesseract repository into `var/tessdata` inside the project.
+   This needs no admin rights and works the same on every system.
+3. Checks the result and tells you whether OCR is ready.
+
+To see what is installed without changing anything, add `--check` (or `-Check` in PowerShell).
+On Windows you do not need to edit the PATH: the concierge also looks in the usual install
+folders. Restart the concierge after installing.
+
+If the script cannot install the program, for example because the machine has no package
+manager or you have no admin rights, it says so and prints what to do by hand. Nothing else is
+affected: the concierge keeps working, and a scan or image simply gets a message that OCR is
+unavailable.
 
 ### Start it by hand (or in Windows PowerShell)
 
@@ -102,7 +141,7 @@ is opened to the public.
 | `Set CCIFJ_AUTH_SECRET in .env` | Generate the secret in step 2 and paste it into `.env`. |
 | `Port … is already in use` | Stop the other program, or choose other ports: `API_PORT=8002 WEB_PORT=5174 ./start.sh`. |
 | The first answer takes a long time | The models are still loading. `http://localhost:8001/api/v1/ready` answers once they are ready. |
-| "OCR is unavailable" on a scanned PDF or image | Install Tesseract with the English, French and Japanese language data. Text PDFs and Word files work without it. |
+| "OCR is unavailable" on a scanned PDF or image | Run the [optional OCR script](#optional-ocr-for-scans-and-images). Text PDFs and Word files work without it. |
 | No **Dashboard** button after signing in | Only staff accounts have it. Sign in as `staff@demo.ccifj.test`. |
 
 ---
@@ -212,7 +251,7 @@ Agent 2 (member engagement). The Prisme bonus is not claimed.
   the organisers' question bank: 19 of 20 scenarios pass and 1 is partial, 5 of 5 safe fallbacks, and all 25 answers
   cite at least one validated source. 13 questions were asked in English, 7 in French and 5 in Japanese, each
   answered in its own language. Raw answers are in `demo/*.json`.
-- **Automated tests:** 269 backend tests and 48 frontend tests pass. Run them with
+- **Automated tests:** 275 backend tests and 48 frontend tests pass. Run them with
   `uv run python -m unittest discover -s tests -p 'test_*.py'` (backend, no API keys needed) and
   `cd ccifj-frontend && npm test`. See [Testing](#testing).
 - **Sources:** answers cite the crawled ccifj.or.jp pages and the documents staff added; the chat shows them under
