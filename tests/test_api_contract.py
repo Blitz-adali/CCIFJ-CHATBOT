@@ -117,10 +117,27 @@ class ApiContractTest(unittest.TestCase):
         token = result["session_id"]
         path = f"/api/v1/sessions/{token}/approvals"
         self.assertEqual(self.client.get(path + "/approval-1").status_code, 200)
-        self.assertEqual(self.client.post("/api/v1/chat", json={"session_id": token, "message": "hi"}).status_code, 409)
         self.assertEqual(self.client.post(path, json={"interrupt_id": "approval-1", "decision": "reject"}).json()["reply"], "Decision: reject")
         self.assertEqual(self.client.get(path).json()["pending_approvals"], [])
         self.assertEqual(self.client.post(path, json={"interrupt_id": "approval-1", "decision": "approve"}).status_code, 409)
+
+    def test_a_new_message_closes_an_unanswered_approval_without_running_it(self):
+        """A visitor who types instead of answering the card gets an answer, not an error."""
+        result = self.client.post("/api/v1/chat", json={"message": "book", "locale": "en"}).json()
+        self.assertTrue(result["pending_approvals"])
+        token = result["session_id"]
+        path = f"/api/v1/sessions/{token}/approvals"
+        answer = self.client.post("/api/v1/chat", json={"session_id": token, "message": "hi"})
+        self.assertEqual(answer.status_code, 200)
+        self.assertEqual(answer.json()["reply"], "Hello")
+        self.assertEqual(self.client.get(path).json()["pending_approvals"], [])
+        # The old card can no longer be approved, and the stored conversation says so.
+        self.assertEqual(self.client.post(path, json={"interrupt_id": "approval-1", "decision": "approve"}).status_code, 409)
+        history = self.client.get(f"/api/v1/sessions/{token}/messages").json()
+        self.assertEqual([message["role"] for message in history["messages"]], ["user", "assistant", "assistant", "user", "assistant"])
+        self.assertIn("was not approved", history["messages"][2]["content"])
+        self.assertEqual(history["messages"][1]["response"]["pending_approvals"], [])
+        self.assertEqual(history["turn_status"], "ready")
 
     def test_sse(self):
         result = self.client.post("/api/v1/chat/stream", json={"message": "hi", "locale": "ja"})

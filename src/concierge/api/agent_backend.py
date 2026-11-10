@@ -490,6 +490,9 @@ class AgentBackend:
             # official links given as next steps (no retrieval) stay as actions.
             reply = grounded_links(reply, allowed_urls)
         sources = selected_sources(candidates, result.get("used_source_ids"), reply)
+        from concierge.evidence import with_reference_sources
+        categories = [item.get("category") for item in (agent_inputs.get() or {}).get("membership_context") or []]
+        sources = with_reference_sources(sources, reply, evidence, intent, categories)
         _, actions = linked_resources(reply)
         events = []
         if evidence.get("event_ids"):
@@ -504,6 +507,10 @@ class AgentBackend:
                     include_closed, include_unconfirmed = registration_preferences(request_text, browsing=browsing)
                     events = await cards_for_ids(db, evidence["event_ids"], answer=reply,
                                                  include_closed=include_closed, include_unconfirmed=include_unconfirmed)
+                    from .events import sources_for_ids
+                    listed = {source.get("url") for source in sources}
+                    sources += [source for source in await sources_for_ids(db, evidence["event_ids"], reply)
+                                if source["url"] not in listed]
             except Exception:
                 # Optional presentation must not hide a successful action.
                 logger.exception("Could not load event cards for this answer")

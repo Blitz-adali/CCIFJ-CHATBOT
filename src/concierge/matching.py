@@ -201,6 +201,42 @@ def fuse(semantic: dict[str, float], wording: dict[str, tuple[float, list[str]]]
     return sorted(score, key=lambda key: (-score[key], -semantic[key]))
 
 
+_CONCEPT_HEADS = {group[0] for group in _CONCEPTS}
+
+
+def cover_facets(ranked: list[str], wording: dict[str, tuple[float, list[str]]], need: str, limit: int) -> list[str]:
+    """The best `limit` matches, with every activity the need names represented.
+
+    "A food company with distribution experience" names two activities. Ranking alone can
+    give every place to food companies, and the distributors that could carry the product
+    are never shown. When the top results miss an activity that other companies match, the
+    lowest-ranked of them give way to the best companies for that activity (two places at
+    most, one when fewer than four are shown). The order stays: best overall first.
+    """
+    chosen = ranked[:limit]
+    facets = [term for term in sorted(terms(need)) if term in _CONCEPT_HEADS]
+    if len(facets) < 2 or len(ranked) <= limit or limit < 2:
+        return chosen
+
+    def covers(rid: str, facet: str) -> bool:
+        return facet in wording.get(rid, (0.0, []))[1]
+
+    room = 2 if limit >= 4 else 1
+    for facet in facets:
+        if room <= 0 or any(covers(rid, facet) for rid in chosen):
+            continue
+        for candidate in [rid for rid in ranked[limit:] if covers(rid, facet)][:room]:
+            # Give up the lowest-ranked match that is not the only one for another activity.
+            for position in range(len(chosen) - 1, 0, -1):
+                leaving = chosen[position]
+                others = [rid for rid in chosen if rid != leaving]
+                if all(not covers(leaving, other) or any(covers(rid, other) for rid in others) for other in facets):
+                    chosen = others + [candidate]
+                    room -= 1
+                    break
+    return chosen
+
+
 def is_relevant(score: float, wording: float) -> bool:
     return score >= RELEVANT_SCORE or (wording >= RELEVANT_WORDING and score >= WORDING_FLOOR)
 
@@ -394,7 +430,7 @@ async def match_members(session: AsyncSession, need: str, *, limit: int = 5, sec
     # A sector the need itself names is a strong structural signal.
     named = set(resolve_sectors(need, await directory_sectors(session))) if not sectors else set()
     bonus = {rid: 1 / 120 for rid in semantic if named and _in_sectors(members[int(rid)], list(named))}
-    order = fuse(semantic, wording, bonus)[:limit]
+    order = cover_facets(fuse(semantic, wording, bonus), wording, query_text, limit)
 
     contacts: dict[int, list[MemberContact]] = {}
     chosen = [int(rid) for rid in order]

@@ -218,17 +218,17 @@ environment is described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 | **Business support** | Knows the full CCIFJ offer across the 8 sections of ccifj.or.jp (Our Chamber, News, Membership, Events, Business Forum, Commercial Support, Recruitment/Training, Publications) and recommends the services that fit the user's stage: market studies, Business Connect, Expo+, sector missions, company setup, domiciliation, V.I.E, VAT recovery, recruitment, training, publications, and advertising. |
 | **Contacts** | Reads the staff directory that CCIFJ maintains in the admin dashboard (department, what each contact handles, email, languages), picks the right contact for the request itself, falls back to the triage contact, and always offers to write the email together. A contact added in the dashboard is used on the next question; no code or topic list to update. |
 | **Staff requests** | Writes an email to a CCIFJ contact, or a ticket for the CCIFJ team when no contact fits. It revises the draft with the user and stores it after the user approves. Staff read each request, and the conversation behind it, in the dashboard (**Requests → Conversations**). |
-| **Member matching** | Finds the member companies that fit a business need (sector, country, experience) and shows the directory evidence for each match. A member can then ask CCIFJ for an introduction: the request is stored for staff with a reference such as `IR-2026-000012`, and staff contact the other company first. |
+| **Member matching** | Finds the member companies that fit a business need (sector, country, experience) and shows the directory evidence for each match. A need that names two activities (a food company with distribution experience) shows companies for both. A member can then ask CCIFJ for an introduction: the request is stored for staff with a reference such as `IR-2026-000012`, and staff contact the other company first. |
 | **Member engagement** | Rules welcome new members, suggest a first step, relevant events and people to meet, and follow up with members who have gone quiet. Each message explains why it fits that member and appears in the member's corner of the app; staff review the outbox in the dashboard. |
 | **Staff dashboard** | One place for staff to follow up and keep the agent current without coding: requests and the conversations behind them, matching and introductions, onboarding rules, events, member companies, knowledge files and links, accounts and the staff directory. See [Staff dashboard](docs/ARCHITECTURE.md#staff-dashboard). |
 | **Knowledge that stays current** | Staff add brochures and procedures by upload, or link a Calameo publication, a web page or a PDF once: linked sources are re-read on a schedule and re-indexed when they change. |
 | **Newsletter** | Subscribes the user to general news, training announcements, or the @StudioCCIFJ podcast, after approval. |
 | **Files** | Reads attached PDFs, images (PNG, JPEG), Word documents (DOCX), and text files, with OCR in English, French, and Japanese for scans and images. Up to 4 files per conversation, 5 MB each. The text goes to the agent as context; the chat only shows the file name. |
-| **Personal touch** | Asks for the details that change its advice (industry, country, B2B or B2C, stage) before answering an advisory question, once, and lets the user skip. Knows the date and the signed-in user's bookings, membership (with the company's industry and location), and newsletter status. Remembers the last few exchanges, so it builds on earlier advice instead of repeating it. |
+| **Personal touch** | Answers an advisory question at once with guidance that holds in general, then asks one question about the detail that would change its advice (industry, country, B2B or B2C, stage). Knows the date and the signed-in user's bookings, membership (with the company's industry and location), and newsletter status. Remembers the last few exchanges, so it builds on earlier advice instead of repeating it. |
 | **Web search** | With an OpenAI model, the events and general agents can search the web for market context (competitors, market size, trade shows) and recent CCIFJ news. CCIFJ facts (fees, events, members, contacts) still come only from the tools. Switch it off with `CCIFJ_WEB_SEARCH=off`. |
 | **Embedding** | `ccifj-frontend/public/embed.js` adds a chat button to any page (TYPO3 included) with one `<script>` tag; `embed-demo.html` is an example host page. |
 | **Prisme.ai** | A published Prisme agent passes each question to this backend through one custom function, so the concierge can be used inside CCIFJ's Prisme workspace with the same answers as on the website. The exported agent is in [`prisme/`](prisme/README.md) for another chamber to import. Text only: bookings and approvals stay in the web chat. |
-| **Safety** | Keeps to CCIFJ topics and refuses unrelated requests. It treats tool results and documents as data, not instructions. Every database write needs explicit approval. It never shows the user its internals (databases, tools, event IDs). |
+| **Safety** | Keeps to CCIFJ topics and refuses unrelated requests. It treats tool results and documents as data, not instructions. Every database write needs explicit approval; a new message sent while an approval card is waiting closes the card without running the action. It never shows the user its internals (databases, tools, event IDs). |
 
 ---
 
@@ -257,7 +257,7 @@ in this backend. See [prisme/README.md](prisme/README.md).
   the organisers' question bank: 19 of 20 scenarios pass and 1 is partial, 5 of 5 safe fallbacks, and all 25 answers
   cite at least one validated source. 13 questions were asked in English, 7 in French and 5 in Japanese, each
   answered in its own language. Raw answers are in `demo/*.json`.
-- **Automated tests:** 279 backend tests and 48 frontend tests pass. Run them with
+- **Automated tests:** 290 backend tests and 48 frontend tests pass. Run them with
   `uv run python -m unittest discover -s tests -p 'test_*.py'` (backend, no API keys needed) and
   `cd ccifj-frontend && npm test`. See [Testing](#testing).
 - **Prisme.ai:** on 10 November 2026 the published Prisme agent answered in English, French and Japanese through
@@ -265,7 +265,9 @@ in this backend. See [prisme/README.md](prisme/README.md).
   new agent that worked after setting one address. Screenshots and the test table are in
   [prisme/README.md](prisme/README.md).
 - **Sources:** answers cite the crawled ccifj.or.jp pages and the documents staff added; the chat shows them under
-  each answer, and staff see them in the conversation view.
+  each answer, and staff see them in the conversation view. Facts taken from CCIFJ's own records are sourced too:
+  an answer that gives a staff contact lists the team page, one that names an event lists that event's page, and a
+  directory answer lists the member directory.
 - **Installation, integration and costs:** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Declarations

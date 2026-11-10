@@ -31,6 +31,27 @@ def event_card(event) -> dict:
     }
 
 
+async def sources_for_ids(session, ids, answer, limit=5) -> list[dict]:
+    """The CCIFJ page of each looked-up event that the answer names, as a source.
+
+    Event facts come from the events table, so no page is "retrieved" for them; the page
+    the record was taken from is still where a visitor can check the date, place and price.
+    Open, closed and unconfirmed events all count: this is provenance, not a recommendation.
+    """
+    from concierge.source_context import matching_event
+    named = _title_key(answer or '')
+    sources = []
+    for event_id in list(dict.fromkeys(ids or []))[:20]:
+        event = await crud.get_event(session, int(event_id))
+        title = _title_key(event.title) if event is not None and event.title else ''
+        url = ((matching_event(event) or {}).get('url') or '') if title else ''
+        if title and title in named and url.startswith('https://') and all(item['url'] != url for item in sources):
+            sources.append({'title': event.title, 'url': url, 'record_type': 'event', 'provenance': 'database'})
+            if len(sources) == limit:
+                break
+    return sources
+
+
 def _title_key(text):
     return re.sub(r'[^\w]+', ' ', unicodedata.normalize('NFKC', text).casefold()).strip()
 

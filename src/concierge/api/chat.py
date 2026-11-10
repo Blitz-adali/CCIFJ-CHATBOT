@@ -64,6 +64,35 @@ async def save_reply(session, chat, token, result, thread_id):
     return body
 
 
+PENDING_ACTION_DROPPED = {
+    "en": "The action waiting for your approval was not approved, so nothing was saved or changed.",
+    "fr": "L’action en attente de votre validation n’a pas été approuvée : rien n’a été enregistré ni modifié.",
+    "ja": "承認待ちの操作は承認されなかったため、何も保存・変更されていません。",
+}
+
+
+async def drop_pending_action(session, conversation, latest, locale):
+    """Close an approval card the user did not answer, without running its action.
+
+    The write tool only runs when an approval is resumed with "approve"; leaving the
+    interrupted run behind executes nothing. The note keeps the stored conversation honest
+    about what happened to the request.
+    """
+    kept = []
+    for item in latest.tool_calls or []:
+        if isinstance(item, dict) and item.get("type") in {"pending_approval", "api_turn_state"}:
+            continue
+        if isinstance(item, dict) and item.get("type") == "api_response":
+            # A reloaded conversation must not show the card again.
+            item = {**item, "response": {**(item.get("response") or {}), "pending_approvals": []}}
+        kept.append(item)
+    await crud.update_message_metadata(session, latest, kept or None)
+    await crud.add_message(session, conversation.session_id, MessageRole.assistant,
+                           PENDING_ACTION_DROPPED.get(locale, PENDING_ACTION_DROPPED["en"]))
+    await session.commit()
+    logger.info("Dropped an unanswered approval in session %s", conversation.session_id)
+
+
 async def extract_uploads(uploads):
     """Extract text from uploaded files off the event loop (may raise 4xx/503)."""
     return list(await asyncio.gather(*(
@@ -121,7 +150,9 @@ async def chat(
         if turn_status(latest, conversation.session_id) == "unknown":
             raise HTTPException(status_code=409, detail={"message": "Check the previous request outcome before continuing.", "session_id": token, "outcome_unknown": True})
         if pending_turn(latest):
-            raise HTTPException(status_code=409, detail="Approve or reject the pending action before sending another message.")
+            # The visitor moved on instead of answering the approval card. Nothing is written
+            # without an explicit approval, so the action is dropped and the chat continues.
+            await drop_pending_action(session, conversation, latest, body.locale)
         if user is not None and conversation.user_id is None:
             try:
                 conversation = await crud.claim_chat_session(session, conversation.session_id, user.user_id)
