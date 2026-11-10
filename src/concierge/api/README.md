@@ -116,7 +116,7 @@ Chat and approval decisions accept `locale` (`en`, `fr`, `ja`), the UI language.
 The agent answers in the language of the user's message, whatever it is, and the
 API returns that answer unchanged; there is no second model call. Suggested
 questions under an answer are written by the model in the user's language and
-returned unchanged; guided paths and fixed texts (approval, login, warnings)
+returned unchanged; model-free answers and fixed texts (approval, login, warnings)
 use `locale`.
 
 `POST /chat/stream` accepts the same body and authorization as `/chat`, and emits
@@ -189,7 +189,7 @@ and active-task tracking are process-local.
 An optional real-browser smoke test is provided in `tests/api_browser_smoke.py`,
 with a disposable API in `tests/api_browser_fixture.py`. It uses a fake agent and
 isolated database and drives `ccifj-frontend` through the Vite proxy: chat replies,
-guided space paths, cancellation and outcome acknowledgement, registration,
+starter prompts, cancellation and outcome acknowledgement, registration,
 approvals, and rejected logins. Install Playwright (or set `CCIFJ_CHROMIUM` to an
 installed Chromium), start the fixture and Vite as documented in the script, then
 run it. Production model quality and actual external booking side effects are
@@ -231,27 +231,13 @@ the graph needs across turns is saved in message metadata: extracted file
 text (`attachment_context` on user messages) and the out-of-scope counter
 (`agent_state` on assistant messages).
 
-### Guided conversation paths
+### Starter prompts
 
-`GET /suggestions?locale=fr` returns localized `suggested_questions` and
-`starter_paths`. Paths are defined in `data/conversation_paths.json`:
+`GET /suggestions?locale=fr` returns localized `suggested_questions`. The
+welcome screen's starter prompts live in the frontend (`WidgetChat.tsx`) and
+are sent as ordinary chat messages; there are no guided paths.
 
-- `events.upcoming` → `events.details` (needs `path_event_id`) → `events.booking_info`
-- `spaces.start` → `spaces.availability` (message `YYYY-MM-DD HH:MM to YYYY-MM-DD HH:MM`)
-  → `spaces.booking_details` (needs the chosen `path_context`) → `spaces.submit`
-
-Send `path_step_id` (and `path_event_id` / `path_context` where needed) with a
-normal chat request. Steps are fixed, read-only lookups that do not call the
-model or the presentation pass; they are saved to history like any turn and
-return `mode: "guided_path"`, `path_actions` (next choices), and, while a step
-expects free text, `active_path_step` and `path_context`. `spaces.submit`
-sends the selected space, time, and the user's description to the agent,
-which prepares a `book_space` action for approval; guests are asked to sign
-in. The selected space is re-checked for availability before submission.
-
-Agent answers include `intent.code` with the routed specialist domains. Their
-`path_actions` is always empty: guided journeys start from the welcome screen's
-starter paths.
+Agent answers include `intent.code` with the routed specialist domains.
 
 ### Next actions
 
@@ -262,8 +248,7 @@ the agent as `user_context`. Agent answers include up to two `next_actions`,
 `{"id", "label", "prompt", "event_id"?}`, with `id` one of `event.view`,
 `event.book`, `events.browse`, `space.book`, `membership.join`,
 `membership.benefits`, `newsletter.subscribe`, `contact.staff`, or
-`auth.login`. Send `prompt` back as an ordinary chat message, not as
-`path_step_id`. `auth.login` opens sign-in instead. `next_actions` is empty
+`auth.login`. Send `prompt` back as an ordinary chat message. `auth.login` opens sign-in instead. `next_actions` is empty
 while an approval is pending. Buttons: the actions first, then
 `suggested_questions` (written by the model in the user's language), three
 buttons in all but always room for two questions. Action prompts name events by

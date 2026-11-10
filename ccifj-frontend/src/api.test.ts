@@ -54,14 +54,14 @@ describe("sendChat", () => {
 describe("Sara backend contract", () => {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
-  it("maps the backend reply field to answer and keeps guided path data", async () => {
+  it("maps the backend reply field to answer and defaults missing lists", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({
-      session_id: "signed-session", reply: "## Upcoming CCIFJ events", mode: "guided_path",
-      path_actions: [{ id: "events.details", event_id: "23", label: "View event details: Gala" }],
+      session_id: "signed-session", reply: "## Upcoming CCIFJ events", mode: "database_answer",
+      events: [{ event_id: 23, title: "Gala" }],
     })));
-    const result = await sendChat({ session_id: null, message: "Upcoming", locale: "en", path_step_id: "events.upcoming" });
+    const result = await sendChat({ session_id: null, message: "Upcoming", locale: "en" });
     expect(result.answer).toBe("## Upcoming CCIFJ events");
-    expect(result.path_actions?.[0].event_id).toBe("23");
+    expect(result.events?.[0].event_id).toBe(23);
     expect(result.pending_approvals).toEqual([]);
   });
 

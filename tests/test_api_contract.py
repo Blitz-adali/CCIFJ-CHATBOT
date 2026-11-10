@@ -273,23 +273,12 @@ class ApiContractTest(unittest.TestCase):
 
     # --- Features ported from the main branch -------------------------------
 
-    def _seed_space(self, name="L'Espace@CCIFJ"):
-        import asyncio
-        from concierge.db.relationaldb.models import Space
-
-        async def seed():
-            async with AsyncSession(self.engine, expire_on_commit=False) as session:
-                space = Space(name=name, capacity=80)
-                session.add(space)
-                await session.commit()
-                return space.space_id
-        return asyncio.run(seed())
-
-    def test_localized_suggestions_starter_paths_and_current_user(self):
+    def test_localized_suggestions_and_current_user(self):
         french = self.client.get("/api/v1/suggestions?locale=fr").json()
         self.assertIn("Qu’est-ce que la CCIFJ ?", french["suggested_questions"])
-        self.assertEqual([path["id"] for path in french["starter_paths"]], ["events.upcoming", "spaces.start"])
-        self.assertEqual(french["starter_paths"][0]["label"], "Événements CCIFJ à venir")
+        self.assertNotIn("starter_paths", french)
+        # Guided-path fields are gone from the request contract.
+        self.assertEqual(self.client.post("/api/v1/chat", json={"message": "x", "path_step_id": "events.upcoming"}).status_code, 422)
         self.assertEqual(self.client.get("/api/v1/auth/me").status_code, 401)
         account = self.client.post("/api/v1/auth/register", json={"name": "Me", "email": "me@example.com", "password": "password123"}).json()
         me = self.client.get("/api/v1/auth/me", headers={"Authorization": "Bearer " + account["access_token"]})
@@ -312,60 +301,6 @@ class ApiContractTest(unittest.TestCase):
         self.assertIn(localized_question('What are the benefits of CCIFJ membership?','fr'),body['suggested_questions'])
         history=self.client.get('/api/v1/sessions/'+body['session_id']+'/messages',headers=headers).json()
         self.assertEqual(history['messages'][-1]['response']['suggested_questions'],body['suggested_questions'])
-
-    def test_guided_space_path_runs_without_agent_and_is_saved(self):
-        calls = []
-        original = self.backend.chat
-        async def recording(*args):
-            calls.append(args)
-            return await original(*args)
-        self.backend.chat = recording
-        space_id = self._seed_space()
-        start = self.client.post("/api/v1/chat", json={"message": "Check space availability", "path_step_id": "spaces.start", "locale": "en"}).json()
-        self.assertEqual(start["mode"], "guided_path")
-        self.assertEqual(start["active_path_step"], "spaces.availability")
-        token = start["session_id"]
-        bad = self.client.post("/api/v1/chat", json={"session_id": token, "message": "tomorrow", "path_step_id": "spaces.availability"}).json()
-        self.assertEqual(bad["active_path_step"], "spaces.availability")
-        available = self.client.post("/api/v1/chat", json={
-            "session_id": token, "message": "2026-11-12 09:00 to 2026-11-12 12:00", "path_step_id": "spaces.availability",
-        }).json()
-        self.assertEqual(available["path_actions"][0]["data"], {
-            "space_id": space_id, "space_name": "L'Espace@CCIFJ", "start_date": "2026-11-12 09:00", "end_date": "2026-11-12 12:00",
-        })
-        details = self.client.post("/api/v1/chat", json={
-            "session_id": token, "message": "Continue", "path_step_id": "spaces.booking_details",
-            "path_context": available["path_actions"][0]["data"],
-        }).json()
-        self.assertEqual(details["active_path_step"], "spaces.submit")
-        self.assertEqual(details["path_context"]["space_id"], space_id)
-        guest_submit = self.client.post("/api/v1/chat", json={
-            "session_id": token, "message": "Board meeting, 10 people", "path_step_id": "spaces.submit", "path_context": details["path_context"],
-        }).json()
-        self.assertIn("sign in", guest_submit["reply"])
-        self.assertEqual(calls, [])
-        history = self.client.get(f"/api/v1/sessions/{token}/messages").json()
-        self.assertEqual(len(history["messages"]), 10)
-        self.assertEqual(history["turn_status"], "ready")
-        self.assertEqual(self.client.post("/api/v1/chat", json={"message": "x", "path_step_id": "unknown.step"}).status_code, 400)
-        missing = self.client.post("/api/v1/chat", json={"message": "x", "path_step_id": "spaces.booking_details", "path_context": {"space_id": "1"}})
-        self.assertEqual(missing.status_code, 400)
-
-    def test_space_submit_hands_structured_request_to_agent(self):
-        from concierge.api.agent_backend import agent_inputs
-        seen = []
-        original = self.backend.chat
-        async def recording(*args):
-            seen.append(dict(agent_inputs.get()))
-            return await original(*args)
-        self.backend.chat = recording
-        account = self.client.post("/api/v1/auth/register", json={"name": "Booker", "email": "booker@example.com", "password": "password123"}).json()
-        context = {"space_id": 1, "space_name": "Room", "start_date": "2026-11-12 09:00", "end_date": "2026-11-12 12:00"}
-        result = self.client.post("/api/v1/chat", json={"message": "Board meeting, 10 people", "path_step_id": "spaces.submit", "path_context": context},
-                                  headers={"Authorization": "Bearer " + account["access_token"]})
-        self.assertEqual(result.status_code, 200)
-        self.assertIn("book_space", seen[0]["agent_message"])
-        self.assertIn("expected_attendees=10", seen[0]["agent_message"])
 
     def test_attachment_context_and_agent_state_persist_across_turns(self):
         from unittest.mock import patch
@@ -439,7 +374,7 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         formatted = await self.backend.format_result(result)
         self.assertEqual(formatted["intent"], {"code": "events"})
         self.assertEqual(formatted["suggested_questions"], ["a", "b", "c"])
-        self.assertEqual(formatted["path_actions"], [])
+        self.assertNotIn("path_actions", formatted)
         self.assertEqual(formatted["agent_state"], {"out_of_scope_count": 2})
         self.assertEqual(formatted["attachment_count"], 1)
         # Model-generated links are actions, not retrieved source evidence.
@@ -497,7 +432,7 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(with_actions["next_actions"]), 2)
         # Suggestions are written by the model in the user's language: never re-localized.
         self.assertEqual(with_actions["suggested_questions"], [question, "Can CCIFJ help me find a distributor?"])
-        self.assertEqual(with_actions["path_actions"], [])
+        self.assertNotIn("path_actions", with_actions)
         self.assertEqual(questions_only["suggested_questions"], [question, "Can CCIFJ help me find a distributor?"])
 
 

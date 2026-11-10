@@ -27,10 +27,6 @@ class ChatRequest(RequestModel):
     locale: Literal["en", "fr", "ja"] = "en"
     session_id: str | None = Field(default=None, max_length=4096)
     message: str = Field(min_length=1, max_length=16000)
-    # Guided conversation paths (see data/conversation_paths.json).
-    path_step_id: str | None = Field(default=None, max_length=80)
-    path_event_id: str | None = Field(default=None, max_length=40)
-    path_context: dict[str, Any] = Field(default_factory=dict)
     attachments: list[AttachmentUpload] = Field(default_factory=list, max_length=4)
 
     @field_validator("message")
@@ -52,11 +48,8 @@ class ChatResponse(SessionResponse):
     events: list[dict[str, Any]] = Field(default_factory=list)
     actions: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
-    path_actions: list[dict[str, Any]] = Field(default_factory=list)
     # Agent-proposed buttons: {"id", "label", "prompt", "event_id"?}; sent back as plain messages.
     next_actions: list[dict[str, Any]] = Field(default_factory=list)
-    active_path_step: str | None = None
-    path_context: dict[str, Any] = Field(default_factory=dict)
     attachment_count: int = 0
 
 

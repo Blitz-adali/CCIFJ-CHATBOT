@@ -8,7 +8,6 @@ from fastapi.responses import PlainTextResponse
 
 from .agent_backend import agent_ready
 from .catalog import catalog_questions
-from .paths import starter_paths
 
 # Fingerprint source at import, so a running old process cannot claim a newer
 # build just because files on disk changed. Never include environment secrets.
@@ -47,5 +46,5 @@ async def ready(session: DatabaseSession, response: Response):
 
 @router.get("/suggestions")
 async def suggestions(locale: Literal["en", "fr", "ja"] = "en"):
-    """Starter questions and guided journeys, without initializing models."""
-    return {"suggested_questions": catalog_questions(locale), "starter_paths": starter_paths(locale)}
+    """Localized starter questions, without initializing models."""
+    return {"suggested_questions": catalog_questions(locale)}

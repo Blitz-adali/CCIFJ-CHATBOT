@@ -28,8 +28,9 @@ def run():
             composer.fill(text)
             send.click()
 
-        # Localized starter paths come from /suggestions.
-        expect(page.get_by_role("button", name="Check space availability and book")).to_be_visible()
+        # The welcome screen offers starter prompts.
+        expect(page.locator(".widget-suggestions button")).to_have_count(6)
+        expect(page.get_by_role("button", name="Book a meeting room")).to_be_visible()
 
         # Language selection updates the interface and survives a refresh.
         page.get_by_role('combobox', name='Language').select_option('fr')
@@ -39,7 +40,7 @@ def run():
         page.get_by_role('combobox', name='Langue').select_option('en')
 
         # Database event cards work with no real model and on a narrow viewport.
-        page.get_by_role('button', name='Upcoming CCIFJ events', exact=True).click()
+        page.get_by_role('button', name='Upcoming events').click()
         expect(page.locator('.event-card')).to_have_count(1)
         expect(page.locator('.event-card')).to_contain_text('Browser Business Summit')
         expect(page.locator('.event-card')).to_contain_text('Registration open')
@@ -48,7 +49,7 @@ def run():
         page.screenshot(path='/tmp/ccifj-events-mobile.png', full_page=True)
         page.set_viewport_size({'width':1280,'height':900})
         page.locator('.event-card').get_by_role('button', name='Details', exact=True).click()
-        expect(page.get_by_role('heading',name='Browser Business Summit',exact=True)).to_be_visible()
+        expect(page.get_by_text('Answer: Tell me more about the event "Browser Business Summit".', exact=True)).to_be_visible()
         page.locator('.new-chat-rail-button').click()
 
         # A plain agent turn: the backend `reply` is rendered with follow-ups and links.
@@ -57,12 +58,10 @@ def run():
         expect(page.get_by_role("button", name="What is CCIFJ?")).to_be_visible()
         expect(page.locator(".next-action-link")).to_have_count(1)
 
-        # Guided space path: the follow-up free-text message continues the active step.
+        # A starter prompt is sent to the agent as an ordinary message.
         page.locator(".new-chat-rail-button").click()
-        page.get_by_role("button", name="Check space availability and book").click()
-        expect(page.get_by_role("heading", name="Check space availability")).to_be_visible()
-        ask("2026-11-12 09:00 to 2026-11-12 12:00")
-        expect(page.get_by_role("heading", name="Space availability")).to_be_visible()
+        page.get_by_role("button", name="Book a meeting room").click()
+        expect(page.get_by_text("Answer: I’d like to book a meeting room at CCIFJ.", exact=True)).to_be_visible()
 
         # Cancelling leaves an uncertain outcome that must be acknowledged before continuing.
         ask("cancel")

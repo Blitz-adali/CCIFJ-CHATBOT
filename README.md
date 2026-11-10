@@ -280,8 +280,6 @@ Tesseract (OCR) and, optionally, Ollama run on the same machine as the agent.
 `ccifj-frontend/package.json`, mainly FastAPI, SQLModel, LangChain and LangGraph, Chroma, bm25s,
 sentence-transformers, pypdf, pypdfium2, pytesseract, React and Vite.
 
-**AI tools.** Claude Code (Anthropic) was used as a coding assistant for parts of the code, tests and
-documentation.
 
 **Simulations.** Nothing leaves the system. Requests to staff and introductions are stored for staff review; no
 email is sent. Member follow-ups by email or LINE go to a mock outbox and are only marked as sent. Event bookings

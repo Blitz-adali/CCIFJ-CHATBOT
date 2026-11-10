@@ -64,16 +64,3 @@ class FollowupFlowTest(unittest.IsolatedAsyncioTestCase):
         with patch('concierge.api.answers.crud.list_member_categories',AsyncMock(return_value=[])):
             result=await common_answer('What are the CCIFJ membership fees?','en',None)
         self.assertEqual(result['suggested_questions'],[])
-
-    async def test_guided_event_details_have_a_localized_read_only_next_step(self):
-        from concierge.api.paths import run_path_step
-        from concierge.api.schemas import ChatRequest
-        event=SimpleNamespace(title='An event',description='Event information')
-        for locale in ('en','fr','ja'):
-            with self.subTest(locale=locale), patch('concierge.api.paths.crud.get_event',AsyncMock(return_value=event)), patch('concierge.api.paths.crud.get_event_languages',AsyncMock(return_value=[])), patch('concierge.api.paths.crud.get_event_speakers',AsyncMock(return_value=[])), patch('concierge.api.paths.event_card',return_value={'event_id':42}):
-                result=await run_path_step(ChatRequest(message='Details',locale=locale,path_step_id='events.details',path_event_id='42'),None,None)
-                action=result['path_actions'][0]
-                self.assertEqual(action['id'],'events.booking_info')
-                next_result=await run_path_step(ChatRequest(message=action['label'],locale=locale,path_step_id=action['id'],path_event_id=action['event_id']),None,None)
-                self.assertEqual(next_result['mode'],'guided_path')
-                self.assertFalse(next_result.get('pending_approvals'))

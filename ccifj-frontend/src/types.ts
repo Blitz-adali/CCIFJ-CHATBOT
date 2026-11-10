@@ -12,17 +12,7 @@ export interface ChatRequest {
   session_id: string | null;
   message: string;
   locale: Locale;
-  path_step_id?: string;
-  path_event_id?: string;
-  path_context?: Record<string, unknown>;
   attachments?: AttachmentUpload[];
-}
-
-export interface PathAction {
-  id: string;
-  label: string;
-  event_id?: string;
-  data?: Record<string, unknown>;
 }
 
 /** Agent-proposed button; clicking sends `prompt` as an ordinary user message. */
@@ -398,10 +388,7 @@ export interface ChatResponse {
   journey?: JourneyStep[];
   warnings?: string[];
   pending_approvals?: PendingApproval[];
-  path_actions?: PathAction[];
   next_actions?: NextAction[];
-  active_path_step?: string | null;
-  path_context?: Record<string, unknown>;
   request_id?: string;
 }
 
