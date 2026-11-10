@@ -151,6 +151,15 @@ def apply_language_requests(brief, text, awaiting_draft_language=False):
         # Fast path for a bare answer; anything looser is read by the routing model
         # (OrchestratorPlan.draft_language_reply) and recorded with set_draft_language.
         choice = _DRAFT_LANGUAGE_CHOICE.fullmatch(directive)
+        if not choice:
+            # The same bare answer given with other details in one message:
+            # "En français. Je m'appelle Paul Martin, paul.martin@example.test."
+            parts = [_DRAFT_LANGUAGE_CHOICE.fullmatch(part) for part in re.split(r'[.!?。！？;:,、\n]+', directive)]
+            named = {_SHORT_LANGUAGE_CHOICES.get(part['language'].casefold(), part['language']).casefold(): part
+                     for part in parts if part and part['language'].casefold() not in _SHORT_LANGUAGE_CHOICES}
+            # Another language named anywhere in the message ("English. Or French, I am not sure.") decides nothing.
+            mentioned = {_LANGUAGE_CODES[name.casefold()] for name in re.findall(_LANGUAGE_NAMES, directive, re.I)}
+            choice = next(iter(named.values())) if len(named) == 1 and len(mentioned) == 1 else None
         if choice:
             name = choice['language']
             brief['draft_language'] = _language_entry(_SHORT_LANGUAGE_CHOICES.get(name.casefold(), name), text, 'document')
@@ -349,12 +358,14 @@ def asks_draft_language(previous_answer):
     # ("Which language would you like the email in: English, French, or Japanese?").
     document = re.search(r'draft|e-?mail|message|ticket|inquiry|request|brouillon|courriel|demande|下書き|メール|問い合わせ', answer, re.I)
     # The word "language", or the choices themselves: 「メール本文は日本語・英語・フランス語のどれにしますか？」
-    language = (re.search(r'language|langue|言語', answer, re.I)
-                or len({_LANGUAGE_CODES[name.casefold()] for name in re.findall(_LANGUAGE_NAMES, answer, re.I)}) >= 2)
+    # or one language put forward for confirmation: 「…confirmez que vous souhaitez le message en français」
+    named = {_LANGUAGE_CODES[name.casefold()] for name in re.findall(_LANGUAGE_NAMES, answer, re.I)}
+    language = (re.search(r'language|langue|言語', answer, re.I) or len(named) >= 2
+                or named and re.search(r'confirm|souhait|pr[ée]f[èe]r|would you like|ご希望|よろしいですか', answer, re.I))
     # It also comes as one item of a list: "Before I write the draft, please tell me: the draft
     # language (English, French or Japanese), your name, ..." / 「次の3点を教えてください」.
     return bool(document and language and re.search(
-        r'[?？]|お選びください|教えてください|お知らせください|\b(?:tell me|let me know|indiquez|précisez|dites-moi)\b', answer, re.I))
+        r'[?？]|お選びください|教えてください|お知らせください|\b(?:tell me|let me know|indiquez|précisez|dites-moi|confirmez|confirm)\b', answer, re.I))
 
 
 def draft_text_language(text):

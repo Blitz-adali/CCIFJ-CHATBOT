@@ -44,17 +44,24 @@ class DraftLanguageChoiceTest(unittest.TestCase):
             'フランス語で書いてください': 'fr',
             'Please write it in English. My name is Jane Doe and my email is jane.doe@example.test.': 'en',
             'Écrivez-le en français s’il vous plaît, je m’appelle Jean Dupont.': 'fr',
+            # Seen in a replay: the bare choice, followed by the sender details in the same message.
+            'En français. Je m’appelle Paul Martin, paul.martin@example.test.': 'fr',
+            'English, my name is Jane Doe and my email is jane.doe@example.test': 'en',
+            '日本語でお願いします。名前は田中太郎、メールは taro.tanaka@example.test です。': 'ja',
         }
         for reply, code in replies.items():
             with self.subTest(reply=reply):
                 brief = apply_language_requests({}, reply, True)
                 self.assertEqual(draft_language(brief), code)
                 self.assertNotIn('conversation_language', brief)
+        # Two different languages in one message decide nothing.
+        self.assertIsNone(draft_language(apply_language_requests({}, 'English. Or French, I am not sure.', True)))
         # Not asked: the same words keep their old meaning (the language of the replies).
         self.assertIsNone(draft_language(apply_language_requests({}, '英語で書いてください', False)))
 
     def test_the_question_as_one_item_of_a_list_is_recognised(self):
-        for question in ('メール案を作る前に、次の2点を教えてください。\n- メール本文は日本語・英語・フランス語のどれにしますか？\n- 差出人の氏名と返信先メールアドレスは何にしますか？',
+        for question in ('Pour préparer le brouillon, indiquez-moi le **nom** et l’**adresse e-mail** à faire figurer comme expéditeur, et confirmez que vous souhaitez le message **en français**.',
+                         'メール案を作る前に、次の2点を教えてください。\n- メール本文は日本語・英語・フランス語のどれにしますか？\n- 差出人の氏名と返信先メールアドレスは何にしますか？',
                          'メールの下書きを作る前に、次の3点を教えてください。\n- 下書きの言語（日本語・英語・フランス語）\n- 差出人のお名前\n- 返信先にするメールアドレス',
                          'Before I write the email, please tell me:\n- the language of the draft (English, French or Japanese)\n- your name',
                          'Avant de rédiger le courriel, indiquez-moi la langue souhaitée, votre nom et votre adresse.'):
