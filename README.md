@@ -609,7 +609,7 @@ Settings come from `.env` and are checked at startup (`src/concierge/config.py`)
 | `CCIFJ_CORS_ORIGINS` | no | Comma-separated frontend origins allowed to call the API. |
 | `CCIFJ_WEB_SEARCH` | no | `on` (default) or `off`: OpenAI's built-in web search for the events and general agents, used for market context and recent CCIFJ news. Ignored with Ollama models. |
 | `CCIFJ_WEB_SEARCH_DOMAINS` | no | Comma-separated domains the web search may use (e.g. `ccifj.or.jp`); default `*` is the whole web. |
-| `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY` | no | When all four are set, every staff request a visitor approves is also created in Odoo CRM as a lead (`src/concierge/integrations/odoo.py`). Off by default; an Odoo outage never fails the answer. `ODOO_TIMEOUT` (seconds, default 10). |
+| `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY` | no | When all four are set, every staff request a visitor approves is also created in Odoo CRM as a lead (`src/concierge/integrations/odoo.py`; JSON-2 API on Odoo 19+, XML-RPC on older versions; not yet run against a real Odoo: check with `uv run python demo/odoo_check.py`). Off by default; an Odoo outage never fails the answer. `ODOO_TIMEOUT` (seconds, default 10). |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, … | no | LangSmith tracing. Traces go to the project `<LANGSMITH_AGENT_ID>-<LANGSMITH_AGENT_ENVIRONMENT>` (e.g. `realhackathon-local`). Runs are listed by their start time, taken from this machine's clock: keep it synced, or runs recorded while it was wrong sort above newer ones. |
 
 Frontend settings (`ccifj-frontend/.env.local`): `CCIFJ_API_TARGET` for the
