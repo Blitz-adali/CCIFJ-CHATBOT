@@ -71,7 +71,7 @@ async def _book_next_event(session, user):
     if booked:
         return
     upcoming = await session.exec(
-        select(Event).where(col(Event.start_at) >= crud._now()).order_by(col(Event.start_at))
+        select(Event).where(col(Event.start_at) >= crud._now(), col(Event.cancelled).is_(False)).order_by(col(Event.start_at))
     )
     for event in upcoming.all():
         try:

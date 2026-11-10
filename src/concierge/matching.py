@@ -224,7 +224,7 @@ async def _documents(session: AsyncSession, kind: Kind) -> dict[str, tuple[str, 
         rows = (await session.exec(select(Member))).all()
         return {str(m.member_id): (member_text(m), {"sector": m.sector or "", "region": m.region or "",
                                                     "country": m.country or ""}) for m in rows}
-    rows = (await session.exec(select(Event).where(Event.start_at >= japan_now()))).all()
+    rows = (await session.exec(select(Event).where(Event.start_at >= japan_now(), col(Event.cancelled).is_(False)))).all()
     return {str(e.event_id): (event_text(e), {"category": e.category or ""}) for e in rows}
 
 

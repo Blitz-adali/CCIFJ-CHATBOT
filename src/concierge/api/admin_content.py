@@ -21,7 +21,7 @@ from concierge.auth.access import StaffUser, require_staff
 from concierge.auth.dependencies import DatabaseSession
 from concierge.db.relationaldb import crud
 from concierge.db.relationaldb.models import (
-    Belongs, Event, EventLanguage, KnowledgeDocument, Member, MemberCategory, utcnow,
+    Belongs, Booking, BookingStatus, Event, EventLanguage, KnowledgeDocument, Member, MemberCategory, utcnow,
 )
 from concierge.imports import (
     COLUMNS, EVENT_CATEGORIES, ImportFileError, find_event, read_table, run_import, save_event, template_csv,
@@ -86,6 +86,7 @@ def event_json(event: Event, languages: list[str]) -> dict:
         "non_member_price": float(event.non_member_price) if event.non_member_price is not None else None,
         "price": float(event.price) if event.price is not None else None,
         "currency": event.currency, "languages": sorted(languages),
+        "cancelled": bool(event.cancelled),
     }
 
 
@@ -165,6 +166,44 @@ async def update_event(event_id: int, body: EventInput, session: DatabaseSession
 
 
 # ---------- Member companies ----------
+
+class EventStatus(BaseModel):
+    cancelled: bool
+
+
+@router.patch("/events/{event_id}/status")
+async def set_event_status(event_id: int, body: EventStatus, session: DatabaseSession):
+    """Cancel an event, or restore it. A cancelled event is no longer listed, recommended or
+    bookable by the agent. Nothing is deleted: its bookings stay so staff can contact attendees."""
+    event = await session.get(Event, event_id)
+    if event is None:
+        raise HTTPException(404, "Event not found.")
+    event.cancelled = body.cancelled
+    session.add(event)
+    await session.commit()
+    await session.refresh(event)
+    bookings = (await session.exec(select(func.count()).select_from(Booking).where(
+        Booking.event_id == event_id, Booking.status == BookingStatus.confirmed))).one()
+    languages = await _languages(session, [event_id])
+    return {**event_json(event, languages.get(event_id, [])), "confirmed_bookings": bookings}
+
+
+class MemberVisibility(BaseModel):
+    directory_visible: bool
+
+
+@router.patch("/members/{member_id}")
+async def set_member_visibility(member_id: int, body: MemberVisibility, session: DatabaseSession):
+    """Hide a company from the agent's directory search and matching, or show it again.
+    Nothing is deleted: its contact people, accounts and introduction history stay."""
+    member = await session.get(Member, member_id)
+    if member is None:
+        raise HTTPException(404, "Member company not found.")
+    member.directory_visible = body.directory_visible
+    session.add(member)
+    await session.commit()
+    return {"member_id": member_id, "directory_visible": member.directory_visible is not False}
+
 
 @router.get("/members")
 async def list_members(

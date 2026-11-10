@@ -90,7 +90,7 @@ async def search_events(
     `currency` on its own (without max_price) just filters by that currency.
     `keywords` and `locations` match when any one of their terms matches.
     """
-    stmt = select(Event)
+    stmt = select(Event).where(col(Event.cancelled).is_(False))  # staff cancelled it: never offered
 
     if keyword:
         like = f"%{keyword}%"
@@ -498,6 +498,8 @@ async def book_event(
     event = await session.get(Event, event_id)
     if event is None:
         raise ValueError("That event doesn't exist.")
+    if getattr(event, "cancelled", False):
+        raise ValueError("This event has been cancelled.")
     from concierge.source_context import effective_deadline
     deadline = effective_deadline(event)
     closing_at = deadline if deadline is not None else event.end_at
@@ -907,6 +909,7 @@ async def load_user_context(session: AsyncSession, user_id: Optional[int]) -> Op
         .where(Booking.user_id == user_id, Booking.status == BookingStatus.confirmed)
     )
     stmt = select(Event).where(
+        col(Event.cancelled).is_(False),
         col(Event.start_at) > now,
         (col(Event.reg_deadline).is_(None)) | (col(Event.reg_deadline) > now),
         col(Event.event_id).not_in(booked),
@@ -961,7 +964,7 @@ async def load_user_context(session: AsyncSession, user_id: Optional[int]) -> Op
         .where(Subscription.user_email == _normalize_subscription_email(user.email))
         .limit(1)
     )
-    return {
+    context = {
         "name": user.name,
         "email": user.email,
         "membership": membership,
@@ -971,6 +974,10 @@ async def load_user_context(session: AsyncSession, user_id: Optional[int]) -> Op
         "interests": interests,
         "recommended_events": recommended,
     }
+    if user.mobile:
+        # Lets a draft to staff carry the user's phone number instead of a placeholder.
+        context["phone"] = user.mobile
+    return context
 
 
 # ---------- Staff requests ----------
