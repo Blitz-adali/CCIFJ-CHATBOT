@@ -1,6 +1,52 @@
-"""Narrow email-header validation; no body rewriting, routing or submission."""
+"""Narrow draft repairs: the recipient header and the signed-in sender's own details.
+
+No other body rewriting, no routing and no submission.
+"""
 import re
 from email.utils import getaddresses
+
+_DRAFT = re.compile(r'(?P<fence>```|~~~)(?P<kind>email|ticket)\b(?P<body>.*?)(?P=fence)', re.S | re.I)
+# Bracketed placeholders the model writes for the sender, in the three draft languages.
+_SENDER_PLACEHOLDERS = {
+    'name': r'(?:your\s+)?(?:full\s+)?name|(?:votre\s+)?nom(?:\s+complet)?|お名前|ご氏名|氏名|名前',
+    'email': r'(?:your\s+)?e-?mail(?:\s+address)?|(?:votre\s+)?(?:adresse\s+)?e-?mail|メールアドレス|メール',
+    'phone': r'(?:your\s+)?(?:phone|telephone|mobile)(?:\s+number)?|(?:votre\s+)?(?:numéro\s+de\s+)?téléphone|電話番号',
+    'company': r'(?:your\s+)?company(?:\s+name)?|(?:nom\s+de\s+)?(?:votre\s+)?(?:société|entreprise)|会社名|貴社名',
+}
+_SENDER_PATTERNS = {field: re.compile(r'[\[［【]\s*(?:' + pattern + r')\s*[\]］】]', re.I)
+                    for field, pattern in _SENDER_PLACEHOLDERS.items()}
+_WANTS_PLACEHOLDERS = re.compile(r'placeholder|espaces?\s+réservés?|プレースホルダ', re.I)
+
+
+def fill_sender(text, user_context, history=()):
+    """Replace sender placeholders in a draft with the signed-in user's own account details.
+
+    Only bracketed placeholders for the sender's name, email, phone and company are touched, and
+    only inside an email or ticket draft. A detail the account does not have keeps its placeholder,
+    guests are left alone, and so is a user who asked for placeholders. The draft is still shown
+    for review before anything is stored.
+    """
+    if not isinstance(user_context, dict) or not text:
+        return text
+    from langchain_core.messages import HumanMessage
+    if any(isinstance(m, HumanMessage) and isinstance(m.content, str) and _WANTS_PLACEHOLDERS.search(m.content)
+           for m in history):
+        return text
+    membership = user_context.get('membership')
+    known = {'name': user_context.get('name'), 'email': user_context.get('email'), 'phone': user_context.get('phone'),
+             'company': membership.get('company') if isinstance(membership, dict) else None}
+    # Account values are data: keep them on one line and unable to close the draft block.
+    known = {field: re.sub(r'[`~\r\n]+', ' ', value).strip() for field, value in known.items()
+             if isinstance(value, str) and value.strip()}
+    if not known:
+        return text
+
+    def fill(match):
+        body = match['body']
+        for field, value in known.items():
+            body = _SENDER_PATTERNS[field].sub(lambda _: value, body)
+        return match['fence'] + match['kind'] + body + match['fence']
+    return _DRAFT.sub(fill, text)
 
 _BLOCK = re.compile(r'(?P<fence>```|~~~)email\s*\n(?P<body>.*?)(?P=fence)', re.S | re.I)
 _HEADER = re.compile(r'^To:[ \t]*(?P<value>[^\n]*)', re.M | re.I)

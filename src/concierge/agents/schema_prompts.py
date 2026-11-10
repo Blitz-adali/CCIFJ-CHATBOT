@@ -288,6 +288,21 @@ class OrchestratorPlan(BaseModel):
             "(e.g. 'en', 'fr', 'ja', 'ar', 'es', 'zh'). Any language is allowed."
         ),
     )
+    draft_language_reply: Literal["en", "fr", "ja", "no_preference", "unclear", "not_asked"] = Field(
+        default="not_asked",
+        description=(
+            "Use only when the assistant's previous message asked which language an email or ticket draft should "
+            "be written in, or said which language it used for a draft and offered the others. Then give the "
+            "language the user's latest message chooses for the DRAFT: 'en', 'fr' or 'ja'. Read the reply the way "
+            "a person would: codes ('en', 'FR', 'jp'), language names in any language or with typos, "
+            "'the first one', and agreement such as 'ok', 'yes' or 'as you suggest' when the assistant "
+            "recommended a language, which means that language. 'no_preference' when the user leaves the choice "
+            "to the assistant ('any', 'you choose', 'whatever', or 'ok' / 'yes' when no language was "
+            "recommended). 'unclear' when the reply is about something else. 'not_asked' in every other "
+            "situation. Never infer it from the language the user is writing in or from the language of a "
+            "pasted document."
+        ),
+    )
     known_user_details: str = Field(
         default="",
         description=(
@@ -1006,7 +1021,7 @@ You represent CCIFJ's commercial consulting arm (Appui aux Entreprises), general
 7. If an inquiry is beyond general information, guide the user to submit the inquiry form or connect with the relevant department contact.
 8. Writing to CCIFJ staff. When a staff handoff is useful, you may offer drafting help once for that need; do not repeat an ignored offer. This can help when no contact matches, evidence is insufficient, or the user needs something the concierge cannot do (for example, registration closed before the event, changing or cancelling a booking, refunds):
    a. No contact found: offer to write a note together that the CCIFJ team will study ('team_ticket'). A contact exists: give the contact details and offer to write the email together ('staff_email') when a handoff would help. Never present a contact lookup that already returned nothing as a next step.
-   b. Start draft intake only after the user asks for a draft or accepts the offer. Use placeholders for missing sender details during preparation if the user prefers; collect actual required details before submission. If the USER PROFILE has them, propose them for confirmation instead of asking again. Guests can do this without logging in.
+   b. Start draft intake only after the user asks for a draft or accepts the offer. Sender details: when the USER PROFILE gives the user's name, email, phone or company, write them into the first draft (the `From:` line as `Name <email>` only, and the signature, where the company and phone also go) and say in one short sentence that you used their account details and they can change them; do not ask for them and do not show a placeholder for a detail the profile has. The draft is reviewed before anything is stored, so that review is the confirmation. Use a bracketed placeholder only for a detail you do not know (for a guest, or a phone number or company the profile lacks), or when the user asks for placeholders; collect the required details before submission. Guests can do this without logging in.
    b2. Draft language: CCIFJ staff work in English, French, and Japanese, so the draft must be in one of those, not automatically in the chat language. Unless the user already named the draft language in this conversation, you MUST ask before writing the first draft, and you must not write any draft in that message. Ask alongside any missing details from step b. If the user's name is written in another script (e.g. Arabic), also ask how to spell it in the draft language. Keep talking to the user in their own language; only the draft uses the chosen language.
    c. Write the draft and show it in full in a fenced block: use ```email for a 'staff_email' and ```ticket for a 'team_ticket'. Inside the block, start with `To:`, `From:` and `Subject:` lines, then a blank line and the message. Keep email addresses unchanged. Before the first staff-email draft, use `get_ccifj_contact` for the relevant team if its verified recipient is not already known. `To:` must contain that recipient’s email, not a greeting or sender address. If several recipients are possible, ask which contact or use a clearly marked recipient-email placeholder. Preserve the selected address through body edits unless the user changes it.
    d. Ask the user to confirm or request changes. Revise and show the full updated block until the user explicitly agrees. Never call `submit_staff_request` before that agreement.
@@ -1200,9 +1215,11 @@ CONVERSATIONAL_JUDGMENT_RULES = """
   a service is not choosing to draft an inquiry. Consult RECENT OPTIONAL DRAFT
   OFFERS and avoid repeating an unaccepted offer. A genuinely new need can merit
   a new offer; an explicit request for drafting must still be fulfilled.
-- Collect sender name/email for a draft only after the visitor chooses drafting;
-  placeholders are valid during preparation. Submission still needs required
-  contact details and explicit approval. Never remove approval steps to be brief.
+- Collect sender name/email for a draft only after the visitor chooses drafting.
+  A signed-in user's name, email and company from the USER PROFILE go straight
+  into the draft; placeholders are for details you do not have. Submission still
+  needs required contact details and explicit approval. Never remove approval
+  steps to be brief.
 - Preserve the user's degree of commitment in summaries and drafts: hoping,
   considering, tentative, awaiting approval, confirmed and cancelled are different
   states. Do not strengthen or weaken a statement without an explicit correction.
