@@ -1,0 +1,18 @@
+{
+  "display_name": "Ask the CCIFJ Concierge",
+  "function_name": "ask_ccifj_concierge",
+  "endpoint_url": "https://YOUR-CONCIERGE-HOST/api/v1/chat",
+  "method": "POST",
+  "headers": { "Content-Type": "application/json" },
+  "description": "Sends the user's question to the CCIFJ Concierge backend and returns its answer, with sources. Use it for every question about CCIFJ: membership, events, bookings, business support, recruitment, training, publications, contacts, member matching and member follow-ups. Pass the user's message unchanged in \"message\", and the language of the message in \"locale\" (en, fr or ja). To continue the same conversation, pass back the \"session_id\" returned by the previous call.",
+  "parameters_schema": {
+    "type": "object",
+    "properties": {
+      "message": { "type": "string", "description": "The user's message, unchanged" },
+      "locale": { "type": "string", "enum": ["en", "fr", "ja"], "description": "Language of the user's message" },
+      "session_id": { "type": "string", "description": "The session_id returned by the previous call, to continue the same conversation. Omit it on the first call." }
+    },
+    "required": ["message", "locale"],
+    "additionalProperties": false
+  }
+}
