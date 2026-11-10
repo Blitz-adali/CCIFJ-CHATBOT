@@ -332,6 +332,28 @@ export interface StaffRequestItem {
   recipients: string[];
   status: 'new' | 'in_review' | 'closed';
   created_at: string;
+  conversation_id?: number | null; // the chat this request came from, when it is kept
+}
+
+export interface StaffVisitor { name: string; email: string; guest: boolean }
+export interface StaffConversationRequest { reference: string; subject: string; status: StaffRequestItem['status'] }
+
+export interface StaffConversationItem {
+  conversation_id: number;
+  visitor: StaffVisitor;
+  started_at: string;
+  last_at: string;
+  message_count: number;
+  preview: string;
+  requests: StaffConversationRequest[];
+}
+
+export interface StaffConversation {
+  conversation_id: number;
+  visitor: StaffVisitor;
+  started_at: string;
+  requests: StaffConversationRequest[];
+  messages: { role: 'user' | 'assistant'; content: string; created_at: string; sources: { title: string; url: string }[] }[];
 }
 
 export interface ActionChoice {

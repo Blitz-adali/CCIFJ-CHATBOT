@@ -106,6 +106,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .inbox-request summary { margin-top: 20px; color: #00669b; cursor: pointer; }
 .inbox-message { white-space: pre-wrap; line-height: 1.7; }
 .inbox-more { margin-top: 20px; }
+.inbox-tabs { display: flex; gap: 8px; margin: 16px 0 4px; }
+.staff-inbox .inbox-tabs button.active { background: #073f69; border-color: #073f69; color: #fff; }
+.conversation-thread { display: grid; gap: 12px; margin: 16px 0 0; padding: 0; list-style: none; }
+.conversation-message { max-width: 85%; padding: 12px 16px; border-radius: 14px; background: #f1f5f6; }
+.conversation-message.user { justify-self: end; background: #e3f0f7; }
+.conversation-author { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 6px; color: #073f69; font-size: 12px; font-weight: 600; }
+.conversation-author time { color: #526b7b; font-weight: 400; }
+.conversation-text { margin: 0; white-space: pre-wrap; line-height: 1.6; overflow-wrap: anywhere; }
+.conversation-sources { margin: 8px 0 0; color: #526b7b; font-size: 12px; }
+.conversation-sources a { color: #00669b; }
+@media(max-width:720px) { .conversation-message { max-width: 100%; } }
 /* Staff dashboard */
 .admin-shell { display: flex; width: 100%; min-height: 0; }
 .admin-nav { display: flex; flex: 0 0 230px; flex-direction: column; gap: 4px; padding: 28px 16px; border-right: 1px solid var(--line); overflow-y: auto; }
