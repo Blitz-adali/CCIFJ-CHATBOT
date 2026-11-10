@@ -67,7 +67,6 @@ questions lack a source and can upload the missing document.
 | Chat model | ~6k tokens per turn × 4,000 turns, GPT-class pricing | ~€30–80 |
 | Rerank (optional) | Cohere, 4,000 requests | ~€5 |
 | Embeddings | Local model, CPU | €0 |
-| LangSmith tracing (optional) | Developer plan | €0–40 |
 | **Total** | | **~€60–170 / month** |
 
 Running the chat model locally (Ollama/Qwen, already supported) removes the model line at
@@ -85,13 +84,3 @@ the cost of a GPU machine and lower answer quality. Costs scale linearly with tu
 Rules that change often (fees, categories, contacts, events) are data, edited in the
 dashboard. Rules that change rarely (tone, scope, approval policy) are prompts in
 `src/concierge/agents/schema_prompts.py`, edited by the developer.
-
-## 7. Known limits to carry into production
-
-- The website index is English; French and Japanese pages are reached through the
-  English rewrite and the multilingual embedding of uploaded documents, so citations for a
-  Japanese user may be English pages. Re-indexing the FR/JA crawl is a post-hackathon task.
-- Two supplied brochures (*WIB ENG/JP 2026*) are image-only and need OCR quality review.
-- Requests are stored, not emailed; set the `ODOO_*` variables (and connect GetResponse) before announcing the agent.
-- Member contact people are stored per company (name, job title, email, working language) and shown
-  with each match; introductions are still requested per company and assigned to a person by staff.
