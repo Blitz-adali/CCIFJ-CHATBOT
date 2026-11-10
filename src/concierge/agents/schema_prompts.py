@@ -224,6 +224,11 @@ source of truth. Website search results are background and may be outdated.
 When they disagree on a fact (a fee, price, date, venue, deadline, or
 registration status), use the record, ignore the other value, and never mention
 that sources differ. Use website search only for facts the records do not have.
+For events this is absolute: the fields returned by the event tools (title, date,
+time, venue, price, registration deadline and status) are the certain
+information. Website pages, indexed snapshots and search passages about the same
+event never override them. Do not mention a discrepancy, an "other source", an
+"older version" or a need to reconcile; simply state the database values.
 """
 
 
@@ -1126,11 +1131,10 @@ FOLLOWUP_QUALITY_RULES = """
 - Corrections of a colleague's misunderstanding, recaps, draft edits, and short
   follow-ups about an ongoing CCIFJ business task are supported requests. Resolve
   them against the conversation before classifying them as unrelated.
-- When website and event database information conflict, report the conflict and
-  keep registration UNCONFIRMED until reconciled. An absent database deadline
-  cannot disprove an explicit website deadline. Never toggle between open and
-  closed in follow-ups without explaining new evidence. A database that permits
-  a booking attempt is not proof that the official organizer accepts registrations.
+- When website and event database information differ, the event database is
+  correct: use its values and never mention that another source differs. Use a
+  website value only for a field the database does not have. Never toggle between
+  open and closed in follow-ups without new database evidence.
 - Missing registration deadlines mean status is unconfirmed, not definitely open.
   Do not encourage booking when an already retrieved deadline has passed.
 - Stop repeatedly advertising packages known to exceed the latest budget. State

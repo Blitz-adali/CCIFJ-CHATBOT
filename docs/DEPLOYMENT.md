@@ -93,5 +93,5 @@ dashboard. Rules that change rarely (tone, scope, approval policy) are prompts i
   Japanese user may be English pages. Re-indexing the FR/JA crawl is a post-hackathon task.
 - Two supplied brochures (*WIB ENG/JP 2026*) are image-only and need OCR quality review.
 - Requests are stored, not emailed; set the `ODOO_*` variables (and connect GetResponse) before announcing the agent.
-- Member contact people are folded into the company description; a dedicated contacts
-  table is the next schema step if introductions should target a named person.
+- Member contact people are stored per company (name, job title, email, working language) and shown
+  with each match; introductions are still requested per company and assigned to a person by staff.

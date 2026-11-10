@@ -118,8 +118,8 @@ class AdminContentApiTest(unittest.TestCase):
             created = self.client.post('/api/v1/admin/knowledge', json={**upload('domiciliation.txt', text, 'text/plain'), 'title': 'Domiciliation'}, headers=headers)
             self.assertEqual(created.status_code, 201, created.text)
             doc = created.json()
-            doc_id, title, url, indexed_text = index.call_args.args
-            self.assertEqual((title, url), ('Domiciliation', f'ccifj-doc://{doc_id}'))
+            doc_id, title, url, indexed_text, source_file = index.call_args.args
+            self.assertEqual((title, url, source_file), ('Domiciliation', f'ccifj-doc://{doc_id}', 'domiciliation.txt'))
             self.assertIn('domiciliation', indexed_text)
             self.assertEqual(self.client.post('/api/v1/admin/knowledge', json=upload('copy.txt', text, 'text/plain'), headers=headers).status_code, 409)
             self.assertEqual(self.client.post('/api/v1/admin/knowledge', json={**upload('x.txt', b'other', 'text/plain'), 'source_url': 'http://insecure'}, headers=headers).status_code, 422)

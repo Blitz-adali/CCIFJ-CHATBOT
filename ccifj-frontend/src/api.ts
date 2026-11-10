@@ -71,7 +71,11 @@ function errorFromBody(body: unknown, status: number, requestId?: string, authSe
   const record = typeof body === "object" && body !== null ? body as Record<string, unknown> : {};
   const detail = record.detail ?? record;
   const details = typeof detail === "object" && detail !== null ? detail as Record<string, unknown> : {};
-  const text = typeof detail === "string" ? detail : details.message ?? record.message ?? record.error;
+  // FastAPI validation errors (422) carry a list: [{loc, msg, type}, ...]. Show the first message.
+  const validation = Array.isArray(detail) ? (detail[0] as Record<string, unknown> | undefined)?.msg : undefined;
+  const text = typeof detail === "string" ? detail
+    : typeof validation === "string" ? `The request was rejected: ${validation}`
+    : details.message ?? record.message ?? record.error;
   if (status === 401 && authSent) expireAuthSession();
   return new ApiError(
     typeof text === "string" ? text : `Request failed (${status})`,
@@ -397,6 +401,20 @@ export async function matchMembersForEvent(eventId: number): Promise<{need: stri
 
 export async function draftProposal(body: {need: string; requester: string; member_ids: number[]; language: string}): Promise<{draft: string; companies: string[]}> {
   return requestJson('/api/v1/admin/matching/proposal', { method: 'POST', body: JSON.stringify(body) }, 120000);
+}
+
+export interface InvitationDraft {
+  member_id: number;
+  company: string;
+  language: string;
+  to_name: string | null;
+  to_email: string | null;
+  subject: string;
+  body: string;
+}
+
+export async function draftInvitations(body: {event_id: number; member_ids: number[]; language: string; note: string}): Promise<{event: string; items: InvitationDraft[]; warnings: string[]}> {
+  return requestJson('/api/v1/admin/matching/invitations', { method: 'POST', body: JSON.stringify(body) }, 180000);
 }
 
 export async function getIntroRequests(status = ''): Promise<{items: import('./types').IntroRequestItem[]; next_offset: number | null}> {

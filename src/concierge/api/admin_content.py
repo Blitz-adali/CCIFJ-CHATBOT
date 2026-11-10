@@ -19,6 +19,7 @@ from sqlmodel import col, select
 
 from concierge.auth.access import StaffUser, require_staff
 from concierge.auth.dependencies import DatabaseSession
+from concierge.db.relationaldb import crud
 from concierge.db.relationaldb.models import (
     Belongs, Event, EventLanguage, KnowledgeDocument, Member, MemberCategory, utcnow,
 )
@@ -31,7 +32,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_staff)])
 
 ImportKind = Literal["events", "members"]
-KNOWLEDGE_MAX_BYTES = 15 * 1024 * 1024
+# Brochures and media kits are image-heavy PDFs (often 20-30 MB for a few pages of text).
+KNOWLEDGE_MAX_BYTES = 40 * 1024 * 1024
 KNOWLEDGE_MAX_PAGES = 300
 KNOWLEDGE_MAX_CHARS = 2_000_000
 
@@ -179,7 +181,9 @@ async def list_members(
         query = query.where(or_(func.lower(Member.name).like(like), func.lower(Member.description).like(like),
                                 func.lower(Member.region).like(like)))
     if sector.strip():
-        query = query.where(Member.sector == sector.strip())
+        # A company is listed under its primary sector and any secondary one.
+        wanted = sector.strip()
+        query = query.where(or_(Member.sector == wanted, func.lower(Member.secondary_sectors).like(f"%{wanted.lower()}%")))
     rows = list((await session.exec(query.order_by(col(Member.name)).offset(offset).limit(limit + 1))).all())
     visible = rows[:limit]
     accounts: dict[int, int] = {}
@@ -190,12 +194,17 @@ async def list_members(
         accounts = dict(counts.all())
     sectors = (await session.exec(select(Member.sector).where(Member.sector != None).distinct()  # noqa: E711
                                   .order_by(col(Member.sector)))).all()
+    people = await crud.member_contacts(session, [member.member_id for member, _ in visible], include_hidden=True)
     response.headers["Cache-Control"] = "no-store"
     return {
         "items": [{
             "member_id": member.member_id, "name": member.name, "sector": member.sector, "category": category,
             "country": member.country, "region": member.region, "manpower": member.manpower,
             "description": member.description, "contact": member.contact,
+            "secondary_sectors": member.secondary_sectors, "language": member.language,
+            "directory_visible": member.directory_visible is not False,
+            "contacts": [{"name": c.name, "salutation": c.salutation, "job_title": c.job_title, "email": c.email,
+                          "language": c.language} for c in people.get(member.member_id, [])],
             "accounts": accounts.get(member.member_id, 0),
         } for member, category in visible],
         "next_offset": offset + limit if len(rows) > limit else None,
@@ -231,6 +240,8 @@ async def import_file(kind: ImportKind, body: FileUpload, session: DatabaseSessi
 # ---------- Knowledge files ----------
 
 class KnowledgeUpload(FileUpload):
+    # Base64 is 4/3 of the binary size; a little headroom so decode_upload gives the clear "too large" message.
+    data_base64: str = Field(min_length=1, max_length=KNOWLEDGE_MAX_BYTES * 4 // 3 + 1024)
     title: str = Field(default="", max_length=255)
     source_url: Optional[str] = Field(default=None, max_length=500)
 
@@ -274,7 +285,8 @@ async def upload_knowledge(body: KnowledgeUpload, session: DatabaseSession, staf
     await session.refresh(doc)
     try:
         doc.chunk_count = await asyncio.to_thread(
-            knowledge.index_document, doc.doc_id, title, knowledge.document_url(doc.doc_id, source_url), extracted["text"])
+            knowledge.index_document, doc.doc_id, title, knowledge.document_url(doc.doc_id, source_url), extracted["text"],
+            body.name)
     except Exception as exc:
         logger.exception("Indexing knowledge document %s failed", doc.doc_id)
         await asyncio.to_thread(knowledge.remove_document, doc.doc_id)

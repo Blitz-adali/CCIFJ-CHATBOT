@@ -51,7 +51,7 @@ User ──► React chat ──► FastAPI ──► LangGraph agents ──►
 |---|---|
 | **Events** | Lists upcoming events (by topic keywords, name, format, city or region such as Kansai, or dates), shows full event details, books tickets for every attendee, and reserves the L'Espace@CCIFJ room. Booking requires login and approval. |
 | **My bookings** | Shows the user's own bookings and room reservations. Before booking, checks whether registration is open, whether they already booked, whether it clashes with their schedule, and whether the room is free (suggesting free slots when it isn't). Cancels a booking or reservation, or changes it (another event, add or remove attendees, new dates) in one step, until it starts. Changes need login and approval. |
-| **Membership** | Explains membership categories, fees, eligibility, and benefits, shares the application form, and searches the member directory by industry and, when asked, by place (Tokyo, Kansai, a city…). The directory is whatever staff import (today: the organisers' 50 fictional companies with their 116 contact people folded into each company's description). |
+| **Membership** | Explains membership categories, fees, eligibility, and benefits, shares the application form, and searches the member directory. The directory holds each company with its primary and secondary sectors and its **contact people** (name, job title, email, working language), imported from a CCIFJ directory export. Sector names are understood loosely ("F&B", "food", "agroalimentaire" all reach Food & Beverage). Today it holds the organisers' 50 fictional companies and their 116 contacts. |
 | **Business support** | Knows the full CCIFJ offer across the 8 sections of ccifj.or.jp (Our Chamber, News, Membership, Events, Business Forum, Commercial Support, Recruitment/Training, Publications) and recommends the services that fit the user's stage: market studies, Business Connect, Expo+, sector missions, company setup, domiciliation, V.I.E, VAT recovery, recruitment, training, publications, and advertising. |
 | **Contacts** | Reads the staff directory that CCIFJ maintains in the admin dashboard (department, what each contact handles, email, languages), picks the right contact for the request itself, falls back to the triage contact, and always offers to write the email together. A contact added in the dashboard is used on the next question; no code or topic list to update. |
 | **Staff requests** | Writes an email to a CCIFJ contact, or a ticket for the CCIFJ team when no contact fits. It revises the draft with the user and stores it after the user approves. |
@@ -469,7 +469,8 @@ scripts/
 ├── evaluate.py              corpus / retrieval / API evaluation on 100 labelled questions
 ├── faq_check.py             runs the 71 recurring questions + 5 fallback cases through the live API
 ├── ingest_documents.py      loads a folder of brochures into the knowledge base (same as the dashboard upload)
-└── replace_members.py       replaces the member directory with a CSV/XLSX export (directory layout accepted)
+├── replace_members.py       replaces the member directory with a CSV/XLSX export, companies and their contact people
+└── refresh_events.py        checks every event against its ccifj.or.jp page, fixes dates, venues, deadlines and prices, adds new events
 docs/                    runbook, deployment and handover, data-pack check, quality notes
 start.sh                 starts the whole stack with one command
 ```
@@ -541,8 +542,9 @@ Everything below can also be done in the admin dashboard; the scripts exist for
 bulk loading.
 
 ```bash
-# Member directory from a CSV/XLSX export (preview first, then --yes to replace the current list)
-uv run python scripts/replace_members.py "path/to/members.csv" --yes
+# Member directory: the organisers' 50 fictional companies with their contact people (kept in the repository).
+# Pass another CSV/XLSX export as an argument to load that instead; without --yes it only previews.
+uv run python scripts/replace_members.py --yes
 ```
 
 ```bash
@@ -550,8 +552,38 @@ uv run python scripts/replace_members.py "path/to/members.csv" --yes
 uv run python scripts/ingest_documents.py "path/to/brochures"
 ```
 
+```bash
+# Events: compare every event with its page on ccifj.or.jp and report the differences (dates, venue,
+# registration deadline, member / non-member prices, contact, languages); --apply writes them,
+# --add-new also creates upcoming events that are on the site but not in the database yet.
+uv run python scripts/refresh_events.py --apply --add-new
+```
+
 Staff contacts (department, what they handle, email, triage flag) are edited in
 **Admin → Staff contacts**; the agent reads them live.
+
+### How members and events are matched
+
+`src/concierge/matching.py` ranks member companies and upcoming events against a need written
+in plain language ("a distributor for our food products", "solar power for our offices"), in
+English, French or Japanese. Nothing has to be typed the way the directory spells it:
+
+| Signal | What it adds |
+|---|---|
+| Meaning | Multilingual embeddings: a French or Japanese need matches an English description; "agrifood" matches "Food & Beverage". |
+| Wording | Stemmed terms weighted by rarity, widened with a small English/French vocabulary (distributeur = distributor = importer). A company that says "solar" outranks one that only says "energy". |
+| Sector | Primary and secondary sectors, resolved loosely from the user's words. |
+
+The first two rankings are fused by reciprocal rank and a sector named in the need adds a
+bonus. Each match keeps the terms it matched and a sentence from the company's own
+description, so the agent explains the fit instead of guessing, and lists the company's
+contact people with their role and working language. Contact job titles are deliberately not
+part of the matching text (a bank with an "HR Director" is not an HR provider).
+
+The same ranking suggests events: `recommend_events`, the event list when no event contains
+the user's exact keywords ("closest by topic", labelled as such), and the two events
+recommended to a signed-in user, which now follow their company's sectors, their onboarding
+interests and what they booked before, instead of only the event formats they attended.
 
 > The API loads the agent and search models in the background when it starts
 > (about 12–18 s). `GET /status` returns `"agent_ready": true` once they are

@@ -394,6 +394,9 @@ async def list_available_events(
     if registration_open_only:
         from concierge.source_context import effective_deadline
         events = [e for e in events if not _registration_problem(e) and e.reg_deadline is not None]
+    by_topic = False
+    if not events and keyword and not name:
+        events, by_topic = await _events_by_topic(keyword, start, end, category, location, limit), True
     if not events:
         if keyword:
             return (
@@ -404,6 +407,9 @@ async def list_available_events(
 
     record_events(e.event_id for e in events[:limit])
     text = "\n".join(_event_line(e) + f" | Registration: {_registration_summary(e)}" for e in events[:limit])
+    if by_topic:
+        text = ("No upcoming event uses these exact words; these are the closest by topic. "
+                "Say they are related events, not exact matches.\n" + text)
     if len(events) > limit:
         text += (
             f"\n\nShowing the first {limit} results; more events match. "
@@ -466,7 +472,8 @@ async def get_event_details(
     ]
     if snapshot:
         from concierge.source_context import event_facts
-        lines.append("Indexed source: " + snapshot["url"] + event_facts(snapshot["url"]))
+        lines.append("Website page (background only; the fields above are the certain values and win over "
+                     "anything below, without mentioning any difference): " + snapshot["url"] + event_facts(snapshot["url"]))
     if speakers:
         lines.append("Speakers:")
         for s in speakers:
@@ -1321,6 +1328,50 @@ def _member_region_pattern(region: str):
     return re.compile("|".join(parts), re.IGNORECASE)
 
 
+def _contacts_line(contacts: list) -> str:
+    """Contact people of a member company, with the role and working language of each."""
+    people = []
+    for contact in contacts[:6]:
+        get = contact.get if isinstance(contact, dict) else lambda key, c=contact: getattr(c, key, None)
+        details = ", ".join(part for part in (get("job_title"), f"works in {get('language')}" if get("language") else "") if part)
+        name = " ".join(part for part in (get("salutation"), get("name")) if part)
+        people.append(name + (f" ({details})" if details else "") + (f" <{get('email')}>" if get("email") else ""))
+    return f"\n  Contact people: {'; '.join(people)}" if people else ""
+
+
+async def _events_by_topic(topic: str, start, end, category: Optional[str], location: Optional[str], limit: int) -> list:
+    """Upcoming events closest in meaning to a topic, for when no event contains the words themselves.
+
+    Only when the matching index is ready; the date, format and place filters still apply.
+    """
+    from concierge import matching
+    if not matching.ready():
+        return []
+    places = _location_terms(location)
+    async with AsyncSessionLocal() as session:
+        try:
+            matches = await matching.match_events(session, topic, limit=limit + 10)
+        except Exception:
+            logger.exception("Topic search for events unavailable")
+            return []
+        # Keep what is clearly about the topic: relevant on its own, and close to the best match.
+        best = max((m.score for m in matches), default=0.0)
+        ids = [m.id for m in matches
+               if matching.is_relevant(m.score, m.fields.get("wording", 0.0)) and m.score >= best - 0.03]
+        events = {e.event_id: e for e in await crud.get_events_by_ids(session, ids)} if ids else {}
+    kept = []
+    for event_id in ids:
+        event = events.get(event_id)
+        if event is None or (start and event.start_at < start) or (end and event.start_at > end):
+            continue
+        if category and (event.category or "").casefold() != category.casefold():
+            continue
+        if places and not any(place.casefold() in (event.location or "").casefold() for place in places):
+            continue
+        kept.append(event)
+    return kept[:limit]
+
+
 @tool
 async def search_member_directory(
     industry: Optional[str] = None,
@@ -1355,13 +1406,22 @@ async def search_member_directory(
             "Use list_available_industries_and_regions to see the industries."
         )
 
+    from concierge import matching
+    contacts: dict[int, list] = {}
     async with AsyncSessionLocal() as session:
-        members = await crud.search_members(
-            session,
-            sector=industry or None,
-            # Places are matched below, so fetch the whole sector first.
-            limit=_MEMBER_FETCH_LIMIT if pattern else PAGE_SIZE + 1,
-        )
+        # The sector is understood loosely ("F&B", "food", "agroalimentaire" -> Food & Beverage) and
+        # also matches a company's secondary sectors; nothing has to be typed exactly.
+        everyone = [m for m in await crud.search_members(session, limit=_MEMBER_FETCH_LIMIT)
+                    if getattr(m, "directory_visible", True) is not False]
+        sectors = matching.resolve_sectors(industry, matching.sectors_of(everyone)) if industry else []
+        members = [m for m in everyone if not industry or (sectors and matching.in_sectors(m, sectors))]
+        if industry and not sectors:
+            # No directory sector is called that: rank companies by what they do instead.
+            found = await matching.match_members(session, industry, limit=PAGE_SIZE + 1, region=region or None)
+            ids = [m.id for m in found if matching.is_relevant(m.score, m.fields.get("wording", 0.0))]
+            members = [m for m in everyone if m.member_id in ids]
+        member_ids = [m.member_id for m in members if getattr(m, "member_id", None) is not None]
+        contacts = await crud.member_contacts(session, member_ids) if member_ids else {}
 
     note = ""
     if pattern is not None:
@@ -1389,9 +1449,12 @@ async def search_member_directory(
     for m in members[:PAGE_SIZE]:
         place = ", ".join(p for p in (m.region, m.country) if p) or "region unknown"
         block = f"{m.name} | Industry: {m.sector or 'unknown'} | {place}"
+        if getattr(m, "secondary_sectors", None):
+            block += f" | Also: {m.secondary_sectors}"
         if m.description:
             desc = m.description[:2000]
             block += f"\n  {desc}"
+        block += _contacts_line(contacts.get(getattr(m, "member_id", None), []))
         blocks.append(block)
 
     text = (_names_allowed_note(level) + "Commercial role: unverified. These are sector/location matches, not a verified buyer, "
@@ -1484,15 +1547,24 @@ async def find_matching_members(
     blocks = []
     for match in matches:
         place = ", ".join(p for p in (match.fields.get("region"), match.fields.get("country")) if p) or "place unknown"
-        strength = "strong" if match.score >= 0.84 else "good" if match.score >= matching.RELEVANT_SCORE else "weak"
-        block = f"{match.name} | Sector: {match.fields.get('sector') or 'unknown'} | {place} | match strength: {strength}"
+        wording = match.fields.get("wording", 0.0)
+        strength = ("strong" if match.score >= 0.84 or (wording >= 0.6 and match.score >= matching.RELEVANT_SCORE)
+                    else "good" if matching.is_relevant(match.score, wording) or match.fields.get("in_sector") else "weak")
+        sector = match.fields.get("sector") or "unknown"
+        if match.fields.get("secondary_sectors"):
+            sector += f" (also {', '.join(match.fields['secondary_sectors'])})"
+        block = f"{match.name} | Sector: {sector} | {place} | match strength: {strength}"
         if match.why:
             block += f"\n  Why: {match.why}"
+        if match.fields.get("matched_terms"):
+            block += f"\n  Matches the request on: {', '.join(match.fields['matched_terms'][:6])}"
         if match.fields.get("contact"):
             block += f"\n  Public contact: {match.fields['contact']}"
+        block += _contacts_line(match.fields.get("contacts", []))
         blocks.append(block)
     advice = ("Explain in one line per company why it fits, using only the sector, place and text above; "
-              "a sector match is not proof of a commercial role. ")
+              "a sector match is not proof of a commercial role. When a company lists contact people, suggest the "
+              "one whose role fits the request and who works in the user's language. ")
     advice = _names_allowed_note(level) + advice
     if level == "member":
         advice += ("Offer to ask CCIFJ to introduce the user to one or more of them (request_introduction, "
@@ -1603,8 +1675,9 @@ async def list_available_industries_and_regions() -> str:
     Returns:
         The available industry and region values supported by the directory.
     """
+    from concierge import matching
     async with AsyncSessionLocal() as session:
-        sectors = [s for s in await crud.list_sectors(session) if s]
+        sectors = await matching.directory_sectors(session)
 
     # Stored regions are raw address parts (wards, towns, typos); offer the
     # names search_member_directory understands instead.

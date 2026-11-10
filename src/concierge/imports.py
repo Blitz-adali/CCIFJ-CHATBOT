@@ -6,8 +6,8 @@ are updated instead of duplicated: events match on title + start date, members o
 
 Member files may use the CCIFJ directory export layout (`Full name`, `Primary sector`,
 `Membership type`, `Email`, one row per company plus one row per contact person): the
-columns are mapped by `MEMBER_ALIASES`, membership labels by `CATEGORY_HINTS`, and contact
-people are folded into their company's description.
+columns are mapped by `MEMBER_ALIASES`, membership labels by `CATEGORY_HINTS`, and each
+contact person becomes a `MemberContact` of their company (name, job title, email, language).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from sqlalchemy import delete, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from concierge.db.relationaldb.models import Event, EventLanguage, Member, MemberCategory, utcnow
+from concierge.db.relationaldb.models import Event, EventLanguage, Member, MemberCategory, MemberContact, utcnow
 
 MAX_IMPORT_ROWS = 5000
 EVENT_CATEGORIES = ("Business event", "Conference", "Networking", "Training")
@@ -56,6 +56,10 @@ MEMBER_COLUMNS: dict[str, tuple[bool, str]] = {
     "description": (False, "What the company does; used for matching"),
     "contact": (False, "Public contact (email, website)"),
     "established": (False, "YYYY-MM-DD or year"),
+    "secondary_sectors": (False, "Other sectors, comma-separated"),
+    "language": (False, "Preferred contact language, e.g. English, Japanese, French"),
+    "directory_visible": (False, "TRUE or FALSE: show in the member directory (default TRUE)"),
+    "job_title": (False, "Only on a contact-person row: name the row 'Company, First LAST'"),
 }
 COLUMNS = {"events": EVENT_COLUMNS, "members": MEMBER_COLUMNS}
 
@@ -67,6 +71,10 @@ MEMBER_ALIASES: dict[str, str] = {
     "membership_type": "category", "membership": "category", "tier": "category",
     "email": "contact", "website": "contact",
     "employees": "manpower", "founded": "established",
+    "secondary_sector(s)": "secondary_sectors", "secondary_sector": "secondary_sectors",
+    "communication_language": "language",
+    "display_profile_in_the_online_directory": "directory_visible", "display_profile": "directory_visible",
+    "position": "job_title",
 }
 # Membership labels other systems use -> our category name. Checked in order against the
 # lowercased label, so "Resident Active Member - Outside Kanto rate" is Non-Kanto, not Active.
@@ -76,11 +84,6 @@ CATEGORY_HINTS: tuple[tuple[str, str], ...] = (
     ("benefactor", "Benefactor"), ("start-up", "Startup"), ("startup", "Startup"),
     ("individual", "Individual"), ("associate", "Associate"), ("active", "Active"),
 )
-# Extra member columns worth keeping for matching, folded into the description.
-MEMBER_EXTRA_COLUMNS: dict[str, str] = {
-    "secondary_sector(s)": "Secondary sectors", "secondary_sectors": "Secondary sectors",
-    "communication_language": "Communication language",
-}
 
 
 class ImportFileError(ValueError):
@@ -129,7 +132,9 @@ def template_csv(kind: str) -> str:
     else:
         writer.writerow(["Example Foods KK", "Food & Beverage", "Active", "Japan", "Minato-ku", "Asia", "45",
                          "Imports French cheese and wine; strong retail distribution in Japan.",
-                         "info@example.com", "2012-04-01"])
+                         "info@example.com", "2012-04-01", "Distribution", "English", "TRUE", ""])
+        writer.writerow(["Example Foods KK, Aiko TANAKA", "", "", "", "", "", "", "", "aiko.tanaka@example.com", "",
+                         "", "Japanese", "TRUE", "Sales Director"])
     return out.getvalue()
 
 
@@ -254,50 +259,55 @@ def validate_event(row: dict) -> tuple[dict, list[str]]:
 
 
 def apply_member_aliases(row: dict) -> dict:
-    """Map another system's column names onto ours and fold extra columns into the description."""
+    """Map another system's column names onto ours (see MEMBER_ALIASES)."""
     out = dict(row)
     for alias, target in MEMBER_ALIASES.items():
         if _text(out.get(target)) == "" and _text(out.get(alias)) != "":
             out[target] = out[alias]
-    extras = [f"{label}: {_text(out[key])}" for key, label in MEMBER_EXTRA_COLUMNS.items() if _text(out.get(key))]
-    if extras:
-        out["description"] = "\n".join(filter(None, [_text(out.get("description")), *extras]))
     return out
 
 
-def fold_member_contacts(rows: list[tuple[int, dict]]) -> tuple[list[tuple[int, dict]], int, list[int]]:
-    """Attach person rows ("COMPANY 01, Sophie DUBOIS", with a job title) to their company row.
+def _flag(value: Any, default: bool = True) -> bool:
+    text = _text(value).lower()
+    if text in {"true", "1", "yes", "y", "oui", "vrai"}:
+        return True
+    if text in {"false", "0", "no", "n", "non", "faux"}:
+        return False
+    return default
 
-    Directory exports often list a company and then one row per contact person. The member
-    table has company rows only, so each person is appended to the company description as
-    "Contacts: ..." (name, job title, language, email), where matching and introductions can
-    use them. Returns the remaining rows, how many people were folded, and the row numbers of
-    people whose company is not in the file.
+
+def split_member_contacts(rows: list[tuple[int, dict]]) -> tuple[list[tuple[int, dict]], dict[str, list[dict]], list[int]]:
+    """Separate company rows from contact-person rows.
+
+    Directory exports list a company and then one row per contact person, named
+    "COMPANY 01, Sophie DUBOIS" with a job title or salutation. Returns the company rows, the
+    contact people grouped by lowercased company name (name, salutation, job title, email,
+    language, visibility), and the row numbers of people whose company is not in the file.
     """
-    companies = {_text(row.get("name")).lower(): (number, row) for number, row in rows
+    companies = {_text(row.get("name")).lower() for _, row in rows
                  if _text(row.get("name")) and "," not in _text(row.get("name"))}
-    kept, folded, orphans = [], 0, []
-    contacts: dict[str, list[str]] = {}
+    kept: list[tuple[int, dict]] = []
+    contacts: dict[str, list[dict]] = {}
+    orphans: list[int] = []
     for number, row in rows:
-        name = _text(row.get("name"))
-        company, _, person = name.partition(",")
-        is_person = bool(person.strip()) and (_text(row.get("job_title")) or _text(row.get("salutation")))
+        company, _, person = _text(row.get("name")).partition(",")
+        is_person = bool(person.strip()) and bool(_text(row.get("job_title")) or _text(row.get("salutation")))
         if not is_person:
             kept.append((number, row))
             continue
-        if company.strip().lower() not in companies:
+        key = company.strip().lower()
+        if key not in companies:
             orphans.append(number)
             continue
-        details = [part for part in (_text(row.get("job_title")), _text(row.get("communication_language"))) if part]
-        line = person.strip() + (f" ({'; '.join(details)})" if details else "")
-        if _text(row.get("email")) or _text(row.get("contact")):
-            line += f" – {_text(row.get('email')) or _text(row.get('contact'))}"
-        contacts.setdefault(company.strip().lower(), []).append(line)
-        folded += 1
-    for key, lines in contacts.items():
-        _, row = companies[key]
-        row["description"] = "\n".join(filter(None, [_text(row.get("description")), "Contacts: " + "; ".join(lines)]))
-    return kept, folded, orphans
+        contacts.setdefault(key, []).append({
+            "name": person.strip()[:150],
+            "salutation": _text(row.get("salutation"))[:20] or None,
+            "job_title": _text(row.get("job_title"))[:150] or None,
+            "email": (_text(row.get("email")) or _text(row.get("contact")))[:255] or None,
+            "language": _text(row.get("language"))[:30] or None,
+            "directory_visible": _flag(row.get("directory_visible")),
+        })
+    return kept, contacts, orphans
 
 
 def match_category(label: str, categories: dict[str, int]) -> int | None:
@@ -323,7 +333,11 @@ def validate_member(row: dict, categories: dict[str, int]) -> tuple[dict, list[s
         "contact": _limited(row, errors, "contact", 255),
         "manpower": _optional(row, errors, "manpower", _int),
         "established_at": _optional(row, errors, "established", _date),
+        "secondary_sectors": _limited(row, errors, "secondary_sectors", 255),
+        "language": _limited(row, errors, "language", 30),
     }
+    # An empty cell keeps what is stored (None is skipped on update); a new company defaults to visible.
+    clean["directory_visible"] = _flag(row.get("directory_visible")) if _text(row.get("directory_visible")) else None
     category = _text(row.get("category"))
     clean["category_id"] = None
     if category:
@@ -376,11 +390,12 @@ async def run_import(session: AsyncSession, kind: str, rows: list[dict], commit:
     counts = {"create": 0, "update": 0, "error": 0}
     numbered = list(enumerate(rows, start=2))  # row 1 is the header
     orphans: list[int] = []
+    people: dict[str, list[dict]] = {}
     if kind == "members":
         numbered = [(number, apply_member_aliases(row)) for number, row in numbered]
-        numbered, folded, orphans = fold_member_contacts(numbered)
-        if folded:
-            counts["folded"] = folded  # contact people attached to their company row
+        numbered, people, orphans = split_member_contacts(numbered)
+        if people:
+            counts["contacts"] = sum(len(found) for found in people.values())  # people attached to their company
         for number in orphans:
             counts["error"] += 1
             results.append({"row": number, "label": "", "action": "error",
@@ -406,7 +421,10 @@ async def run_import(session: AsyncSession, kind: str, rows: list[dict], commit:
             if kind == "events":
                 await save_event(session, clean, existing, keep_empty=True)
             elif existing is None:
-                session.add(Member(**clean))
+                if clean["directory_visible"] is None:
+                    clean["directory_visible"] = True
+                existing = Member(**clean)
+                session.add(existing)
             else:
                 for field, value in clean.items():
                     # An empty cell keeps the stored value; the matched name keeps its stored spelling.
@@ -414,6 +432,12 @@ async def run_import(session: AsyncSession, kind: str, rows: list[dict], commit:
                         setattr(existing, field, value)
                 existing.updated_at = utcnow()
                 session.add(existing)
+            if kind == "members" and key in people:
+                # The file is the source of truth for a company's contact people.
+                await session.flush()
+                await session.exec(delete(MemberContact).where(MemberContact.member_id == existing.member_id))
+                for person in people[key]:
+                    session.add(MemberContact(member_id=existing.member_id, **person))
     if commit:
         await session.commit()
     results.sort(key=lambda item: item["row"])

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
-  draftProposal, getAdminEvents, getAdminMembers, getIntroRequests, matchMembers, matchMembersForEvent,
+  draftInvitations, draftProposal, getAdminEvents, getAdminMembers, getIntroRequests, matchMembers, matchMembersForEvent,
   updateIntroRequest,
 } from './api';
+import type { InvitationDraft } from './api';
 import type { AdminEvent, IntroRequestItem, IntroStatus, MemberMatch } from './types';
 
 function errorText(error: unknown) {
@@ -46,6 +47,11 @@ function FindMatches() {
   const [requester, setRequester] = useState('');
   const [language, setLanguage] = useState('en');
   const [draft, setDraft] = useState('');
+  const [searchedEvent, setSearchedEvent] = useState<number | null>(null);
+  const [inviteLanguage, setInviteLanguage] = useState('auto');
+  const [inviteNote, setInviteNote] = useState('');
+  const [invitations, setInvitations] = useState<InvitationDraft[]>([]);
+  const [inviteWarnings, setInviteWarnings] = useState<string[]>([]);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   useEffect(() => {
@@ -54,25 +60,37 @@ function FindMatches() {
   }, []);
   const search = (event: FormEvent) => {
     event.preventDefault();
-    setBusy('search'); setError(''); setDraft(''); setSelected([]);
+    setBusy('search'); setError(''); setDraft(''); setInvitations([]); setSelected([]);
+    setSearchedEvent(mode === 'event' && eventId ? Number(eventId) : null);
     const request = mode === 'event' && eventId
-      ? matchMembersForEvent(Number(eventId)).then(result => { setNeed(`Members to invite to "${result.need}"`); return result; })
+      ? matchMembersForEvent(Number(eventId))
       : matchMembers(need, sector, region);
     request.then(result => { setResults(result.items); setRelevant(result.relevant_score); })
       .catch(e => setError(errorText(e))).finally(() => setBusy(''));
   };
   const toggle = (id: number) => setSelected(old => old.includes(id) ? old.filter(item => item !== id) : [...old, id]);
+  const writeInvitations = () => {
+    if (searchedEvent === null) return;
+    setBusy('invite'); setError('');
+    draftInvitations({ event_id: searchedEvent, member_ids: selected, language: inviteLanguage, note: inviteNote })
+      .then(result => { setInvitations(result.items); setInviteWarnings(result.warnings ?? []); })
+      .catch(e => setError(errorText(e))).finally(() => setBusy(''));
+  };
+  const editInvitation = (id: number, change: Partial<InvitationDraft>) =>
+    setInvitations(old => old.map(item => item.member_id === id ? { ...item, ...change } : item));
   const writeDraft = () => {
     setBusy('draft'); setError('');
     draftProposal({ need, requester, member_ids: selected, language })
       .then(result => setDraft(result.draft)).catch(e => setError(errorText(e))).finally(() => setBusy(''));
   };
   return <div>
-    <p className="admin-note">Describe what someone is looking for, or pick an event to see which members to invite. Results come from the member directory; a match on sector alone should be confirmed before an introduction.</p>
+    <p className="admin-note">{mode === 'need'
+      ? 'A person or company asked CCIFJ for a partner, supplier or expert. Describe what they need to find member companies that could help, then draft an introduction proposal to that person.'
+      : 'Pick an upcoming event to find the member companies it is most relevant to, then draft an invitation email for each one.'} Results come from the member directory; a match on sector alone should be confirmed.</p>
     <form className="admin-form" onSubmit={search}>
       <div className="admin-tabs small">
-        <label className="admin-check"><input type="radio" name="mode" checked={mode === 'need'} onChange={() => setMode('need')} />A need</label>
-        <label className="admin-check"><input type="radio" name="mode" checked={mode === 'event'} onChange={() => setMode('event')} />Who to invite to an event</label>
+        <label className="admin-check"><input type="radio" name="mode" checked={mode === 'need'} onChange={() => { setMode('need'); setResults(null); }} />Someone needs a partner (introduction)</label>
+        <label className="admin-check"><input type="radio" name="mode" checked={mode === 'event'} onChange={() => { setMode('event'); setResults(null); }} />Invite members to an event</label>
       </div>
       {mode === 'need' ? <>
         <label className="admin-wide">What are they looking for?<textarea rows={3} required minLength={3} value={need} onChange={e => setNeed(e.target.value)}
@@ -103,15 +121,39 @@ function FindMatches() {
         })}</tbody>
       </table></div>
       {!results.length && <p>No members matched. Try a broader description or remove the filters.</p>}
-      {results.length > 0 && <div className="admin-form">
-        <h2>Matchmaking proposal</h2>
-        <p className="admin-note">Select companies above, then let the assistant draft an email for you to check and send yourself.</p>
+      {results.length > 0 && searchedEvent !== null && <div className="admin-form">
+        <h2>Invitation emails</h2>
+        <p className="admin-note">Select companies above. The assistant writes one invitation per company, addressed to its contact person, with the event details and how to register. Nothing is sent: check each email and send it yourself.</p>
         <div className="admin-form-grid">
-          <label>Who is it for?<input value={requester} onChange={e => setRequester(e.target.value)} placeholder="e.g. Marie Dupont, Example Foods SAS" /></label>
+          <label>Language<select value={inviteLanguage} onChange={e => setInviteLanguage(e.target.value)}>
+            <option value="auto">Each contact's language</option><option value="en">English</option><option value="fr">French</option><option value="ja">Japanese</option></select></label>
+          <label>Add to every email (optional)<input value={inviteNote} maxLength={1000} onChange={e => setInviteNote(e.target.value)} placeholder="e.g. Members get 20% off until 30 November" /></label>
+        </div>
+        <div className="admin-form-actions">
+          <button type="button" className="primary" disabled={busy !== '' || !selected.length} onClick={writeInvitations}>
+            {busy === 'invite' ? 'Writing…' : `Draft invitations (${selected.length} selected)`}</button>
+        </div>
+        {invitations.length > 0 && inviteWarnings.map(text => <p key={text} role="alert" className="admin-error">{text}</p>)}
+        {invitations.map(item => <div key={item.member_id} className="admin-form">
+          <h3>{item.company}</h3>
+          <p className="admin-note">To: {item.to_name ? `${item.to_name}${item.to_email ? ` <${item.to_email}>` : ' (no email on file)'}` : 'no contact person on file'} · {item.language.toUpperCase()}</p>
+          <label className="admin-wide">Subject<input value={item.subject} onChange={e => editInvitation(item.member_id, { subject: e.target.value })} /></label>
+          <label className="admin-wide">Email (edit before sending)<textarea rows={12} value={item.body} onChange={e => editInvitation(item.member_id, { body: e.target.value })} /></label>
+          <div className="admin-form-actions">
+            <button type="button" onClick={() => navigator.clipboard?.writeText(`Subject: ${item.subject}\n\n${item.body}`)}>Copy</button>
+            {item.to_email && <a className="admin-link" href={`mailto:${item.to_email}?subject=${encodeURIComponent(item.subject)}&body=${encodeURIComponent(item.body)}`}>Open in email app</a>}
+          </div>
+        </div>)}
+      </div>}
+      {results.length > 0 && searchedEvent === null && <div className="admin-form">
+        <h2>Introduction proposal</h2>
+        <p className="admin-note">Select companies above. The assistant drafts an email to the person who asked, presenting the selected companies and offering to introduce them. Check it and send it yourself.</p>
+        <div className="admin-form-grid">
+          <label>Who asked for the introduction?<input required value={requester} onChange={e => setRequester(e.target.value)} placeholder="e.g. Marie Dupont, Example Foods SAS" /></label>
           <label>Language<select value={language} onChange={e => setLanguage(e.target.value)}><option value="en">English</option><option value="fr">French</option><option value="ja">Japanese</option></select></label>
         </div>
         <div className="admin-form-actions">
-          <button type="button" className="primary" disabled={busy !== '' || !selected.length} onClick={writeDraft}>
+          <button type="button" className="primary" disabled={busy !== '' || !selected.length || !requester.trim()} onClick={writeDraft}>
             {busy === 'draft' ? 'Writing…' : `Draft proposal (${selected.length} selected)`}</button>
         </div>
         {draft && <>

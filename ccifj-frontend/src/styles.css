@@ -166,6 +166,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .admin-main textarea { width: 100%; padding: 10px 12px; border: 1px solid #bccdd6; border-radius: 10px; font: inherit; resize: vertical; }
 .admin-main input[type=file] { max-width: 100%; }
+/* Grid cells may shrink below their content's natural width, so a wide control never spills into the next cell. */
+.admin-form-grid > * { min-width: 0; }
+.admin-form-grid input:not([type=checkbox]):not([type=radio]), .admin-form-grid select { width: 100%; box-sizing: border-box; }
+.admin-file-field input[type=file] { width: 100%; max-width: 560px; box-sizing: border-box; }
+.admin-file-details { margin-top: 12px; }
 .admin-import { margin: 16px 0; padding: 14px 18px; border: 1px dashed #bccdd6; border-radius: 14px; background: #fbfaf7; }
 .admin-import summary { color: var(--navy); font-weight: 600; cursor: pointer; }
 .admin-import-result { margin-top: 10px; }

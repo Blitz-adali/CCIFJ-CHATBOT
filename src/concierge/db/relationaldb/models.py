@@ -192,6 +192,28 @@ class Member(SQLModel, table=True):
     description: Optional[str] = Field(default=None)
     contact: Optional[str] = Field(default=None, max_length=255)
     established_at: Optional[date] = Field(default=None)
+    # Directory export fields: other sectors the company works in (comma-separated), the
+    # language the company prefers to be contacted in, and whether it is shown in the directory.
+    secondary_sectors: Optional[str] = Field(default=None, max_length=255)
+    language: Optional[str] = Field(default=None, max_length=30)
+    directory_visible: bool = Field(default=True, sa_column_kwargs={"server_default": "1"})
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = updated_at_field()
+
+
+class MemberContact(SQLModel, table=True):
+    """A person at a member company. A company can list several, each with their own role
+    and working language, so an introduction can go to the right person in the right language."""
+    __tablename__ = "member_contact"
+
+    contact_id: Optional[int] = Field(default=None, primary_key=True)
+    member_id: int = Field(foreign_key="member.member_id", index=True)
+    name: str = Field(max_length=150)
+    salutation: Optional[str] = Field(default=None, max_length=20)
+    job_title: Optional[str] = Field(default=None, max_length=150)
+    email: Optional[str] = Field(default=None, max_length=255)
+    language: Optional[str] = Field(default=None, max_length=30)  # e.g. "English", "Japanese", "French"
+    directory_visible: bool = Field(default=True, sa_column_kwargs={"server_default": "1"})
     created_at: NaiveDatetime = Field(default_factory=utcnow)
     updated_at: NaiveDatetime = updated_at_field()
 

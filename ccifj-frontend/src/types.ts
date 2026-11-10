@@ -101,7 +101,20 @@ export interface AdminMember {
   manpower: number | null;
   description: string | null;
   contact: string | null;
+  secondary_sectors?: string | null;
+  language?: string | null;
+  directory_visible?: boolean;
+  contacts?: MemberContactPerson[];
   accounts: number;
+}
+
+/** A contact person at a member company, with their role and working language. */
+export interface MemberContactPerson {
+  name: string;
+  salutation: string | null;
+  job_title: string | null;
+  email: string | null;
+  language: string | null;
 }
 
 export interface ImportResult {

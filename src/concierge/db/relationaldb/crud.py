@@ -10,6 +10,8 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from .datetimes import japan_now, japan_naive
 
+import logging
+
 from .models import (
     Booking,
     BookingStatus,
@@ -19,6 +21,7 @@ from .models import (
     EventLanguage,
     Member,
     MemberCategory,
+    MemberContact,
     Message,
     MessageRole,
     ReservationStatus,
@@ -36,6 +39,8 @@ from .models import (
     User,
     UserAuth,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -229,6 +234,25 @@ async def search_members(
 
 async def get_member(session: AsyncSession, member_id: int) -> Optional[Member]:
     return await session.get(Member, member_id)
+
+
+async def member_contacts(session: AsyncSession, member_ids: Sequence[int], include_hidden: bool = False) -> dict[int, list[MemberContact]]:
+    """Contact people of the given member companies, grouped by company."""
+    if not member_ids:
+        return {}
+    rows = (await session.exec(select(MemberContact).where(col(MemberContact.member_id).in_(list(member_ids)))
+                               .order_by(col(MemberContact.contact_id)))).all()
+    grouped: dict[int, list[MemberContact]] = {}
+    for contact in rows:
+        if include_hidden or contact.directory_visible is not False:
+            grouped.setdefault(contact.member_id, []).append(contact)
+    return grouped
+
+
+async def get_events_by_ids(session: AsyncSession, event_ids: Sequence[int]) -> Sequence[Event]:
+    if not event_ids:
+        return []
+    return (await session.exec(select(Event).where(col(Event.event_id).in_(list(event_ids))))).all()
 
 
 async def list_sectors(session: AsyncSession) -> list[str]:
@@ -884,7 +908,17 @@ async def load_user_context(session: AsyncSession, user_id: Optional[int]) -> Op
     )
     if interests:
         stmt = stmt.where(col(Event.category).in_(interests))
-    result = await session.exec(stmt.order_by(col(Event.start_at)).limit(2))
+    # Prefer events that fit what the user does and has shown interest in (company sector and
+    # description, onboarding answers, past bookings); fall back to their usual event formats.
+    picked = None
+    try:
+        from concierge import matching
+        booked_ids = set((await session.exec(booked)).all())
+        picked = await matching.events_for_user(session, user_id, booked_ids, limit=2)
+    except Exception:
+        logger.exception("Could not match events to the user's interests; using event formats")
+    if picked is None:
+        picked = (await session.exec(stmt.order_by(col(Event.start_at)).limit(2))).all()
     recommended = [
         {
             "event_id": event.event_id,
@@ -894,7 +928,7 @@ async def load_user_context(session: AsyncSession, user_id: Optional[int]) -> Op
             "reg_deadline": _schedule_text(event.reg_deadline) if event.reg_deadline else None,
             "location": event.location,
         }
-        for event in result.all()
+        for event in picked
     ]
 
     result = await session.exec(

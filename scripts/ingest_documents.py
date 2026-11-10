@@ -95,7 +95,8 @@ async def ingest(files: list[Path], dry_run: bool) -> None:
             await session.refresh(doc)
             try:
                 doc.chunk_count = await asyncio.to_thread(
-                    knowledge.index_document, doc.doc_id, title, knowledge.document_url(doc.doc_id, None), text)
+                    knowledge.index_document, doc.doc_id, title, knowledge.document_url(doc.doc_id, None), text,
+                    path.name)
             except Exception as exc:
                 await asyncio.to_thread(knowledge.remove_document, doc.doc_id)
                 await session.delete(doc)

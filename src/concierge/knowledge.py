@@ -1,18 +1,27 @@
-"""Files staff upload as agent sources: chunk, embed and index them next to the website index.
+"""Files staff upload as agent sources: chunk, embed and add them to the website collection.
 
-The website crawl index under src/concierge (Chroma + BM25) is tracked in git and never
-changes here. Uploads go to a separate store under var/knowledge (or CCIFJ_KNOWLEDGE_DIR):
+Uploaded files are added ON TOP of the scraped website chunks, in the same Chroma collection
+(rag config COLLECTION_NAME, "ccifj_documents"). Each upload chunk:
 
-- a Chroma collection with one vector per chunk (metadata: url, doc_id), and
-- a combined BM25 index (website chunks + upload chunks), rebuilt after every upload or
-  delete. Search loads it instead of the website-only index when it exists.
+- starts with a first line naming the file it came from: "source: <file name>", then the
+  same "# <title>" / "url: <link>" header as the website chunks;
+- has metadata {url, doc_id, source_file, kind: "upload"}, so a document's chunks can be
+  listed or deleted without touching the website chunks (which have no doc_id);
+- has an ID that cannot overlap the website's: UPLOAD_ID_BASE + doc_id * MAX_CHUNKS_PER_DOC + n.
+  Website chunk IDs are 0..N (N ≈ 5,500 today); indexing refuses to overwrite any existing
+  chunk that belongs to something else.
 
-Chunk IDs must be integers (search drops other IDs), so upload chunks use
-UPLOAD_ID_BASE + doc_id * MAX_CHUNKS_PER_DOC + n, far above the website's chunk IDs.
+Keyword search uses a combined BM25 index (website + uploads) under var/knowledge
+(or CCIFJ_KNOWLEDGE_DIR), rebuilt after every upload or delete.
+
+The website collection is rebuilt from scratch when the site is re-crawled, and it is tracked
+in git. The extracted text of every upload is therefore also kept under var/knowledge/texts,
+and `python -m concierge.knowledge reindex` puts all uploads back into the collection.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -25,7 +34,7 @@ logger = logging.getLogger(__name__)
 UPLOAD_ID_BASE = 10_000_000
 MAX_CHUNKS_PER_DOC = 10_000
 CHUNK_TOKENS = 450
-COLLECTION = "ccifj_uploads"
+UPLOAD_KIND = "upload"
 # Uploads without a public link are cited by this internal reference (no clickable link).
 INTERNAL_SCHEME = "ccifj-doc"
 
@@ -43,6 +52,11 @@ def bm25_dir() -> Path:
     return store_dir() / "bm25"
 
 
+def texts_dir() -> Path:
+    """Extracted text of every upload, so uploads can be re-added after the website index is rebuilt."""
+    return store_dir() / "texts"
+
+
 def document_url(doc_id: int, source_url: str | None) -> str:
     return source_url or f"{INTERNAL_SCHEME}://{doc_id}"
 
@@ -52,7 +66,7 @@ def chunk_id(doc_id: int, index: int) -> int:
 
 
 def chroma_client():
-    """One Chroma client for everything stored under var/knowledge (uploads, matching)."""
+    """One Chroma client for the local stores under var/knowledge (matching indexes)."""
     global _client
     with _lock:
         if _client is None:
@@ -62,10 +76,12 @@ def chroma_client():
 
 
 def upload_collection():
+    """The website collection itself: uploads are stored next to the scraped chunks."""
     global _collection
     with _lock:
         if _collection is None:
-            _collection = chroma_client().get_or_create_collection(name=COLLECTION, metadata={"hnsw:space": "cosine"})
+            from concierge.rag.src.rag_search import get_collection
+            _collection = get_collection()
         return _collection
 
 
@@ -78,8 +94,8 @@ def reset_for_tests() -> None:
     _base_records.cache_clear()
 
 
-def split_text(title: str, url: str, text: str) -> list[str]:
-    """Token-bounded chunks, each starting with the title and source like the website chunks."""
+def split_text(title: str, url: str, text: str, source_file: str | None = None) -> list[str]:
+    """Token-bounded chunks. Line 1 names the uploaded file; then the website-style title/url header."""
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     from concierge.rag.src.rag_search import get_tokenizer
     splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
@@ -87,27 +103,54 @@ def split_text(title: str, url: str, text: str) -> list[str]:
         separators=["\n\n", "\n", " ", ""],
     )
     chunks = [piece.strip() for piece in splitter.split_text(text) if piece.strip()]
-    return [f"# {title}\nurl: {url}\n{piece}" for piece in chunks[:MAX_CHUNKS_PER_DOC]]
+    source = (source_file or title).replace("\n", " ").strip()
+    return [f"source: {source}\n# {title}\nurl: {url}\n{piece}" for piece in chunks[:MAX_CHUNKS_PER_DOC]]
 
 
-def index_document(doc_id: int, title: str, url: str, text: str) -> int:
-    """Embed and store a document's chunks, then rebuild keyword search. Returns the chunk count."""
+def _check_no_overlap(collection, doc_id: int, ids: list[str]) -> None:
+    """Refuse to overwrite a chunk that belongs to the website or to another upload."""
+    existing = collection.get(ids=ids, include=["metadatas"])
+    for chunk, meta in zip(existing["ids"], existing["metadatas"]):
+        if (meta or {}).get("doc_id") != doc_id:
+            raise RuntimeError(f"Chunk ID {chunk} is already used by other content; upload chunk IDs must not overlap.")
+
+
+def _save_text(doc_id: int, title: str, url: str, text: str, source_file: str | None) -> None:
+    folder = texts_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{doc_id}.json").write_text(
+        json.dumps({"doc_id": doc_id, "title": title, "url": url, "source_file": source_file, "text": text},
+                   ensure_ascii=False), encoding="utf-8")
+
+
+def _add_chunks(doc_id: int, url: str, chunks: list[str], source_file: str) -> None:
     from concierge.agents.tools import _get_embed_model
-    chunks = split_text(title, url, text)
+    model = _get_embed_model()
+    collection = upload_collection()
+    for start in range(0, len(chunks), 16):
+        batch = chunks[start:start + 16]
+        ids = [str(chunk_id(doc_id, start + n)) for n in range(len(batch))]
+        _check_no_overlap(collection, doc_id, ids)
+        vectors = model.encode([f"passage: {chunk}" for chunk in batch], normalize_embeddings=True,
+                               show_progress_bar=False)
+        collection.upsert(
+            ids=ids, embeddings=vectors.tolist(), documents=batch,
+            metadatas=[{"url": url, "doc_id": doc_id, "source_file": source_file, "kind": UPLOAD_KIND}
+                       for _ in batch],
+        )
+
+
+def index_document(doc_id: int, title: str, url: str, text: str, source_file: str | None = None) -> int:
+    """Add a document's chunks to the website collection, then rebuild keyword search. Returns the chunk count."""
+    source = source_file or title
+    chunks = split_text(title, url, text, source)
     if not chunks:
         return 0
-    model = _get_embed_model()
     with _lock:
-        collection = upload_collection()
-        for start in range(0, len(chunks), 16):
-            batch = chunks[start:start + 16]
-            vectors = model.encode([f"passage: {chunk}" for chunk in batch], normalize_embeddings=True,
-                                   show_progress_bar=False)
-            collection.upsert(
-                ids=[str(chunk_id(doc_id, start + n)) for n in range(len(batch))],
-                embeddings=vectors.tolist(), documents=batch,
-                metadatas=[{"url": url, "doc_id": doc_id} for _ in batch],
-            )
+        # Drop leftovers of an earlier, longer version of the same document.
+        upload_collection().delete(where={"doc_id": doc_id})
+        _add_chunks(doc_id, url, chunks, source)
+        _save_text(doc_id, title, url, text, source)
         rebuild_keyword_index()
     return len(chunks)
 
@@ -115,7 +158,22 @@ def index_document(doc_id: int, title: str, url: str, text: str) -> int:
 def remove_document(doc_id: int) -> None:
     with _lock:
         upload_collection().delete(where={"doc_id": doc_id})
+        (texts_dir() / f"{doc_id}.json").unlink(missing_ok=True)
         rebuild_keyword_index()
+
+
+def reindex_uploads() -> int:
+    """Put every saved upload back into the website collection (after a re-crawl or a git pull)."""
+    count = 0
+    with _lock:
+        for path in sorted(texts_dir().glob("*.json")):
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            chunks = split_text(saved["title"], saved["url"], saved["text"], saved.get("source_file"))
+            upload_collection().delete(where={"doc_id": saved["doc_id"]})
+            _add_chunks(saved["doc_id"], saved["url"], chunks, saved.get("source_file") or saved["title"])
+            count += 1
+        rebuild_keyword_index()
+    return count
 
 
 @lru_cache(maxsize=1)
@@ -128,7 +186,7 @@ def _base_records() -> tuple[dict, ...]:
 
 
 def _upload_records() -> list[dict]:
-    stored = upload_collection().get(include=["documents", "metadatas"])
+    stored = upload_collection().get(where={"kind": UPLOAD_KIND}, include=["documents", "metadatas"])
     return [{"id": int(chunk), "text": text, "url": (meta or {}).get("url", "")}
             for chunk, text, meta in zip(stored["ids"], stored["documents"], stored["metadatas"])]
 
@@ -163,14 +221,9 @@ def _use_retriever(retriever) -> None:
     public_search_cache.clear()
 
 
-def semantic_upload_results(query_embedding: list[float], limit: int) -> list[dict]:
-    """Nearest upload chunks, in the same shape as rag_search.semantic_search."""
-    collection = upload_collection()
-    count = collection.count()
-    if not count:
-        return []
-    results = collection.query(query_embeddings=[query_embedding], n_results=min(limit, count),
-                               include=["documents", "metadatas", "distances"])
-    return [{"id": rid, "content": content, "url": (meta or {}).get("url", ""), "distance": distance}
-            for rid, content, meta, distance in zip(results["ids"][0], results["documents"][0],
-                                                     results["metadatas"][0], results["distances"][0])]
+if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] == ["reindex"]:
+        print(f"Re-added {reindex_uploads()} uploaded document(s) to the website collection.")
+    else:
+        print("usage: python -m concierge.knowledge reindex")

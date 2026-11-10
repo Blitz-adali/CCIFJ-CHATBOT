@@ -1,15 +1,20 @@
 """Replace every member company with the rows of a member file (CSV or XLSX).
 
-    uv run python scripts/replace_members.py "path/to/members.csv" [--yes]
+    uv run python scripts/replace_members.py ["path/to/members.csv"] [--yes]
+
+Without a path it loads the organisers' fictional directory kept in the repository
+(src/concierge/data/network/fictional_members.csv).
 
 Without --yes it only previews: it validates the file and prints what would be created,
-without touching the database. With --yes it deletes all member companies, the links
+without touching the database. With --yes it deletes all member companies, their contact
+people, the links
 between accounts and companies, and introduction requests (they point at companies),
 imports the file, then re-links the demo accounts so personalised answers keep working.
 The member matching index rebuilds itself on the next search.
 
 The file may use the CCIFJ directory export layout (Full name, Primary sector, Membership
-type, Email, one row per company and one per contact person); see concierge.imports.
+type, Email, one row per company and one per contact person); see concierge.imports. Each
+contact person is stored as a contact of their company, with job title and language.
 """
 
 import argparse
@@ -26,11 +31,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from sqlalchemy import delete  # noqa: E402
 
-from concierge.db.relationaldb.models import Belongs, IntroRequest, Member  # noqa: E402
+from concierge.db.relationaldb.models import Belongs, IntroRequest, Member, MemberContact  # noqa: E402
 from concierge.db.relationaldb.seed import DEMO_USERS, _link_member  # noqa: E402
 from concierge.db.relationaldb.session import AsyncSessionLocal  # noqa: E402
 from concierge.db.relationaldb import crud  # noqa: E402
 from concierge.imports import read_table, run_import  # noqa: E402
+
+
+DEFAULT_FILE = Path(__file__).resolve().parents[1] / "src" / "concierge" / "data" / "network" / "fictional_members.csv"
 
 
 async def replace(path: Path, commit: bool) -> dict:
@@ -39,6 +47,7 @@ async def replace(path: Path, commit: bool) -> dict:
         if commit:
             await session.exec(delete(IntroRequest))
             await session.exec(delete(Belongs))
+            await session.exec(delete(MemberContact))
             await session.exec(delete(Member))
             await session.commit()
         report = await run_import(session, "members", rows, commit)
@@ -52,7 +61,7 @@ async def replace(path: Path, commit: bool) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("file", type=Path)
+    parser.add_argument("file", type=Path, nargs="?", default=DEFAULT_FILE)
     parser.add_argument("--yes", action="store_true", help="delete the current members and import the file")
     args = parser.parse_args()
     report = asyncio.run(replace(args.file, args.yes))
@@ -61,7 +70,7 @@ def main() -> None:
         if row["errors"]:
             print(f"row {row['row']}: {row['label'] or '(no name)'}: {'; '.join(row['errors'])}")
     print(f"{'Imported' if args.yes else 'Would import'} {counts['create']} companies "
-          f"({counts.get('folded', 0)} contact people folded into them, {counts['error']} rows with errors).")
+          f"with {counts.get('contacts', 0)} contact people ({counts['error']} rows with errors).")
     if not args.yes:
         print("Preview only. Re-run with --yes to replace the current members.")
 

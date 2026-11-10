@@ -85,16 +85,8 @@ def search_passages(retriever, model, query: str, original_n=20, hybrid_n=10, re
         collection = get_collection()
         count = collection.count()
         for text in queries:
+            # Staff-uploaded files live in this same collection (see concierge.knowledge).
             found = semantic_search(text, collection, model, min(original_n, count)) if count else []
-            try:
-                # Files staff uploaded live in their own collection; merge by distance.
-                from concierge.knowledge import semantic_upload_results
-                vector = model.encode(f"query: {text}", normalize_embeddings=True).tolist()
-                uploads = semantic_upload_results(vector, original_n)
-                if uploads:
-                    found = sorted([*found, *uploads], key=lambda r: r.get("distance", 1.0))[:original_n]
-            except Exception:
-                logger.exception('Uploaded knowledge search unavailable; keeping website results')
             semantic_lists.append(found)
         diagnose('semantic')
     except Exception as exc:

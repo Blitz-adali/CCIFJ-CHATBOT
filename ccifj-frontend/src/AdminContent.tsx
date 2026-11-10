@@ -220,12 +220,14 @@ export function MembersPanel() {
     </form>
     {error && <p role="alert" className="admin-error">{error}</p>}
     <div className="admin-table-wrap"><table className="admin-table">
-      <thead><tr><th>Company</th><th>Sector</th><th>Category</th><th>Place</th><th>Staff size</th><th>Accounts</th></tr></thead>
+      <thead><tr><th>Company</th><th>Sector</th><th>Category</th><th>Place</th><th>Contact people</th><th>Accounts</th></tr></thead>
       <tbody>{items.map(item => <tr key={item.member_id}>
-        <td className="admin-wrap"><strong>{item.name}</strong>{item.description && <small>{item.description.slice(0, 140)}{item.description.length > 140 ? '…' : ''}</small>}</td>
-        <td>{item.sector ?? '—'}</td><td>{item.category ?? '—'}</td>
+        <td className="admin-wrap"><strong>{item.name}</strong>{item.directory_visible === false && <span className="admin-badge">Hidden from directory</span>}{item.description && <small>{item.description.slice(0, 140)}{item.description.length > 140 ? '…' : ''}</small>}</td>
+        <td>{item.sector ?? '—'}{item.secondary_sectors && <small>{item.secondary_sectors}</small>}</td><td>{item.category ?? '—'}</td>
         <td>{[item.region, item.country].filter(Boolean).join(', ') || '—'}</td>
-        <td>{item.manpower ?? '—'}</td>
+        <td className="admin-wrap">{item.contacts?.length ? item.contacts.map(person => <small key={person.name + (person.email ?? '')}>
+          <strong>{person.name}</strong>{person.job_title ? `, ${person.job_title}` : ''}{person.language ? ` · ${person.language}` : ''}
+        </small>) : (item.contact ?? '—')}</td>
         <td>{item.accounts} <button type="button" className="admin-link" onClick={() => { setApproving(item); setApproveEmail(''); setApproveNote(''); }}>Add account</button></td>
       </tr>)}</tbody>
     </table></div>
@@ -237,30 +239,47 @@ export function MembersPanel() {
 // ---------- Knowledge files ----------
 
 const KNOWLEDGE_TYPES = '.pdf,.docx,.txt,.md,.html,.htm,.png,.jpg,.jpeg';
+const KNOWLEDGE_MAX_MB = 40; // matches KNOWLEDGE_MAX_BYTES in api/admin_content.py
 
 export function KnowledgePanel() {
   const [docs, setDocs] = useState<KnowledgeDoc[]>([]);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [title, setTitle] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [progress, setProgress] = useState<{ name: string; state: 'waiting' | 'indexing' | 'done' | 'failed'; detail?: string }[]>([]);
   const input = useRef<HTMLInputElement>(null);
+  const single = files.length === 1;
   const load = () => getKnowledgeDocs().then(setDocs).catch(e => setError(errorText(e)));
   useEffect(() => { load(); }, []);
+  const mark = (index: number, state: 'indexing' | 'done' | 'failed', detail?: string) =>
+    setProgress(old => old.map((item, i) => i === index ? { ...item, state, detail } : item));
   const upload = async (event: FormEvent) => {
     event.preventDefault();
-    if (!file) return;
-    setBusy(true); setError(''); setNotice('');
-    try {
-      const [encoded] = await toAttachmentUploads([file]);
-      const doc = await uploadKnowledgeDoc(encoded, title, sourceUrl);
-      setNotice(`"${doc.title}" was added as ${doc.chunk_count} searchable passages.`);
-      setFile(null); setTitle(''); setSourceUrl('');
-      if (input.current) input.current.value = '';
-      load();
-    } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
+    if (!files.length) return;
+    const queue = files;
+    setBusy(true); setError('');
+    setProgress(queue.map(file => ({ name: file.name, state: 'waiting' as const })));
+    // One file at a time: each is read (with OCR), embedded and indexed on the server.
+    // A failure (e.g. a duplicate) is reported for that file and the next one still goes.
+    for (const [index, file] of queue.entries()) {
+      const sizeMb = file.size / (1024 * 1024);
+      if (sizeMb > KNOWLEDGE_MAX_MB) {
+        mark(index, 'failed', `too large (${sizeMb.toFixed(1)} MB; the limit is ${KNOWLEDGE_MAX_MB} MB). Compress the PDF and try again.`);
+        continue;
+      }
+      mark(index, 'indexing');
+      try {
+        const [encoded] = await toAttachmentUploads([file]);
+        const doc = await uploadKnowledgeDoc(encoded, single ? title : '', single ? sourceUrl : '');
+        mark(index, 'done', `added as ${doc.chunk_count} passages`);
+      } catch (e) { mark(index, 'failed', errorText(e)); }
+    }
+    setFiles([]); setTitle(''); setSourceUrl('');
+    if (input.current) input.current.value = '';
+    setBusy(false);
+    load();
   };
   const remove = (doc: KnowledgeDoc) => {
     if (!window.confirm(`Remove "${doc.title}" from the agent's knowledge? The agent will stop using it.`)) return;
@@ -273,20 +292,27 @@ export function KnowledgePanel() {
     <p className="admin-note">Brochures, price lists, procedures and FAQs the agent can quote. Files are read (with OCR for scans), split into passages and searched together with the website.
       Prefer validated, current documents: the agent treats them as official CCIFJ sources.</p>
     <form className="admin-form" onSubmit={upload}>
-      <h2>Add a file</h2>
-      <div className="admin-form-grid">
-        <label>File (PDF, Word, text, image; up to 15 MB)<input ref={input} type="file" required accept={KNOWLEDGE_TYPES} onChange={e => {
-          const chosen = e.target.files?.[0] ?? null;
-          setFile(chosen);
-          if (chosen && !title) setTitle(chosen.name.replace(/\.[^.]+$/, ''));
+      <h2>Add files</h2>
+      <label className="admin-file-field">Files (PDF, Word, text, image; up to {KNOWLEDGE_MAX_MB} MB each; you can select several at once)
+        <input ref={input} type="file" multiple required accept={KNOWLEDGE_TYPES} disabled={busy} onChange={e => {
+          const chosen = Array.from(e.target.files ?? []);
+          setFiles(chosen); setProgress([]);
+          setTitle(chosen.length === 1 ? chosen[0].name.replace(/\.[^.]+$/, '') : '');
+          if (chosen.length !== 1) setSourceUrl('');
         }} /></label>
+      {files.length <= 1 ? <div className="admin-form-grid admin-file-details">
         <label>Title<input value={title} maxLength={255} onChange={e => setTitle(e.target.value)} placeholder="e.g. Membership brochure 2027" /></label>
         <label>Public link (optional)<input type="url" value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="https://… (website or Calameo page)" /></label>
-      </div>
-      {busy && <p role="status">Reading and indexing the file. Long PDFs can take a minute…</p>}
-      {notice && <p role="status" className="admin-success">{notice}</p>}
+      </div> : <p className="admin-note">{files.length} files selected. Each one is titled after its file name and cited as an internal document; to set a title or a public link, upload that file on its own.</p>}
+      {progress.length > 0 && <ul className="admin-note" aria-live="polite">{progress.map((item, index) => <li key={`${index}:${item.name}`}>
+        <strong>{item.name}</strong>: {item.state === 'waiting' ? 'waiting' : item.state === 'indexing' ? 'reading and indexing… (long PDFs can take a minute)' : item.detail}
+        {item.state === 'failed' && <span className="admin-error"> (failed)</span>}
+      </li>)}</ul>}
+      {!busy && progress.length > 1 && <p role="status" className="admin-success">
+        {progress.filter(item => item.state === 'done').length} of {progress.length} files added.</p>}
       {error && <p role="alert" className="admin-error">{error}</p>}
-      <div className="admin-form-actions"><button type="submit" className="primary" disabled={busy || !file}>{busy ? 'Indexing…' : 'Upload and index'}</button></div>
+      <div className="admin-form-actions"><button type="submit" className="primary" disabled={busy || !files.length}>
+        {busy ? 'Indexing…' : files.length > 1 ? `Upload and index ${files.length} files` : 'Upload and index'}</button></div>
     </form>
     <div className="admin-table-wrap"><table className="admin-table">
       <thead><tr><th>Document</th><th>Passages</th><th>Added</th><th>Link</th><th></th></tr></thead>

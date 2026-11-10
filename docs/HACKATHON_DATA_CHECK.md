@@ -1,8 +1,9 @@
 # Agent implementation vs. the hackathon data pack
 
 > **Status (9 Nov 2026, evening):** gaps 1, 2, 4 and the small items below are closed in
-> this branch: the member directory now holds the organisers' 50 companies (116 contacts
-> folded in, `scripts/replace_members.py`); all 18 brochures are in the knowledge base
+> this branch: the member directory now holds the organisers' 50 companies and their 116 contact
+> people as separate records (`scripts/replace_members.py`); events are checked against their
+> ccifj.or.jp pages (`scripts/refresh_events.py`); all 18 brochures are in the knowledge base
 > (`scripts/ingest_documents.py`, 143 chunks, the two WIB PDFs via OCR); the contact tool
 > returns the whole staff directory; superseded sources (2017 domiciliation, €480) are
 > dropped at search time; retrieval also searches the user's original FR/JA wording.
