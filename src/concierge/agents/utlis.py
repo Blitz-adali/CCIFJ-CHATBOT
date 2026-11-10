@@ -1,31 +1,7 @@
 from langchain_core.messages import HumanMessage, trim_messages
-from langchain_ollama import ChatOllama
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
-import os
+from langchain_core.messages.utils import count_tokens_approximately
+from concierge.config import get_settings
 from .schema_prompts import AgentState
-
-load_dotenv()
-model_name = os.getenv("model_name")
-model_type = os.getenv("model_type")
-trim_token = int(os.getenv("trim_messages_max_token", 1000))
-
-try:
-    if model_type and model_type.lower() == "qwen":
-        model_cls = ChatOllama
-    else:
-        model_cls = ChatOpenAI
-except Exception:
-    model_cls = ChatOllama
-
-# Cached model instance for token counting
-_token_model = None
-
-def _get_token_model():
-    global _token_model
-    if _token_model is None:
-        _token_model = model_cls(model=model_name)
-    return _token_model
 
 
 def last_humain_message(messages: list) -> list:
@@ -40,9 +16,9 @@ def do_trim_messages(messages):
     """Trim conversation history up to trim_token count, preserving system instructions and starting on a human turn."""
     return trim_messages(
         messages,
-        max_tokens=trim_token,
+        max_tokens=get_settings().trim_messages_max_token,
         strategy="last",
-        token_counter=_get_token_model(),
+        token_counter=count_tokens_approximately,
         start_on="human",
         include_system=True,
         allow_partial=False,
@@ -60,8 +36,6 @@ def route_from_orchestrator(state: AgentState):
         "events": "events_node",
         "membership": "membership_node",
         "general": "general_node",
-        "matching": "matching_node",
-        "engagement": "engagement_node",
     }
     targets = [node_map[t["target"]] for t in tasks if t.get("target") in node_map]
     if not targets:

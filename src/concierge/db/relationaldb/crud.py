@@ -27,7 +27,6 @@ from .models import (
     Speaker,
     StaffRequest,
     StaffRequestRecipient,
-    StaffRequestStatus,
     StaffRequestType,
     SpeaksAt,
     ContactUs,
@@ -75,6 +74,8 @@ async def search_events(
     date_to: Optional[datetime] = None,
     max_price: Optional[float] = None,
     currency: Optional[str] = None,
+    price_audience: Optional[str] = None,
+    registration_open_only: bool = False,
     limit: int = 10,
 ) -> Sequence[Event]:
     """Every filter is optional; only the ones given are applied.
@@ -115,16 +116,15 @@ async def search_events(
         stmt = stmt.where(Event.start_at >= _naive(date_from))
     if date_to:
         stmt = stmt.where(Event.start_at <= _naive(date_to))
+    if registration_open_only:
+        stmt = stmt.where(Event.start_at > _now(), (col(Event.reg_deadline).is_(None)) | (Event.reg_deadline >= _now()))
     if max_price is not None:
         price_currency = (currency or "JPY").upper()
-        stmt = stmt.where(
-            (
-                (Event.price <= max_price)
-                | (Event.member_price <= max_price)
-                | (Event.non_member_price <= max_price)
-            ),
-            Event.currency == price_currency,
-        )
+        if price_audience in {"member", "non_member"}:
+            specific = Event.member_price if price_audience == "member" else Event.non_member_price
+            stmt = stmt.where(func.coalesce(specific, Event.price) <= max_price, Event.currency == price_currency)
+        else:
+            stmt = stmt.where(((Event.price <= max_price) | (Event.member_price <= max_price) | (Event.non_member_price <= max_price)), Event.currency == price_currency)
     elif currency:
         stmt = stmt.where(Event.currency == currency.upper())
 
@@ -341,22 +341,17 @@ async def claim_chat_session(session: AsyncSession, session_id: int, user_id: in
 
 
 async def _delete_guest_sessions(session: AsyncSession, guest_sessions) -> int:
-    """Delete guest sessions (a subquery of ids) with their messages; owned sessions are never matched.
-
-    A guest conversation that produced a staff request is kept: the visitor asked
-    for CCIFJ to follow up, and staff need the conversation to do that.
-    """
-    with_request = select(StaffRequest.session_id).where(col(StaffRequest.session_id).is_not(None))
+    """Delete guest sessions (a subquery of ids) with their messages; owned sessions are never matched."""
     ids = select(ChatSession.session_id).where(
-        col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None),
-        col(ChatSession.session_id).not_in(with_request),
+        col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None)
+    )
+    # Staff keep any request a guest sent; it just loses the link to the deleted chat.
+    await session.exec(
+        update(StaffRequest).where(col(StaffRequest.session_id).in_(ids)).values(session_id=None)
     )
     await session.exec(delete(Message).where(col(Message.session_id).in_(ids)))
     result = await session.exec(
-        delete(ChatSession).where(
-            col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None),
-            col(ChatSession.session_id).not_in(with_request),
-        )
+        delete(ChatSession).where(col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None))
     )
     await session.commit()
     return result.rowcount or 0
@@ -474,7 +469,9 @@ async def book_event(
     event = await session.get(Event, event_id)
     if event is None:
         raise ValueError("That event doesn't exist.")
-    closing_at = event.reg_deadline if event.reg_deadline is not None else event.end_at
+    from concierge.source_context import effective_deadline
+    deadline = effective_deadline(event)
+    closing_at = deadline if deadline is not None else event.end_at
     if closing_at is not None and _now() >= _naive(closing_at):
         raise ValueError("Registration for this event has closed.")
     if not attendees:
@@ -1003,60 +1000,3 @@ async def list_staff_request_recipients(session: AsyncSession, request_id: int) 
         select(StaffRequestRecipient).where(StaffRequestRecipient.request_id == request_id).order_by(StaffRequestRecipient.email)
     )
     return result.all()
-
-
-# ---------- Staff view (read-only lists, plus the status of a request) ----------
-
-async def list_staff_requests(session: AsyncSession, status: Optional[str] = None, limit: int = 200) -> list[tuple[StaffRequest, list[str]]]:
-    query = select(StaffRequest).order_by(col(StaffRequest.request_id).desc()).limit(limit)
-    if status:
-        query = query.where(StaffRequest.status == StaffRequestStatus(status))
-    requests = (await session.exec(query)).all()
-    listed = []
-    for request in requests:
-        recipients = await list_staff_request_recipients(session, request.request_id)
-        listed.append((request, [recipient.email for recipient in recipients]))
-    return listed
-
-
-async def set_staff_request_status(session: AsyncSession, reference: str, status: str) -> Optional[StaffRequest]:
-    request = await get_staff_request(session, reference)
-    if request is None:
-        return None
-    request.status = StaffRequestStatus(status)
-    session.add(request)
-    await session.commit()
-    await session.refresh(request)
-    return request
-
-
-async def list_conversations(session: AsyncSession, limit: int = 100) -> list[dict]:
-    """Recent conversations, newest first, with who they belong to and how they started."""
-    rows = (await session.exec(
-        select(ChatSession, User)
-        .join(User, col(User.user_id) == col(ChatSession.user_id), isouter=True)
-        .order_by(col(ChatSession.session_id).desc()).limit(limit)
-    )).all()
-    conversations = []
-    for chat, user in rows:
-        count = (await session.exec(
-            select(func.count()).select_from(Message).where(Message.session_id == chat.session_id)
-        )).one()
-        if not count:
-            continue
-        first = (await session.exec(
-            select(Message).where(Message.session_id == chat.session_id, Message.role == MessageRole.user)
-            .order_by(col(Message.message_id)).limit(1)
-        )).first()
-        latest = await get_latest_message(session, chat.session_id)
-        references = (await session.exec(
-            select(StaffRequest.reference).where(StaffRequest.session_id == chat.session_id)
-        )).all()
-        conversations.append({
-            "session_id": chat.session_id,
-            "user": {"name": user.name, "email": user.email} if user else None,
-            "started_at": chat.created_at, "last_message_at": latest.created_at if latest else chat.created_at,
-            "messages": count, "first_message": (first.content if first else "")[:200],
-            "staff_requests": list(references),
-        })
-    return conversations

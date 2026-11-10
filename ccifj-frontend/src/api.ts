@@ -94,6 +94,7 @@ function normalizeResponse(raw: unknown): ChatResponse {
     suggested_questions: Array.isArray(body.suggested_questions) ? body.suggested_questions : [],
     pending_approvals: Array.isArray(body.pending_approvals) ? body.pending_approvals : [],
     sources: Array.isArray(body.sources) ? body.sources : [],
+    events: Array.isArray(body.events) ? body.events : [],
     actions: Array.isArray(body.actions) ? body.actions : [],
     warnings: Array.isArray(body.warnings) ? body.warnings : [],
     path_actions: Array.isArray(body.path_actions) ? body.path_actions : [],
@@ -292,6 +293,178 @@ export function discardGuestSession(sessionId: string): void {
 
 export async function getApiStatus(): Promise<ApiStatusResponse> {
   return requestJson<ApiStatusResponse>(API_ENDPOINTS.status, { method: "GET" }, 6000);
+}
+
+export async function getCurrentUser(): Promise<import('./types').AuthUser> {
+  return requestJson(API_ENDPOINTS.currentUser, { method: 'GET' }, 6000);
+}
+
+export async function getStaffRequests(status = '', offset = 0): Promise<{items: import('./types').StaffRequestItem[]; next_offset: number | null}> {
+  const params = new URLSearchParams({ offset: String(offset) });
+  if (status) params.set('status', status);
+  return requestJson(`/api/v1/staff/requests?${params}`, { method: 'GET' }, 10000);
+}
+
+export async function updateStaffRequestStatus(reference: string, status: import('./types').StaffRequestItem['status']): Promise<void> {
+  await requestJson(`/api/v1/staff/requests/${encodeURIComponent(reference)}`, { method: 'PATCH', body: JSON.stringify({ status }) }, 10000);
+}
+
+// ---------- Admin dashboard (staff only) ----------
+
+export async function getAdminOverview(): Promise<import('./types').AdminOverview> {
+  return requestJson('/api/v1/admin/overview', { method: 'GET' }, 10000);
+}
+
+export async function getAdminUsers(q = '', offset = 0): Promise<{items: import('./types').AdminUser[]; next_offset: number | null}> {
+  const params = new URLSearchParams({ offset: String(offset) });
+  if (q.trim()) params.set('q', q.trim());
+  return requestJson(`/api/v1/admin/users?${params}`, { method: 'GET' }, 10000);
+}
+
+export async function setUserRole(userId: number, role: 'user' | 'staff'): Promise<import('./types').AdminUser> {
+  return requestJson(`/api/v1/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }, 10000);
+}
+
+export async function getStaffTopics(): Promise<import('./types').StaffTopic[]> {
+  return requestJson('/api/v1/admin/topics', { method: 'GET' }, 10000);
+}
+
+export async function getStaffContacts(): Promise<import('./types').StaffContact[]> {
+  return requestJson('/api/v1/admin/staff-contacts', { method: 'GET' }, 10000);
+}
+
+export type StaffContactInput = Partial<Omit<import('./types').StaffContact, 'contact_id'>>;
+
+export async function saveStaffContact(contactId: number | null, body: StaffContactInput): Promise<import('./types').StaffContact> {
+  return contactId === null
+    ? requestJson('/api/v1/admin/staff-contacts', { method: 'POST', body: JSON.stringify(body) }, 10000)
+    : requestJson(`/api/v1/admin/staff-contacts/${contactId}`, { method: 'PATCH', body: JSON.stringify(body) }, 10000);
+}
+
+export type EventInput = Partial<Omit<import('./types').AdminEvent, 'event_id'>>;
+
+export async function getAdminEvents(q = '', scope: 'upcoming' | 'past' | 'all' = 'upcoming', offset = 0): Promise<{items: import('./types').AdminEvent[]; next_offset: number | null; categories: string[]}> {
+  const params = new URLSearchParams({ scope, offset: String(offset) });
+  if (q.trim()) params.set('q', q.trim());
+  return requestJson(`/api/v1/admin/events?${params}`, { method: 'GET' }, 10000);
+}
+
+export async function saveAdminEvent(eventId: number | null, body: EventInput): Promise<import('./types').AdminEvent> {
+  return eventId === null
+    ? requestJson('/api/v1/admin/events', { method: 'POST', body: JSON.stringify(body) }, 10000)
+    : requestJson(`/api/v1/admin/events/${eventId}`, { method: 'PUT', body: JSON.stringify(body) }, 10000);
+}
+
+export async function getAdminMembers(q = '', sector = '', offset = 0): Promise<{items: import('./types').AdminMember[]; next_offset: number | null; sectors: string[]}> {
+  const params = new URLSearchParams({ offset: String(offset) });
+  if (q.trim()) params.set('q', q.trim());
+  if (sector) params.set('sector', sector);
+  return requestJson(`/api/v1/admin/members?${params}`, { method: 'GET' }, 10000);
+}
+
+export async function getImportTemplate(kind: 'events' | 'members'): Promise<string> {
+  return requestJson(`/api/v1/admin/import/${kind}/template`, { method: 'GET' }, 10000);
+}
+
+export async function importFile(kind: 'events' | 'members', file: import('./types').AttachmentUpload, commit: boolean): Promise<import('./types').ImportResult> {
+  return requestJson(`/api/v1/admin/import/${kind}?commit=${commit}`, { method: 'POST', body: JSON.stringify(file) }, 120000);
+}
+
+export async function getKnowledgeDocs(): Promise<import('./types').KnowledgeDoc[]> {
+  return requestJson('/api/v1/admin/knowledge', { method: 'GET' }, 10000);
+}
+
+export async function uploadKnowledgeDoc(file: import('./types').AttachmentUpload, title: string, sourceUrl: string): Promise<import('./types').KnowledgeDoc> {
+  // Reading, OCR and embedding a long brochure can take a few minutes on CPU.
+  return requestJson('/api/v1/admin/knowledge', { method: 'POST', body: JSON.stringify({ ...file, title, source_url: sourceUrl || null }) }, 600000);
+}
+
+export async function deleteKnowledgeDoc(docId: number): Promise<void> {
+  await requestJson(`/api/v1/admin/knowledge/${docId}`, { method: 'DELETE' }, 60000);
+}
+
+export async function matchMembers(need: string, sector = '', region = ''): Promise<{items: import('./types').MemberMatch[]; relevant_score: number}> {
+  const params = new URLSearchParams({ need, limit: '10' });
+  if (sector) params.set('sector', sector);
+  if (region.trim()) params.set('region', region.trim());
+  // The first search after a change re-embeds the directory, which takes a few seconds.
+  return requestJson(`/api/v1/admin/matching/members?${params}`, { method: 'GET' }, 120000);
+}
+
+export async function matchMembersForEvent(eventId: number): Promise<{need: string; items: import('./types').MemberMatch[]; relevant_score: number}> {
+  return requestJson(`/api/v1/admin/matching/events/${eventId}/members?limit=10`, { method: 'GET' }, 120000);
+}
+
+export async function draftProposal(body: {need: string; requester: string; member_ids: number[]; language: string}): Promise<{draft: string; companies: string[]}> {
+  return requestJson('/api/v1/admin/matching/proposal', { method: 'POST', body: JSON.stringify(body) }, 120000);
+}
+
+export async function getIntroRequests(status = ''): Promise<{items: import('./types').IntroRequestItem[]; next_offset: number | null}> {
+  return requestJson(`/api/v1/admin/intro-requests${status ? `?status=${status}` : ''}`, { method: 'GET' }, 10000);
+}
+
+export async function updateIntroRequest(introId: number, body: {status?: import('./types').IntroStatus; staff_note?: string}): Promise<void> {
+  await requestJson(`/api/v1/admin/intro-requests/${introId}`, { method: 'PATCH', body: JSON.stringify(body) }, 10000);
+}
+
+// ---------- Onboarding & automation ----------
+
+export async function getAutomationRules(): Promise<import('./types').AutomationRule[]> {
+  return requestJson('/api/v1/admin/automation/rules', { method: 'GET' }, 10000);
+}
+
+export async function updateAutomationRule(key: string, body: { enabled?: boolean; requires_approval?: boolean }): Promise<void> {
+  await requestJson(`/api/v1/admin/automation/rules/${key}`, { method: 'PATCH', body: JSON.stringify(body) }, 10000);
+}
+
+export async function runAutomation(asOf: string): Promise<import('./types').RunResult> {
+  // Event and member matching may embed new rows on the first run.
+  return requestJson('/api/v1/admin/automation/run', { method: 'POST', body: JSON.stringify({ as_of: asOf || null }) }, 300000);
+}
+
+export async function getOutreach(status = ''): Promise<import('./types').OutreachItem[]> {
+  return requestJson(`/api/v1/admin/outreach${status ? `?status=${status}` : ''}`, { method: 'GET' }, 10000);
+}
+
+export async function actOnOutreach(id: number, action: 'send' | 'skip' | 'save', edits: { subject?: string; body?: string } = {}): Promise<void> {
+  await requestJson(`/api/v1/admin/outreach/${id}`, { method: 'PATCH', body: JSON.stringify({ action, ...edits }) }, 10000);
+}
+
+export async function rewriteOutreach(id: number, language: string): Promise<{ subject: string; body: string }> {
+  return requestJson(`/api/v1/admin/outreach/${id}/rewrite`, { method: 'POST', body: JSON.stringify({ language }) }, 120000);
+}
+
+export async function getEngagement(): Promise<import('./types').EngagementRow[]> {
+  return requestJson('/api/v1/admin/engagement', { method: 'GET' }, 120000);
+}
+
+export async function approveMembership(memberId: number, email: string): Promise<{ member: string; welcome: unknown[] }> {
+  return requestJson(`/api/v1/admin/members/${memberId}/accounts`, { method: 'POST', body: JSON.stringify({ email }) }, 120000);
+}
+
+export async function getMyProfile(): Promise<import('./types').MemberProfile> {
+  return requestJson('/api/v1/me/profile', { method: 'GET' }, 10000);
+}
+
+export async function saveMyProfile(body: { goals: string[]; interests: string; preferred_language: string; preferred_channel: string }): Promise<void> {
+  await requestJson('/api/v1/me/profile', { method: 'PUT', body: JSON.stringify(body) }, 10000);
+}
+
+export async function getMyNotifications(): Promise<import('./types').MemberNotification[]> {
+  return requestJson('/api/v1/me/notifications', { method: 'GET' }, 10000);
+}
+
+export async function markNotificationRead(id: number): Promise<void> {
+  await requestJson(`/api/v1/me/notifications/${id}/read`, { method: 'POST' }, 10000);
+}
+
+export async function getAnalytics(days: number): Promise<import('./types').AnalyticsSummary> {
+  return requestJson(`/api/v1/admin/analytics?days=${days}`, { method: 'GET' }, 60000);
+}
+
+export async function getLangsmithAnalytics(days: number): Promise<import('./types').LangsmithSummary> {
+  // The first call pages through LangSmith runs; later calls are cached for 5 minutes.
+  return requestJson(`/api/v1/admin/analytics/langsmith?days=${days}`, { method: 'GET' }, 180000);
 }
 
 export async function getSuggestedQuestions(locale: Locale = "en"): Promise<string[]> {

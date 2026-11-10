@@ -1,9 +1,8 @@
-import asyncio
-import logging
-import os
 import re
-import threading
 from collections import Counter
+import logging
+import threading
+
 from datetime import datetime, time, timedelta
 from typing import Literal, Optional
 
@@ -12,6 +11,9 @@ from langgraph.prebuilt import ToolRuntime
 from pydantic import BaseModel
 from ..rag import search, get_collection, EMBED_MODEL_NAME
 from ..rag.src.config import INDEX_PATH
+from ..rag.src.rag_search import search_passages, get_tokenizer, get_collection
+from concierge.evidence import record_passages, record_events, record_resource, record_database_source, record_warning
+from concierge.resources import membership_form, BUSINESS_INQUIRY, CV_REGISTRATION, MEMBERSHIP_FEE_SOURCE
 from sentence_transformers import SentenceTransformer
 import bm25s
 
@@ -26,60 +28,69 @@ from ..db.relationaldb.models import (
 from ..db.relationaldb.session import AsyncSessionLocal
 from ..db.relationaldb.datetimes import japan_now
 from ..integrations import odoo
-from . import network
-from . import contacts as contacts_data
 
 logger = logging.getLogger(__name__)
 
-# Cached embedding model singleton to avoid reloading weights on every invocation
+# Keep the small search encoder on CPU. Automatic accelerator selection raised
+# AcceleratorError during BERT inference on the demo host (see retrieval diagnostics).
+# The conversation model/provider is independent and keeps its configured device.
+# Cached singleton avoids reloading weights on every invocation.
 _embed_model = None
-
 _embed_model_lock = threading.Lock()
-
-
-def _load_embed_model():
-    """Load the embedding model on the best device that actually works.
-
-    A GPU that PyTorch detects but cannot run on (an old card, a driver
-    mismatch) loads fine and then fails on the first search, so try one
-    encode and fall back to the CPU. CCIFJ_EMBED_DEVICE forces a device.
-    """
-    device = os.getenv("CCIFJ_EMBED_DEVICE", "").strip() or None
-    try:
-        model = SentenceTransformer(EMBED_MODEL_NAME, device=device)
-        model.encode("query: test", normalize_embeddings=True)
-        return model
-    except Exception:
-        if device == "cpu":
-            raise
-        logger.warning("Embedding model cannot run on the default device (unsupported GPU?); using the CPU instead")
-        model = SentenceTransformer(EMBED_MODEL_NAME, device="cpu")
-        model.encode("query: test", normalize_embeddings=True)
-        return model
-
 
 def _get_embed_model():
     global _embed_model
-    with _embed_model_lock:
-        if _embed_model is None:
-            _embed_model = _load_embed_model()
-        return _embed_model
+    if _embed_model is None:
+        with _embed_model_lock:
+            if _embed_model is None:
+                try:
+                    _embed_model = SentenceTransformer(EMBED_MODEL_NAME, device="cpu", local_files_only=True)
+                except OSError:
+                    _embed_model = SentenceTransformer(EMBED_MODEL_NAME, device="cpu")
+    return _embed_model
 
 # Cached bm25s retriever singleton to avoid reloading weights on every invocation
 _retriever = None
+_retriever_lock = threading.Lock()
 
 def _get_retriever():
     global _retriever
     if _retriever is None:
-        _retriever = bm25s.BM25.load(str(INDEX_PATH), load_corpus=True)
+        with _retriever_lock:
+            if _retriever is None:
+                # Staff uploads rebuild a combined index (website + uploads) under var/knowledge.
+                from concierge.knowledge import bm25_dir
+                combined = bm25_dir()
+                path = combined if (combined / "params.index.json").exists() else INDEX_PATH
+                _retriever = bm25s.BM25.load(str(path), load_corpus=True)
     return _retriever
 
 
 def warm_up() -> None:
-    """Load the search models now so the first knowledge-base question does not wait."""
-    _get_embed_model()
-    _get_retriever()
-    get_collection()
+    """Warm independent search backends; one usable branch keeps chat available."""
+    from concierge.rag.src.diagnostics import record
+    loaded = {}
+    for stage, loader in (('embedding', _get_embed_model), ('lexical', _get_retriever)):
+        try:
+            loader()
+            record(stage)
+            loaded[stage] = True
+        except Exception as exc:
+            loaded[stage] = False
+            record(stage, exc)
+            logger.exception('Search warm-up failed stage=%s', stage)
+    # A tokenizer/Chroma issue must not prevent the keyword index warming up.
+    for stage, loader in (('tokenizer', get_tokenizer), ('semantic', get_collection)):
+        try:
+            loader()
+            loaded[stage] = True
+            record(stage)
+        except Exception as exc:
+            loaded[stage] = False
+            record(stage, exc)
+            logger.exception('Optional search warm-up failed stage=%s', stage)
+    if not loaded.get('lexical') and not (loaded.get('embedding') and loaded.get('semantic')):
+        raise RuntimeError('No search backend could be warmed')
 
 #################################################
 #
@@ -88,47 +99,6 @@ def warm_up() -> None:
 #################################################
 
 PAGE_SIZE = 10
-
-# The official CCIFJ page each kind of record comes from. Record tools end their
-# result with one of these so every fact in an answer can be traced to a page.
-_SITE = "https://www.ccifj.or.jp/en"
-RECORD_SOURCES = {
-    "membership": ("How to become a member", f"{_SITE}/membership/how-to-become-a-member.html"),
-    "directory": ("Company Members' Directory", f"{_SITE}/membership/members-directory.html"),
-    "events": ("Upcoming events", f"{_SITE}/events/upcoming-events.html"),
-    "space": ("L'Espace@CCIFJ", f"{_SITE}/events/lespaceccifj.html"),
-    "contact.events": ("Events: contact us", f"{_SITE}/events/contact-us.html"),
-    "contact.sponsor": ("Sponsor an event", f"{_SITE}/events/sponsor-an-event.html"),
-    "contact.membership": ("Membership: contact us", f"{_SITE}/membership/contact-us.html"),
-    "contact.business": ("Commercial Support: contact us", f"{_SITE}/commercial-support/contact-us.html"),
-    "contact.recruitment": ("Recruitment/Training: contact us", f"{_SITE}/recruitmenttraining/contact-us.html"),
-    "contact.publications": ("Publications: contact us", f"{_SITE}/publications/contact-us.html"),
-}
-_CONTACT_SOURCES = {
-    "events": "contact.events",
-    "become_speaker": "contact.events",
-    "become_sponsor": "contact.sponsor",
-    "bonjour_france": "contact.business",
-    "membership": "contact.membership",
-    "corporate_news": "contact.publications",
-    "japanese_market_support": "contact.business",
-    "recruitment_and_hr": "contact.recruitment",
-}
-_EVENT_PAGE_PATTERN = re.compile(r"Event details:\s*(https://www\.ccifj\.or\.jp/[^\s)]+)")
-
-
-def _source_line(key: str) -> str:
-    title, url = RECORD_SOURCES[key]
-    return f"\nSource: [{title}]({url})"
-
-
-def _event_source_line(event) -> str:
-    """The event's own page when its record has one, else the upcoming-events page."""
-    match = _EVENT_PAGE_PATTERN.search(event.description or "")
-    if match:
-        title = " ".join(str(event.title).replace("[", "(").replace("]", ")").split())
-        return f"\nSource: [{title}]({match.group(1).rstrip('.,;')})"
-    return _source_line("events")
 
 
 def _now() -> datetime:
@@ -197,25 +167,11 @@ def _when(dt: Optional[datetime], missing: str = "unknown") -> str:
     return dt.strftime("%Y-%m-%d %H:%M") if dt else missing
 
 
-_TODAY_FETCH_MARGIN = 10
-
-
-def _has_finished(event, now: datetime) -> bool:
-    """An event is over once it ends; without an end time, once it starts."""
-    if event.start_at is None:
-        return False
-    finish = event.end_at or event.start_at
-    return finish <= now
-
-
-def _event_line(event, now: datetime | None = None) -> str:
-    status = ""
-    if now is not None and event.start_at is not None and event.start_at <= now:
-        status = " | IN PROGRESS NOW (already started; cannot be booked)"
+def _event_line(event) -> str:
     return (
         f"[ID {event.event_id}] {event.title} | {_when(event.start_at, 'date unknown')} "
         f"| {event.location or 'location unknown'} | Category: {event.category} "
-        f"| Price: {_price_text(event)}{status}"
+        f"| Price: {_price_text(event)}"
     )
 
 
@@ -272,10 +228,22 @@ def _registration_problem(event) -> Optional[str]:
     now = _now()
     if event.start_at is not None and event.start_at <= now:
         return "the event has already started or taken place"
-    closing_at = event.reg_deadline if event.reg_deadline is not None else event.end_at
+    from concierge.source_context import effective_deadline
+    deadline = effective_deadline(event)
+    closing_at = deadline if deadline is not None else event.end_at
     if closing_at is not None and now >= closing_at:
         return f"registration closed on {_when(closing_at)}"
     return None
+
+
+def _registration_summary(event):
+    problem = _registration_problem(event)
+    if problem:
+        return 'closed: ' + problem
+    if event.reg_deadline is None:
+        return ('unconfirmed (database deadline missing; an indexed source may state a deadline, '
+                'but database booking eligibility does not verify official registration status)')
+    return 'open according to known database deadline (current ticket capacity unverified)'
 
 
 async def _restore_status(model, row_id: int, status) -> bool:
@@ -339,6 +307,11 @@ async def list_available_events(
     location: str = "",
     date_from: str = "",
     date_to: str = "",
+    max_price: Optional[float] = None,
+    currency: str = "JPY",
+    limit: int = 3,
+    registration_open_only: bool = False,
+    runtime: ToolRuntime = None,
 ) -> str:
     """
     List upcoming events, optionally filtered by topic keywords, name,
@@ -362,25 +335,33 @@ async def list_available_events(
             Kyushu, Hokkaido); comma-separate several.
         date_from: Optional earliest event date, formatted YYYY-MM-DD.
         date_to: Optional latest event date, formatted YYYY-MM-DD.
+        max_price: Optional per-attendee budget. Unknown prices do not satisfy it.
+        currency: Original price currency; defaults to JPY. Never convert without a dated rate.
+        limit: Maximum events to return, from 1 to 10; defaults to 3.
+        registration_open_only: True to exclude events with closed registration.
+        runtime: Injected authentication context; not a user-supplied membership claim.
 
     Returns:
         A list of matching events with event IDs, names, dates, locations,
-        categories, and prices. Without `date_from`, events taking place right
-        now are included and marked IN PROGRESS NOW. Ticket availability is
-        not tracked.
+        categories, and prices. Ticket availability is not tracked.
     """
-    now = _now()
     try:
-        # Without a date, search from the start of today so events in progress
-        # are still found; finished ones are dropped below.
-        start = _parse_date(date_from) if date_from else datetime.combine(now.date(), time.min)
+        start = max(_parse_date(date_from), _now()) if date_from else _now()
         end = _parse_date(date_to, end_of_day=True) if date_to else None
     except ValueError:
         return "Invalid date. Dates must be formatted YYYY-MM-DD."
     if end and end < start:
         return "Invalid date range: date_to must not be earlier than date_from."
 
+    if not 1 <= limit <= PAGE_SIZE or max_price is not None and max_price < 0:
+        return "Invalid search constraints: limit must be 1–10 and max_price nonnegative."
+    audience = "non_member"
     async with AsyncSessionLocal() as session:
+        user_id = _get_user_id(runtime)
+        if user_id is not None:
+            profile = await crud.load_user_context(session, user_id)
+            if profile and profile.get('membership'):
+                audience = 'member'
         if category:
             # The categories are formats; read them from the data so the list never goes stale.
             categories = await crud.list_event_categories(session)
@@ -398,14 +379,10 @@ async def list_available_events(
             locations=_location_terms(location),
             date_from=start,
             date_to=end,
-            # Keyword hits are re-checked below, so fetch enough to fill a page after that.
-            # One extra row tells us whether more exist; a few more cover today's finished events.
-            limit=_KEYWORD_FETCH_LIMIT if keywords else PAGE_SIZE + 1 + _TODAY_FETCH_MARGIN,
+            max_price=max_price, currency=currency if max_price is not None else None,
+            price_audience=audience, registration_open_only=registration_open_only,
+            limit=_KEYWORD_FETCH_LIMIT if keywords else limit + 1,  # one extra row tells us whether more exist
         )
-    if not date_from:
-        events = [e for e in events if not _has_finished(e, now)]
-    if not keywords:
-        events = events[:PAGE_SIZE + 1]
     if keywords:
         # SQL matches substrings ("HR" in "through"); keep whole-word matches only.
         patterns = [re.compile(rf"(?<!\w){re.escape(term)}(?!\w)", re.IGNORECASE) for term in keywords]
@@ -414,6 +391,9 @@ async def list_available_events(
             if any(p.search(f"{event.title}\n{event.description or ''}") for p in patterns)
         ][:PAGE_SIZE + 1]
 
+    if registration_open_only:
+        from concierge.source_context import effective_deadline
+        events = [e for e in events if not _registration_problem(e) and e.reg_deadline is not None]
     if not events:
         if keyword:
             return (
@@ -422,15 +402,16 @@ async def list_available_events(
             )
         return "No matching events were found."
 
-    text = "\n".join(_event_line(e, now) for e in events[:PAGE_SIZE])
-    if len(events) > PAGE_SIZE:
+    record_events(e.event_id for e in events[:limit])
+    text = "\n".join(_event_line(e) + f" | Registration: {_registration_summary(e)}" for e in events[:limit])
+    if len(events) > limit:
         text += (
-            f"\n\nShowing the first {PAGE_SIZE} results; more events match. "
+            f"\n\nShowing the first {limit} results; more events match. "
             "Narrow the search (category, location or dates) to see others."
         )
     else:
-        text += f"\n\n{min(len(events), PAGE_SIZE)} matching event(s)."
-    return text + _source_line("events")
+        text += f"\n\n{min(len(events), limit)} matching event(s)."
+    return text
 
 
 @tool
@@ -462,6 +443,13 @@ async def get_event_details(
         languages = await crud.get_event_languages(session, eid)
         speakers = await crud.get_event_speakers(session, eid)
 
+    record_events([event.event_id])
+    from concierge.source_context import matching_event, page_passage
+    snapshot = matching_event(event)
+    if snapshot:
+        passage = page_passage(snapshot["url"])
+        if passage:
+            record_passages([passage])
     lines = [
         f"[ID {event.event_id}] {event.title}",
         f"Category: {event.category}",
@@ -469,17 +457,21 @@ async def get_event_details(
         f"Starts: {_when(event.start_at)}",
         f"Ends: {_when(event.end_at)}",
         f"Registration deadline: {_when(event.reg_deadline, 'none stated')}",
+        f"Registration status: {_registration_summary(event)}",
         f"Price: {_price_text(event)}",
         f"Languages: {', '.join(languages) if languages else 'unknown'}",
         f"Contact: {event.contact or 'unknown'}",
         "Ticket availability: unknown (not tracked)",
         f"Description: {event.description}",
     ]
+    if snapshot:
+        from concierge.source_context import event_facts
+        lines.append("Indexed source: " + snapshot["url"] + event_facts(snapshot["url"]))
     if speakers:
         lines.append("Speakers:")
         for s in speakers:
             lines.append(f"- {s.name}" + (f" ({s.role})" if s.role else ""))
-    return "\n".join(lines) + _event_source_line(event)
+    return "\n".join(lines)
 
 
 @tool
@@ -849,6 +841,8 @@ async def check_space_availability(
             session, space.space_id, start, end + timedelta(days=14)
         ))
 
+    from concierge.evidence import record_space_check
+    record_space_check(space, start, end, not taken, _now())
     capacity = f" (capacity {space.capacity})" if space.capacity else ""
     past_note = " Note: part of this range is in the past." if start <= _now() else ""
     if not taken:
@@ -916,7 +910,7 @@ async def check_event_booking(
         bookings = await crud.list_user_bookings(session, user_id) if user_id is not None else []
         reservations = await crud.list_user_reservations(session, user_id) if user_id is not None else []
 
-    summary = f"Event: {_event_line(event)} | Registration deadline: {_when(event.reg_deadline, 'none stated')}"
+    summary = f"Event: {_event_line(event)} | Registration deadline: {_when(event.reg_deadline, 'none stated')} | Registration status: {_registration_summary(event)}"
     problem = _registration_problem(event)
     if problem:
         return f"CANNOT BOOK: {problem}.\n{summary}"
@@ -1119,7 +1113,7 @@ async def change_event_booking(
     names = ", ".join(person["name"] for person in people)
     return (
         "Booking changed.\n"
-        f"Reference to keep: {_booking_ref(new_booking.booking_id)} (the earlier reference {_booking_ref(booking_id)} is no longer valid)\n"
+        f"New reference: {_booking_ref(new_booking.booking_id)} (replaces {_booking_ref(booking_id)})\n"
         f"Event: {target.title} ({_when(target.start_at)}, {target.location or 'location unknown'})\n"
         f"Tickets: {len(people)} ({names})\n"
         "This is a registration only; no payment was taken."
@@ -1212,7 +1206,7 @@ async def change_space_reservation(
 
     return (
         "Space reservation changed.\n"
-        f"Reference to keep: {_reservation_ref(new.reservation_id)} (the earlier reference {_reservation_ref(reservation_id)} is no longer valid)\n"
+        f"New reference: {_reservation_ref(new.reservation_id)} (replaces {_reservation_ref(reservation_id)})\n"
         f"Space: {space.name if space else 'unknown'}\n"
         f"From: {_when(new.start_at)}\nTo: {_when(new.end_at)}\n"
         f"Title: {new.title}{f' | {new.expected_attendees} attendees' if new.expected_attendees else ''}"
@@ -1247,6 +1241,8 @@ async def get_membership_tier_info(
         The requested category's official annual fee (with its currency),
         description of eligibility and benefits, or a comparative overview of all tiers.
     """
+    record_resource(MEMBERSHIP_FEE_SOURCE)
+    record_database_source("Membership annual fees", MEMBERSHIP_FEE_SOURCE, "member_category")
     def describe(c) -> str:
         return (
             f"{c.category_name}\n"
@@ -1258,7 +1254,7 @@ async def get_membership_tier_info(
         if tier_or_category_name:
             category = await crud.get_member_category(session, tier_or_category_name)
             if category is not None:
-                return describe(category) + _source_line("membership")
+                return describe(category) + "\nSource: " + MEMBERSHIP_FEE_SOURCE + "\nDatabase snapshot; confirm current eligibility, taxes and rates before applying."
         categories = await crud.list_member_categories(session)
 
     if not categories:
@@ -1267,7 +1263,7 @@ async def get_membership_tier_info(
     prefix = ""
     if tier_or_category_name:
         prefix = f"No category matched '{tier_or_category_name}'. Available categories:\n\n"
-    return prefix + "\n\n".join(describe(c) for c in categories) + _source_line("membership")
+    return prefix + "\n\n".join(describe(c) for c in categories) + "\nSource: " + MEMBERSHIP_FEE_SOURCE + "\nDatabase snapshot; confirm current eligibility, taxes and rates before applying."
 
 
 # Member regions are stored as written in each company's address: Tokyo wards
@@ -1329,6 +1325,7 @@ def _member_region_pattern(region: str):
 async def search_member_directory(
     industry: Optional[str] = None,
     region: Optional[str] = None,
+    runtime: ToolRuntime = None,
 ) -> str:
     """
     Search the CCIFJ member directory for companies matching the provided industry and/or region.
@@ -1348,7 +1345,8 @@ async def search_member_directory(
 
     Returns:
         Matching company records including company names, sectors, regions,
-        and directory descriptions.
+        and directory descriptions. Names are shown to members and staff only;
+        other users get how many companies match.
     """
     pattern = _member_region_pattern(region or "")
     if not industry and pattern is None:
@@ -1375,6 +1373,12 @@ async def search_member_directory(
             members = in_place
     members = list(members)[:PAGE_SIZE + 1]
 
+    if members:
+        level = await _access_level(runtime)
+        if level in ("guest", "user"):
+            more = "or more " if len(members) > PAGE_SIZE else ""
+            return note + f"{min(len(members), PAGE_SIZE)} {more}member companies match these filters. " + MEMBERS_ONLY_NOTE
+
     if not members:
         return (
             "No member companies matched those filters. "
@@ -1386,14 +1390,204 @@ async def search_member_directory(
         place = ", ".join(p for p in (m.region, m.country) if p) or "region unknown"
         block = f"{m.name} | Industry: {m.sector or 'unknown'} | {place}"
         if m.description:
-            desc = m.description if len(m.description) <= 200 else m.description[:200] + "..."
+            desc = m.description[:2000]
             block += f"\n  {desc}"
         blocks.append(block)
 
-    text = note + "\n\n".join(blocks)
+    text = (_names_allowed_note(level) + "Commercial role: unverified. These are sector/location matches, not a verified buyer, "
+            "importer or distributor shortlist. Recommend a commercial role only when the description "
+            "explicitly supports it; a sector or website alone does not.\n\n" + note + "\n\n".join(blocks))
     if len(members) > PAGE_SIZE:
         text += f"\n\nShowing the first {PAGE_SIZE} results; more companies match. Add another filter to narrow it down."
-    return text + _source_line("directory")
+    return text
+
+
+#################################################
+#
+# Matching (members and events) and introductions
+#
+#################################################
+
+def _names_allowed_note(level: str) -> str:
+    # The answer writer only sees tool text and the profile (which may show no company for
+    # staff); say explicitly that this viewer may see the names.
+    who = "CCIFJ staff" if level == "staff" else "a CCIFJ member"
+    return f"Directory access: the signed-in user is {who}, so these company names may be shown.\n"
+
+
+MEMBERS_ONLY_NOTE = (
+    "Company names and contacts in the CCIFJ directory are visible to CCIFJ members only. "
+    "Do not name or guess companies. Explain that members see the full matches and can ask CCIFJ "
+    "for an introduction; offer the membership information, or a message to CCIFJ staff "
+    "(submit_staff_request, category 'membership' or 'business_support') asking for an introduction."
+)
+
+
+async def _access_level(runtime) -> str:
+    """guest | user | member | staff for the signed-in user (see concierge.auth.access)."""
+    user_id = _get_user_id(runtime)
+    if user_id is None:
+        return "guest"
+    from concierge.auth.access import access_level
+    from ..db.relationaldb.models import User
+    async with AsyncSessionLocal() as session:
+        return (await access_level(session, await session.get(User, user_id))).value
+
+
+def _sector_summary(sectors: dict[str, int]) -> str:
+    return ", ".join(f"{name} ({count})" for name, count in list(sectors.items())[:6])
+
+
+@tool
+async def find_matching_members(
+    need: str,
+    industry: Optional[str] = None,
+    region: Optional[str] = None,
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Find CCIFJ member companies that fit a need described in plain language, e.g.
+    "a French agrifood company that knows distribution in Japan", "a law firm to set up
+    a subsidiary", "an HR consultant in Osaka". Use it for partner, supplier, distributor,
+    service-provider or peer searches; use search_member_directory for a plain list of a sector.
+
+    What the user sees depends on their account: members and staff get company names,
+    sectors, places and why each fits; signed-in non-members get how many members match and
+    their sectors; guests get only how many members match.
+
+    Args:
+        need: What the user is looking for, in English, with the key details (activity,
+            products, market, place).
+        industry: Optional exact directory sector to restrict to (see
+            list_available_industries_and_regions).
+        region: Optional place, only when the user asked for one (Tokyo, Kansai, Osaka...).
+    """
+    from concierge import matching
+    need = (need or "").strip()[:1000]
+    if not need:
+        return "Describe what the user is looking for before searching."
+    level = await _access_level(runtime)
+    async with AsyncSessionLocal() as session:
+        if level in ("guest", "user"):
+            count, sectors = await matching.count_relevant(session, need, sector=industry or None)
+            if not count:
+                return ("No member company clearly matches this need. Say so, and offer a message to CCIFJ "
+                        "staff, who know the network beyond the directory.")
+            if level == "guest":
+                return (f"About {count} CCIFJ member companies look relevant to this need. " + MEMBERS_ONLY_NOTE
+                        + " Mention that signing in and joining CCIFJ gives access to the directory.")
+            return (f"About {count} CCIFJ member companies look relevant. Their sectors: {_sector_summary(sectors)}. "
+                    + MEMBERS_ONLY_NOTE)
+        matches = await matching.match_members(session, need, limit=5, sector=industry or None, region=region or None)
+    if not matches:
+        return "No member company matched. Try a broader need or no region, or offer a message to CCIFJ staff."
+    blocks = []
+    for match in matches:
+        place = ", ".join(p for p in (match.fields.get("region"), match.fields.get("country")) if p) or "place unknown"
+        strength = "strong" if match.score >= 0.84 else "good" if match.score >= matching.RELEVANT_SCORE else "weak"
+        block = f"{match.name} | Sector: {match.fields.get('sector') or 'unknown'} | {place} | match strength: {strength}"
+        if match.why:
+            block += f"\n  Why: {match.why}"
+        if match.fields.get("contact"):
+            block += f"\n  Public contact: {match.fields['contact']}"
+        blocks.append(block)
+    advice = ("Explain in one line per company why it fits, using only the sector, place and text above; "
+              "a sector match is not proof of a commercial role. ")
+    advice = _names_allowed_note(level) + advice
+    if level == "member":
+        advice += ("Offer to ask CCIFJ to introduce the user to one or more of them (request_introduction, "
+                   "with the exact company names above).")
+    return advice + "\n\n" + "\n\n".join(blocks)
+
+
+@tool
+async def recommend_events(interests: str, runtime: ToolRuntime = None) -> str:
+    """
+    Recommend upcoming CCIFJ events that fit the user's interests, sector or goals, e.g.
+    "food and wine networking", "HR and recruitment", "meet investors in Kansai".
+    Returns up to 5 upcoming events with why each fits; use get_event_details for prices
+    and registration.
+
+    Args:
+        interests: The user's interests, sector and goals, in English.
+    """
+    from concierge import matching
+    interests = (interests or "").strip()[:1000]
+    if not interests:
+        return "Ask what the user is interested in first."
+    async with AsyncSessionLocal() as session:
+        matches = await matching.match_events(session, interests, limit=5)
+    good = [m for m in matches if m.score >= 0.79] or matches[:2]
+    if not good:
+        return "No upcoming events are listed. Offer the newsletter or the events team contact."
+    record_events([m.id for m in good])
+    lines = []
+    for m in good:
+        when = _when(datetime.fromisoformat(m.fields["start_at"]), "date unknown")
+        line = f"[ID {m.id}] {m.name} | {m.fields['category']} | {when} | {m.fields.get('location') or 'location to be confirmed'}"
+        if m.why:
+            line += f"\n  Why: {m.why}"
+        lines.append(line)
+    return "Upcoming events ranked by fit. Say briefly why each fits; never show the IDs.\n\n" + "\n".join(lines)
+
+
+@tool
+async def request_introduction(
+    company_names: list[str],
+    message: str,
+    runtime: ToolRuntime = None,
+) -> str:
+    """
+    Ask CCIFJ staff to introduce the signed-in member to one or more member companies
+    found with find_matching_members. Staff contact the other company first; nothing is sent
+    to it automatically. Members only: for other users, offer submit_staff_request instead.
+
+    Use only after the user chose the companies and agreed to the message.
+
+    Args:
+        company_names: Exact company names from find_matching_members (1 to 5).
+        message: What the user wants from the introduction and why, written with the user,
+            in the user's words where possible.
+    """
+    from uuid import uuid4
+    from sqlalchemy import func as sa_func
+    from sqlmodel import select as sql_select
+    from concierge.auth.access import access_level
+    from ..db.relationaldb.models import Belongs, IntroRequest, Member, User
+    user_id = _get_user_id(runtime)
+    if user_id is None:
+        return "Introductions need a member account: ask the user to sign in."
+    names = [name.strip() for name in (company_names or []) if name and name.strip()][:5]
+    message = (message or "").strip()
+    if not names or not message:
+        return "Choose at least one company and write the introduction message with the user first."
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+        level = (await access_level(session, user)).value
+        if level not in ("member", "staff"):
+            return ("Only CCIFJ members can request introductions through the directory. Offer a message to "
+                    "CCIFJ staff (submit_staff_request) instead, and the membership information.")
+        own = (await session.exec(sql_select(Belongs.member_id).where(Belongs.user_id == user_id))).first()
+        created, unknown = [], []
+        for name in names:
+            target = (await session.exec(sql_select(Member).where(sa_func.lower(Member.name) == name.lower()))).first()
+            if target is None or target.member_id == own:
+                unknown.append(name)
+                continue
+            intro = IntroRequest(reference=f"pending-{uuid4().hex[:24]}", requester_user_id=user_id,
+                                 requester_member_id=own, target_member_id=target.member_id, message=message[:4000])
+            session.add(intro)
+            await session.flush()
+            intro.reference = f"IR-{japan_now().year}-{intro.intro_id:06d}"
+            created.append((target.name, intro.reference))
+        await session.commit()
+    if not created:
+        return f"No introduction was stored: these names are not member companies: {', '.join(unknown)}."
+    text = "Introduction requests stored for CCIFJ staff (they contact the company first; no email was sent):\n"
+    text += "\n".join(f"- {name}: reference {reference}" for name, reference in created)
+    if unknown:
+        text += f"\nNot found in the directory, so not requested: {', '.join(unknown)}."
+    return text
 
 
 @tool
@@ -1429,56 +1623,23 @@ async def list_available_industries_and_regions() -> str:
 #################################################
 
 @tool
-def get_ccifj_contact(
-    topic: Literal[
-        "events",
-        "become_speaker",
-        "become_sponsor",
-        "bonjour_france",
-        "membership",
-        "corporate_news",
-        "japanese_market_support",
-        "recruitment_and_hr",
-    ],
-) -> str:
+async def get_ccifj_contact() -> str:
     """
-    Retrieve direct contact person details (name, title, email, phone number)
-    for specific CCIFJ inquiries.
+    Return the CCIFJ staff directory: every active contact with their department, what they
+    handle, email, phone and languages, maintained by CCIFJ staff in the admin dashboard.
 
-    Use this tool when the user wants to:
-    - Ask about a CCIFJ event, registration problems, or late registration.
-    - Inquire about becoming a speaker at CCIFJ events or conferences.
-    - Sponsor CCIFJ events, summits, or business forums.
-    - Learn about BONJOUR FRANCE, the starting point for companies that want to work in Japan.
-    - Ask about CCIFJ membership, joining, dues, or member services.
-    - Share corporate news or press releases with CCIFJ media.
-    - Ask questions about entering or developing in the Japanese market.
-    - Inquire about recruitment, hiring, posting job offers, or HR services.
+    Use this tool when the user wants to reach someone at CCIFJ or needs a recipient for a
+    staff email: event questions, speaking or sponsoring, membership, corporate news, market
+    entry, recruitment, training, communication, venue rental, billing or anything else.
 
-    Args:
-        topic: The specific subject of inquiry. Must be one of:
-            - 'events': General event questions, registration issues, late registration (Elena SUZUKI).
-            - 'become_speaker': Inquire about speaking at events (Elena SUZUKI).
-            - 'become_sponsor': Inquire about sponsorship opportunities (Marie OZAKI & Elena SUZUKI).
-            - 'bonjour_france': BONJOUR FRANCE, the starting point for companies that want to work in Japan (Mayu HANDA).
-            - 'membership': Membership, joining, dues, and member services (Tomoyo FUNABASHI & Marianne BARGES).
-            - 'corporate_news': Submit or share corporate news with CCIFJ (Communication Dept & Marianne BARGES).
-            - 'japanese_market_support': Advisory & support for French companies entering the Japanese market.
-            - 'recruitment_and_hr': Inquiries regarding job postings, recruitment, and HR support (Nicolas CHAUVET & Haruka KOBAYASHI).
-
-    Returns:
-        Verified contact details including the officer name, title, email address,
-        and telephone number where available.
+    Pick the contact whose department and "Handles" line match the request. When none fits,
+    use the entry marked "(triage)", who routes the request. Never invent a name or email that
+    is not in the output; if the directory is empty, send a 'team_ticket' instead.
     """
-    # Contacts are data (data/contacts.json), edited by staff without code.
-    try:
-        details = contacts_data.describe(topic)
-    except Exception:
-        logger.exception("Could not read the contacts file")
-        details = ""
-    if not details:
-        return "Contact details not found for this topic."
-    return details + _source_line(_CONTACT_SOURCES[topic])
+    from ..staff_directory import describe_directory
+
+    async with AsyncSessionLocal() as session:
+        return await describe_directory(session)
 
 
 @tool
@@ -1509,12 +1670,8 @@ def get_official_form(
         The official URL and guidance for completing the submission.
     """
     if form_type == "membership_application":
-        membership_urls = {
-            "en": "https://survey.ccifi.net/232729?lang=en",
-            "fr": "https://survey.ccifi.net/232729?lang=fr",
-            "jp": "https://survey.ccifi.net/232729?lang=jp",
-        }
-        url = membership_urls.get(lang, membership_urls["en"])
+        url = membership_form(lang)
+        record_resource(url)
         return (
             f"CCIFJ Membership Application Form ({lang.upper()}):\n"
             f"URL: {url}\n"
@@ -1522,10 +1679,8 @@ def get_official_form(
         )
 
     elif form_type == "cv_database_registration":
-        url = (
-            "https://ccifj-emploi.mycv.tech/index.php?"
-            "langue=en&module=candidat&action=infosGeneralesCandidatVide&typepage=formulaire&idpage=a94966106b492"
-        )
+        url = CV_REGISTRATION
+        record_resource(url)
         return (
             "Candidate CV Database Registration Form:\n"
             f"URL: {url}\n"
@@ -1533,7 +1688,8 @@ def get_official_form(
         )
 
     elif form_type == "business_development_inquiry":
-        url = "https://www.ccifj.or.jp/en/commercial-support/contact-us.html"
+        url = BUSINESS_INQUIRY
+        record_resource(url)
         return (
             "Business Development & Commercial Support Inquiry Form:\n"
             f"URL: {url}\n"
@@ -1722,8 +1878,10 @@ async def submit_staff_request(
             "Do not retry automatically; tell the user to contact CCIFJ if they get no reply."
         )
 
-    # Optional: also create it in CCIFJ's Odoo CRM (off until ODOO_* is configured).
+    # Optional: also create it in CCIFJ's Odoo CRM as a lead (off until ODOO_* is configured).
+    # The request is already stored; Odoo being slow or down never fails the answer.
     if odoo.enabled():
+        import asyncio
         await asyncio.to_thread(odoo.push_staff_request, {
             "reference": reference, "request_type": request_type, "category": category,
             "subject": subject.strip(), "message": message.strip(), "sender_name": sender_name.strip(),
@@ -1739,251 +1897,8 @@ async def submit_staff_request(
     )
 
 
-#################################################
-#
-# 4. Member network tools: matching and engagement (fictional demo data)
-#
-#################################################
-
-def _encode_texts(texts: list[str]):
-    return _get_embed_model().encode(texts, normalize_embeddings=True)
-
-
 @tool
-def find_member_matches(need: str, sector: str = "", limit: int = 5) -> str:
-    """
-    Find member companies that fit a business need, with the directory record of each as evidence.
-
-    Use this tool when someone looks for a company, partner, supplier, distributor, client, or
-    expert in the CCIFJ network ("a food company that knows distribution in Japan", "5 relevant
-    members for this company"). It searches the directory's sectors and descriptions by meaning
-    and by keyword.
-
-    Args:
-        need: The business need in plain English: what kind of company, doing what, for whom.
-            Translate the user's request to English and keep its specifics (products, channels,
-            customers); the directory is in English.
-        sector: Optional exact sector to restrict to (e.g. "Food & Beverage", "Logistics").
-            Leave empty unless the user asked for one sector only.
-        limit: How many companies to return (1 to 10, default 5).
-
-    Returns:
-        The best-matching companies. For each: name, sectors, country, membership type, the
-        full directory description, the words of the request found in the record, and its
-        contacts (name, job title, email, preferred language).
-    """
-    need = (need or "").strip()
-    if not need and not sector:
-        return "Describe the business need (what kind of company, doing what) to search the directory."
-    try:
-        matches = network.match_companies(need, sector=sector, limit=limit, encode=_encode_texts)
-    except Exception:
-        logger.exception("Member matching failed for need %r", need)
-        return (
-            "The member directory could not be searched right now. Do not name any company from "
-            "memory; say the search is unavailable and offer the membership team's contact."
-        )
-    if not matches:
-        return (
-            "No member company in the directory fits this need. Do not stretch a weak match: say so, "
-            f"and offer the membership team's help. Sectors in the directory: {', '.join(network.sectors())}."
-        )
-    blocks = [network.describe_match(match) for match in matches]
-    return (
-        f"{len(matches)} matching member compan{'y' if len(matches) == 1 else 'ies'}, best first. "
-        "Every line below is copied from the directory record; use only these facts as reasons.\n\n"
-        + "\n\n".join(blocks)
-        + f"\nSource document: {network.DIRECTORY_NAME}"
-    )
-
-
-@tool
-def get_member_record(company: str) -> str:
-    """
-    Get one member company's directory record by name, with its contacts.
-
-    Use this tool when the user names a company ("COMPANY 25", "introduce me to COMPANY 12")
-    and you need its record or its contacts.
-
-    Args:
-        company: The company name as the user wrote it, e.g. "COMPANY 25" or "company 7".
-
-    Returns:
-        The record: sectors, country, membership type, description, and contacts
-        (name, job title, email, preferred language).
-    """
-    found = network.find_company(company or "")
-    if found is None:
-        return f"No member company named '{company}' is in the directory. Do not invent one; search by need instead."
-    return network.describe_match(network.Match(found, 1.0, ())) + f"\nSource document: {network.DIRECTORY_NAME}"
-
-
-@tool
-def list_members_to_follow_up(stage: str = "") -> str:
-    """
-    List the members who need a follow-up now, most urgent first, with the rule that selected each.
-
-    Use this tool when CCIFJ staff ask who to contact, who is inactive, which new members need
-    attention, or for an overview of member engagement.
-
-    Args:
-        stage: Optional filter: 'welcome', 'first_event', 'member_area', 'discover_services',
-            'inactive', or 'first_anniversary'. Empty lists every member who needs a follow-up.
-
-    Returns:
-        One line per member: name, company, email, days since joining, stage, and the rule
-        (with its numbers) that put them there. Active members are not listed.
-    """
-    today = japan_now().date()
-    due = network.members_to_follow_up(today, stage.strip().lower())
-    if not due:
-        return "No member needs a follow-up" + (f" in stage '{stage}'." if stage else " right now.")
-    lines = [
-        f"{record['contact']} | {record['company']} | <{record['email']}> | {stage_.label} | Rule: {stage_.why} | Goal: {record.get('goal') or 'not stated'}"
-        for record, stage_ in due
-    ]
-    return (
-        f"{len(due)} member(s) need a follow-up as of {today.isoformat()}, most urgent first:\n"
-        + "\n".join(lines)
-        + f"\nSource document: {network.ENGAGEMENT_NAME}"
-    )
-
-
-@tool
-def get_member_engagement(member: str) -> str:
-    """
-    Get one member's profile and activity, their engagement stage, and what the follow-up should do.
-
-    Use this tool before recommending anything to a member or drafting a follow-up message.
-
-    Args:
-        member: The member's name, email, or company (e.g. "Luc Nakamura", "COMPANY 45").
-
-    Returns:
-        Job title, preferred language, company sector and description, join date, stated goal,
-        interests, events attended, services used, member-area use, last activity, the stage
-        with the rule that set it, and the kind of action the follow-up should propose.
-    """
-    record = network.find_engagement(member or "")
-    if record is None:
-        return (
-            f"No engagement record was found for '{member}'. Use list_members_to_follow_up to see "
-            "the members on record; do not invent a profile."
-        )
-    return network.describe_engagement(record, japan_now().date()) + f"\nSource document: {network.ENGAGEMENT_NAME}"
-
-
-async def _store_network_draft(
-    category: str, subject: str, message: str, sender_name: str, sender_email: str, recipient_emails: list[str], runtime,
-) -> str:
-    """Store an introduction or a member follow-up for CCIFJ staff to review. Nothing is sent."""
-    sender_email = (sender_email or "").strip()
-    recipients = list(dict.fromkeys(email.strip() for email in recipient_emails or [] if email.strip()))
-    missing = [
-        label for label, value in (("subject", subject), ("message", message), ("your name", sender_name)) if not (value or "").strip()
-    ]
-    if missing:
-        return f"Draft not stored: missing {', '.join(missing)}. Ask the user for it."
-    if not _EMAIL_PATTERN.match(sender_email):
-        return "Draft not stored: your email is missing or invalid. Ask the user for a valid email."
-    known = {contact.email.casefold() for company in network.load_directory() for contact in company.contacts}
-    known |= {company.email.casefold() for company in network.load_directory()}
-    unknown = [email for email in recipients if email.casefold() not in known]
-    if not recipients or unknown:
-        return (
-            "Draft not stored: the recipient must be a contact from the member directory"
-            + (f" (not found: {', '.join(unknown)})" if unknown else "")
-            + ". Use the email shown in the directory record."
-        )
-    body = f"To: {'; '.join(recipients)}\n\n{message.strip()}"
-    try:
-        async with AsyncSessionLocal() as session:
-            stored = await crud.add_staff_request(
-                session, request_type="team_ticket", category=category, subject=subject.strip(), message=body,
-                sender_name=sender_name.strip(), sender_email=sender_email, recipient_emails=[],
-                user_id=_get_user_id(runtime), session_id=_chat_session_id(runtime),
-            )
-            reference = stored.reference
-        async with AsyncSessionLocal() as verify_session:
-            saved = await crud.get_staff_request(verify_session, reference)
-    except Exception:
-        logger.exception("Could not store a %s draft", category)
-        return "The draft may not have been stored. Do not retry automatically; tell the user to contact the membership team."
-    if saved is None:
-        return "The draft could not be verified after saving. Do not retry automatically; tell the user to contact the membership team."
-    return (
-        f"Draft stored for CCIFJ staff review. Reference: {reference}. Addressed to {', '.join(recipients)}. "
-        "Nothing has been sent: a CCIFJ staff member reviews it and sends it."
-    )
-
-
-@tool
-async def save_introduction_request(
-    subject: str,
-    message: str,
-    sender_name: str,
-    sender_email: str,
-    recipient_emails: list[str],
-    runtime: ToolRuntime = None,
-) -> str:
-    """
-    Store an introduction between the requester and a member contact, for CCIFJ staff to review and send.
-
-    Use this tool only after the user has seen the full introduction draft and explicitly agreed.
-    Nothing is sent to the member: CCIFJ staff review every introduction first.
-
-    Args:
-        subject: The subject line agreed with the user.
-        message: The full introduction message agreed with the user.
-        sender_name: The requester's name.
-        sender_email: The requester's email, so staff and the member can reply.
-        recipient_emails: The member contact(s) to be introduced to, exactly as in the directory record.
-        runtime: Injected ToolRuntime providing access to the current graph state.
-
-    Returns:
-        The stored reference, or what is missing.
-    """
-    return await _store_network_draft("member_introduction", subject, message, sender_name, sender_email, recipient_emails, runtime)
-
-
-@tool
-async def save_member_followup(
-    subject: str,
-    message: str,
-    sender_name: str,
-    sender_email: str,
-    recipient_emails: list[str],
-    runtime: ToolRuntime = None,
-) -> str:
-    """
-    Store a personalised follow-up message to a member, for CCIFJ staff to review and send.
-
-    Use this tool only after the staff member has seen the full draft and explicitly agreed.
-    Nothing is sent to the member automatically.
-
-    Args:
-        subject: The subject line agreed with the staff member.
-        message: The full follow-up message, in the member's preferred language.
-        sender_name: The CCIFJ staff member the message is from.
-        sender_email: That staff member's email.
-        recipient_emails: The member's email, exactly as in their engagement record.
-        runtime: Injected ToolRuntime providing access to the current graph state.
-
-    Returns:
-        The stored reference, or what is missing.
-    """
-    return await _store_network_draft("member_followup", subject, message, sender_name, sender_email, recipient_emails, runtime)
-
-
-SEARCH_UNAVAILABLE = (
-    "CCIFJ information search is temporarily unavailable, so nothing could be looked up. "
-    "Do not answer this part from memory and do not invent facts. Tell the user you could not "
-    "check this right now, give the relevant CCIFJ contact, and offer to write to the team."
-)
-
-
-@tool
-def search_vectordb(query: str) -> str:
+def search_vectordb(query: str, original_query: str = "") -> str:
     """
     Search the vector database for information relevant to the user's request.
 
@@ -1995,25 +1910,91 @@ def search_vectordb(query: str) -> str:
 
     Args:
         query: A clear, specific, self-contained English search query describing
-               exactly what information you need. The knowledge base is indexed
-               in English; preserve exact names, dates, identifiers, and key terms.
+               exactly what information you need. The website index is in English;
+               preserve exact names, dates, identifiers, and key terms.
+        original_query: The user's own wording of the question in their language
+               (French, Japanese...), when it is not English. It is searched as well,
+               so documents staff uploaded in that language can match. Leave empty
+               for English questions.
 
     Returns:
         Relevant content chunks retrieved and reranked from the knowledge database.
     """
+    model, retriever = None, None
     try:
         model = _get_embed_model()
+    except Exception as exc:
+        from concierge.rag.src.diagnostics import record
+        record('embedding', exc)
+        logger.exception('Embedding model unavailable for search')
+        record_warning('retrieval_semantic_unavailable')
+    try:
         retriever = _get_retriever()
-        chunks = search(retriever, model, query, 20, 10, 5)
     except Exception:
-        # A search problem must not fail the whole answer.
-        logger.exception("Knowledge search failed for query %r", query)
-        return SEARCH_UNAVAILABLE
-    if not chunks:
-        return "No CCIFJ information matched this search. Do not guess; offer the relevant CCIFJ contact instead."
-    # Each passage starts on its own line with "# title" and its "url:" or
-    # "document:" line; answers cite passages by those (see agents/sources.py).
-    return ("\n" + "=" * 80 + "\n").join(chunk.strip() for chunk in chunks)
+        logger.exception('Keyword index unavailable for search')
+        record_warning('retrieval_lexical_unavailable')
+    if not query.strip() or len(query)>4000:
+        raise ValueError('Search query must be nonempty and at most 4000 characters')
+    from concierge.rag.src.search_cache import public_search_cache, cache_key
+    from concierge.evidence import turn_evidence
+    original_query = (original_query or '')[:4000]
+    key = cache_key(query + ('\n' + original_query.strip() if original_query.strip() else ''),retriever,model) \
+        if retriever is not None and model is not None else None
+    passages = public_search_cache.get(key) if key is not None else None
+    if passages is None:
+        passages = search_passages(retriever, model, query, 20, 10, 5, extra_queries=(original_query,))
+        evidence = turn_evidence.get()
+        # Never retain partial/fallback/error answers or cache when diagnostics
+        # are unavailable. SQL availability, user data and writes never use this cache.
+        if key is not None and evidence is not None and not any(w.startswith('retrieval_') for w in evidence.warnings):
+            public_search_cache.put(key,passages)
+    else:
+        logger.info('retrieval_cache hit=true')
+    record_passages(passages)
+    if not passages:
+        return "No relevant source passages found. Say that the knowledge base does not contain enough evidence; offer CCIFJ staff help."
+    return ('\n' + "=" * 80).join(
+        f"Source: {p['url']}\nChunk: {p['id']}\n{p['text']}" for p in passages
+    )
+
+
+@tool
+def search_indexed_events(query: str = '', location: str = '', limit: int = 5) -> str:
+    """Find future events in the local website crawl when SQL has no suitable record.
+
+    Uses structured event titles, dates and locations, without semantic search.
+    These are crawl candidates, not live bookable matches. Prices, membership
+    eligibility and ticket capacity may be unknown. Never assume they meet a budget.
+    """
+    from concierge.source_context import find_events, event_facts, page_passage
+    urls = find_events(query, _now(), location=location, limit=max(1, min(limit, 5)))
+    if not urls:
+        return 'No matching future events in the indexed website snapshot. This is not a live website check.'
+    results = []
+    for url in urls:
+        passage = page_passage(url)
+        # Keep the full page available through get_source_details, but return
+        # compact structured facts for browsing instead of every page's prose.
+        passage = {**passage, 'text': event_facts(url)}
+        record_passages([passage])
+        results.append(f"Source: {url}\n{passage['text']}")
+    return ('Indexed website candidates only. Verify price and eligibility; unknown prices do not meet a strict budget.\n'
+            + '\n'.join(results))
+
+
+@tool
+def get_source_details(url: str) -> str:
+    """Read a complete known indexed page when a search chunk omits event or service details.
+
+    Only URLs already in the local CCIFJ corpus are accepted. This does not fetch
+    the live website. Use before claiming a cited page lacks venue, price or deadline.
+    """
+    from concierge.source_context import page_passage
+    passage = page_passage(url)
+    if passage is None:
+        return 'This URL is not in the indexed corpus. Its contents are unverified; do not fetch arbitrary URLs or infer missing facts.'
+    record_passages([passage])
+    return f"Source: {url}\n{passage['text']}"
 
 
 @tool

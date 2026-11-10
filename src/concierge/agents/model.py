@@ -1,25 +1,17 @@
-from langchain_ollama import ChatOllama
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
+"""Use the validated provider explicitly; never silently switch providers."""
 import os
 
-load_dotenv()
-model_name = os.getenv("model_name")
-model_type = os.getenv("model_type")
-router_model_name = os.getenv("router_model_name")
-trim_token = int(os.getenv("trim_messages_max_token", 1000))
+from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
+from concierge.config import get_settings
 
-
-try:
-    if model_type.lower() == "qwen":
-        llm = ChatOllama(model=model_name, temperature=0)
-        llm_routing = ChatOllama(model=router_model_name, temperature=0, think=False, keep_alive=0)
-    else:
-        llm = ChatOpenAI(model=model_name)
-        llm_routing = ChatOpenAI(model=router_model_name)
-except:
-    llm = ChatOllama(model=model_name, temperature=0)
-    llm_routing = ChatOllama(model=router_model_name, temperature=0, think=False, keep_alive=0)
+settings = get_settings()
+if settings.uses_ollama:
+    llm = ChatOllama(model=settings.model_name, temperature=0, keep_alive=600)
+    llm_routing = ChatOllama(model=settings.router_model_name, temperature=0, think=False, keep_alive=600)
+else:
+    llm = ChatOpenAI(model=settings.model_name, timeout=60, max_retries=1)
+    llm_routing = ChatOpenAI(model=settings.router_model_name, timeout=30, max_retries=1)
 
 
 # OpenAI's built-in web search, given to the agents that need fresh information.
@@ -37,11 +29,7 @@ def web_search_tools() -> list[dict]:
     if os.getenv("CCIFJ_WEB_SEARCH", "on").strip().lower() in {"0", "false", "no", "off"}:
         return []
     raw = os.getenv("CCIFJ_WEB_SEARCH_DOMAINS", _DEFAULT_WEB_DOMAINS).strip()
-    # A small search context keeps answers fast; "medium" or "high" read more per search.
-    context = os.getenv("CCIFJ_WEB_SEARCH_CONTEXT", "low").strip().lower()
     tool: dict = {"type": "web_search"}
-    if context in {"low", "medium", "high"}:
-        tool["search_context_size"] = context
     if raw and raw != "*":
         domains = [d.strip() for d in raw.split(",") if d.strip()]
         tool["filters"] = {"allowed_domains": domains}

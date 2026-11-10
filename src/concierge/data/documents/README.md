@@ -1,21 +1,35 @@
-# Approved CCIFJ documents
+# Approved CCIFJ documents (text versions)
 
-Every `.md` file in this folder is part of what the concierge knows, next to
-the crawled website pages. Answers that use a file cite it by its `title`.
+Each `.md` file in this folder is the text of one CCIFJ brochure, rate card or
+calendar supplied for the hackathon, kept in git so a fresh checkout can load
+them without the original PDFs. They are **source files**: the concierge only
+uses a document once it has been added to the knowledge base.
 
-To update what the concierge knows, no code is needed:
+## Load them into the knowledge base
+
+```bash
+uv run python scripts/ingest_documents.py src/concierge/data/documents
+```
+
+The script reads every file, skips any that is already in the knowledge base
+(same content), stores it as a knowledge document and indexes it for search.
+Staff can then see, replace or delete each document in **Admin → Knowledge**.
+The original PDFs can be loaded the same way (`scripts/ingest_documents.py
+"path/to/folder"`) or uploaded one by one in the dashboard; load either the PDF
+or its `.md` version, not both, or the same brochure is indexed twice.
+
+## Updating a document
 
 | I want to… | Do this |
 |---|---|
-| Add a brochure, rate card, or calendar | `uv run concierge-kb add "path/to/file.pdf"` (PDF, DOCX, TXT, MD, or a folder) |
-| Correct a fact | Edit the `.md` file in any text editor, then `uv run concierge-kb sync` |
-| Replace last year's version | `uv run concierge-kb remove "Old title"`, then `add` the new file |
-| See what is indexed | `uv run concierge-kb list` |
+| Add a brochure, rate card, or calendar | Upload it in **Admin → Knowledge**, or run the script on the file or folder |
+| Correct a fact | Delete the document in the dashboard, edit the `.md` file, run the script again |
+| Replace last year's version | Delete the old document in the dashboard, then add the new file |
+| See what is indexed | **Admin → Knowledge** lists every document with its size |
 
-Restart the API after `add`, `sync`, or `remove`.
+No restart is needed: the next question searches the updated knowledge base.
 
-Each file starts with a short header. `title` is the name shown to users as the
-source, so keep it short and include the year:
+Each file starts with a short header. `title` is the name of the brochure:
 
 ```text
 ---

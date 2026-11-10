@@ -49,6 +49,7 @@ class ChatResponse(SessionResponse):
     pending_approvals: list[dict[str, Any]] = Field(default_factory=list)
     suggested_questions: list[str] = Field(default_factory=list)
     sources: list[dict[str, Any]] = Field(default_factory=list)
+    events: list[dict[str, Any]] = Field(default_factory=list)
     actions: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     path_actions: list[dict[str, Any]] = Field(default_factory=list)
@@ -119,6 +120,9 @@ class UserResponse(BaseModel):
     user_id: int
     name: str
     email: str
+    is_staff: bool = False
+    # guest | user | member | staff — decides what the agent and the dashboard show.
+    access_level: str = "user"
 
 
 class TokenResponse(BaseModel):

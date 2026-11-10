@@ -8,8 +8,14 @@ thread and never replays writes.
 """
 
 import logging
+import asyncio
+from concierge.config import get_settings
+from concierge.recovery import ReadOnlyTurnFailure
 import re
 import threading
+import time as timer
+from dataclasses import asdict
+from concierge.evidence import TurnEvidence, turn_evidence
 from contextvars import ContextVar
 from datetime import datetime, time
 from functools import lru_cache
@@ -61,15 +67,10 @@ APPROVAL_PROMPTS = {
         "fr": "Vérifiez ci-dessous votre message au personnel de la CCIFJ. La confirmation l’enregistrera pour l’équipe ; aucun e-mail n’est envoyé automatiquement.",
         "ja": "下のCCIFJスタッフへのメッセージをご確認ください。確定するとチーム向けに保存されます。メールは自動送信されません。",
     },
-    "save_introduction_request": {
-        "en": "Please review the introduction below. Confirming stores it for CCIFJ staff, who review it before anything is sent to the member.",
-        "fr": "Vérifiez la mise en relation ci-dessous. La confirmation l’enregistre pour l’équipe CCIFJ, qui la relit avant tout envoi au membre.",
-        "ja": "下のご紹介内容をご確認ください。確定するとCCIFJスタッフ向けに保存され、スタッフが確認した後に会員へ送られます。",
-    },
-    "save_member_followup": {
-        "en": "Please review the follow-up message below. Confirming stores it for staff review; nothing is sent to the member automatically.",
-        "fr": "Vérifiez le message de suivi ci-dessous. La confirmation l’enregistre pour relecture ; rien n’est envoyé automatiquement au membre.",
-        "ja": "下のフォローアップメッセージをご確認ください。確定すると確認用に保存されます。会員へ自動送信はされません。",
+    "request_introduction": {
+        "en": "Please review the introduction request below. Confirming sends it to CCIFJ staff, who contact the company first; nothing is sent to the company automatically.",
+        "fr": "Vérifiez la demande de mise en relation ci-dessous. La confirmation la transmet à l’équipe de la CCIFJ, qui contacte d’abord l’entreprise ; rien ne lui est envoyé automatiquement.",
+        "ja": "下の紹介リクエストをご確認ください。確定するとCCIFJスタッフに送られ、スタッフが先に相手企業へ連絡します。相手企業へ自動送信されることはありません。",
     },
     "cancel_event_booking": {
         "en": "Please check the booking below. Confirming will cancel it and all its tickets.",
@@ -100,7 +101,7 @@ APPROVAL_PROMPTS = {
 
 
 # Approvals a guest may answer; every other write tool needs an account.
-GUEST_APPROVAL_TOOLS = {"submit_staff_request", "save_introduction_request", "save_member_followup"}
+GUEST_APPROVAL_TOOLS = {"submit_staff_request"}
 NEWSLETTER_NAMES = {
     "general_news": "CCIFJ General Corporate News",
     "training_announcements": "CCIFJ Training & Workshops Announcements",
@@ -131,33 +132,6 @@ def next_actions(result) -> list[dict]:
             item["event_id"] = action["event_id"]
         actions.append(item)
     return actions[:2]
-
-
-def answer_sources(result, linked) -> list[dict]:
-    """The pages and documents behind an answer.
-
-    The sources the answer cites come first, in marker order (``[1]`` is the
-    first item), each marked ``cited``. Links written in the answer follow.
-    ``official`` separates CCIFJ's own pages and documents from public web pages.
-    """
-    from concierge.agents.sources import is_official, source_key
-
-    sources, seen = [], set()
-    for source in result.get("sources") or []:
-        if not isinstance(source, dict) or not str(source.get("title") or "").strip():
-            continue
-        key = source_key(source)
-        if key in seen:
-            continue
-        seen.add(key)
-        url = source.get("url") or None
-        sources.append({"title": str(source["title"]).strip(), "url": url, "cited": True, "official": is_official(url)})
-    for link in linked:
-        key = source_key(link)
-        if key not in seen:
-            seen.add(key)
-            sources.append({**link, "cited": False, "official": is_official(link.get("url"))})
-    return sources
 
 
 def _text(content) -> str:
@@ -272,6 +246,17 @@ async def _enrichment(db, name, args, user_id):
     if name == "subscribe_newsletter":
         kind = args.get("newsletter_type") or "general_news"
         return {"newsletter_name": NEWSLETTER_NAMES.get(kind, kind)}
+    if name == "request_introduction":
+        from sqlalchemy import func
+        from sqlmodel import select
+        from concierge.db.relationaldb.models import Member
+        companies = []
+        for company in (args.get("company_names") or [])[:5]:
+            member = (await db.exec(select(Member).where(func.lower(Member.name) == str(company).strip().lower()))).first()
+            companies.append({"name": member.name if member else str(company), "found": member is not None,
+                              "sector": member.sector if member else None,
+                              "place": ", ".join(p for p in (member.region, member.country) if p) if member else None})
+        return {"companies": companies}
     if user_id is None:
         return {}
     if name in {"cancel_event_booking", "change_event_booking"}:
@@ -349,16 +334,40 @@ class AgentBackend:
         return {"configurable": {"thread_id": thread_id}}
 
     async def chat(self, history, user_id, thread_id):
+        evidence = TurnEvidence()
+        token = turn_evidence.set(evidence)
+        started = timer.perf_counter()
+        try:
+            # Leave time for the API to persist a truthful recovery reply before
+            # its outer deadline. Never rerun an entire graph after a failure.
+            async with asyncio.timeout(get_settings().agent_timeout_seconds * .9):
+                return await self._chat(history, user_id, thread_id)
+        except Exception as exc:
+            from langgraph.errors import GraphBubbleUp
+            if isinstance(exc, GraphBubbleUp) or evidence.write_started:
+                raise
+            brief = (agent_inputs.get() or {}).get('conversation_brief') or {}
+            try:
+                async with asyncio.timeout(1):
+                    snapshot = await self.graph.aget_state(self.config(thread_id))
+                    brief = (snapshot.values or {}).get('conversation_brief', brief)
+            except Exception:
+                logger.warning('Could not load brief for read-only recovery')
+            error = ReadOnlyTurnFailure(brief=brief)
+            logger.exception('Read-only turn failed reference=%s', error.reference)
+            raise error from exc
+        finally:
+            logger.info("agent_turn duration_ms=%.1f", (timer.perf_counter()-started)*1000)
+            turn_evidence.reset(token)
+
+    async def _chat(self, history, user_id, thread_id):
         from langchain_core.messages import AIMessage, HumanMessage
 
         inputs = agent_inputs.get() or {}
-        from concierge.agents.sources import strip_markers
-
-        # Citation markers belong to the answer they were written for; a later
-        # turn has its own numbered sources.
         messages = [
-            HumanMessage(content=row.content, id=f"db:{row.message_id}") if row.role.value == "user"
-            else AIMessage(content=strip_markers(row.content), id=f"db:{row.message_id}")
+            (HumanMessage if row.role.value == "user" else AIMessage)(
+                content=row.content, id=f"db:{row.message_id}"
+            )
             for row in history if row.role.value in {"user", "assistant"}
         ]
         override = inputs.get("agent_message")
@@ -366,12 +375,16 @@ class AgentBackend:
             # A guided path turns structured selections into an explicit request.
             messages[-1] = HumanMessage(content=override, id=messages[-1].id)
         graph_input = {
+            "used_source_ids": [],
             "messages": messages,
             "user_id": str(user_id) if user_id is not None else None,
             "context": list(inputs.get("context") or []),
             "out_of_scope_count": int(inputs.get("out_of_scope_count") or 0),
-            "last_targets": [str(t) for t in inputs.get("last_targets") or []][:5],
             "user_context": inputs.get("user_context"),
+            "conversation_brief": inputs.get("conversation_brief") or {},
+            "membership_context": inputs.get("membership_context") or [],
+            "source_urls": inputs.get("source_urls") or [],
+            "space_checks": inputs.get("space_checks") or [],
         }
         config = self.config(thread_id)
         queue = response_events.get()
@@ -388,6 +401,8 @@ class AgentBackend:
             interrupts = [i for task in snapshot.tasks for i in getattr(task, "interrupts", ())]
             if interrupts:
                 result["__interrupt__"] = interrupts
+        evidence = turn_evidence.get()
+        result["tool_evidence"] = asdict(evidence) if evidence else {}
         return await self.format_result(result, guest=user_id is None)
 
     async def resume(self, thread_id, interrupt_id, decision):
@@ -397,14 +412,21 @@ class AgentBackend:
             interrupts = tuple(i for task in snapshot.tasks for i in task.interrupts)
         if not any(item.id == interrupt_id for item in interrupts):
             raise ApprovalStateUnavailable()
-        result = await self.resume_approval(self.config(thread_id), interrupt_id, decision)
-        return await self.format_result(result)
+        saved = (agent_inputs.get() or {}).get("tool_evidence") or {}
+        token = turn_evidence.set(TurnEvidence(**{key: list(saved.get(key) or []) for key in ("passages", "event_ids", "warnings", "resources", "database_sources", "space_checks")}))
+        try:
+            result = await self.resume_approval(self.config(thread_id), interrupt_id, decision)
+            result["tool_evidence"] = asdict(turn_evidence.get())
+            return await self.format_result(result)
+        finally:
+            turn_evidence.reset(token)
 
     async def format_result(self, result, guest=False):
         from langchain_core.messages import AIMessage, HumanMessage
 
         locale = response_locale.get()
         approvals = self.pending(result)
+        had_approval = bool(approvals)
         # A pending approval (even a guest's dropped one) must be answered first.
         actions_for_turn = [] if approvals else next_actions(result)
         messages = result.get("messages", [])
@@ -434,29 +456,66 @@ class AgentBackend:
         if not reply:
             raise RuntimeError("Agent returned no reply.")
         # Written by the model for this user, already in the user's language.
-        suggested = [q.strip() for q in (result.get("suggested_questions") or []) if isinstance(q, str) and q.strip()]
+        from .catalog import normalize_question
+        seen = {normalize_question(_text(message.content)) for message in messages if isinstance(message, HumanMessage)}
+        suggested = []
+        if not had_approval:
+            for question in result.get('suggested_questions') or []:
+                if not isinstance(question, str):
+                    continue
+                key = normalize_question(question)
+                if key and key not in seen:
+                    suggested.append(question.strip())
+                    seen.add(key)
         # Actions first, then questions: three buttons in all, but always room for two questions.
         suggested = suggested[:max(2, 3 - len(actions_for_turn))]
         plan = result.get("plan") or {}
         tasks = plan.get("tasks", []) if isinstance(plan, dict) else []
         intent = ", ".join(dict.fromkeys(t.get("target", "") for t in tasks if isinstance(t, dict) and t.get("target")))
-        linked, actions = linked_resources(reply)
-        # An approval prompt or a login notice replaces the answer, so it has no sources.
-        sources = answer_sources({} if approvals or warnings else result, linked)
+        from .presentation import grounded_links
+        from concierge.evidence import source_candidates, selected_sources
+        evidence = result.get("tool_evidence") or {}
+        from concierge.source_context import source_memory
+        candidates = source_candidates(evidence, result.get("source_urls") or [])
+        allowed_urls = {source["url"] for source in candidates.values()} | set(evidence.get("resources") or [])
+        if candidates:
+            # Unverified links become plain text only in answers built on retrieved evidence;
+            # official links given as next steps (no retrieval) stay as actions.
+            reply = grounded_links(reply, allowed_urls)
+        sources = selected_sources(candidates, result.get("used_source_ids"), reply)
+        _, actions = linked_resources(reply)
+        events = []
+        if evidence.get("event_ids"):
+            from concierge.db.relationaldb.session import AsyncSessionLocal
+            from .events import cards_for_ids, registration_preferences
+            try:
+                async with AsyncSessionLocal() as db:
+                    # Closed events remain available for explicit history/detail questions,
+                    # but never appear as ordinary recommendations.
+                    request_text = _text(messages[latest_human].content) if latest_human >= 0 else ''
+                    browsing = intent == 'events' or bool(re.search(r'events?|[ée]v[ée]nements?|イベント', request_text, re.I))
+                    include_closed, include_unconfirmed = registration_preferences(request_text, browsing=browsing)
+                    events = await cards_for_ids(db, evidence["event_ids"], answer=reply,
+                                                 include_closed=include_closed, include_unconfirmed=include_unconfirmed)
+            except Exception:
+                # Optional presentation must not hide a successful action.
+                logger.exception("Could not load event cards for this answer")
+        warnings.extend(evidence.get("warnings") or [])
+        from concierge.evidence import space_check_memory
+        checks = space_check_memory(result.get("space_checks"), evidence.get("space_checks"))
+        from concierge.source_context import source_memory
+        source_urls = source_memory([*(result.get("source_urls") or []), *[p.get("url") for p in evidence.get("passages") or []]])
         return {
-            "reply": reply, "pending_approvals": approvals, "sources": sources, "actions": actions,
+            "reply": reply, "pending_approvals": approvals, "sources": sources, "actions": actions, "events": events,
             "suggested_questions": suggested, "warnings": warnings,
             "intent": {"code": intent} if intent else None,
             # Guided journeys start from the welcome screen, not under agent answers.
             "path_actions": [],
             "next_actions": actions_for_turn,
             "attachment_count": len(result.get("context") or []),
-            # Carried to the next turn: the refusal counter, and which specialists
-            # handled this turn so a short reply ("yes, store it") returns to them.
-            "agent_state": {
-                "out_of_scope_count": int(result.get("out_of_scope_count") or 0),
-                "last_targets": [t for t in intent.split(", ") if t] or [str(t) for t in result.get("last_targets") or []][:5],
-            },
+            "agent_state": {**({"space_checks": checks} if checks else {}), **({"source_urls": source_urls} if source_urls else {}), "out_of_scope_count": int(result.get("out_of_scope_count") or 0),
+                            **({"conversation_brief": result["conversation_brief"]} if "conversation_brief" in result else {}),
+                            **({"tool_evidence": evidence} if any(evidence.get(key) for key in ("passages", "event_ids", "warnings", "resources", "database_sources", "space_checks")) else {})},
         }
 
 

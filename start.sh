@@ -3,14 +3,14 @@
 # backend, and the Vite frontend. Both servers listen on 0.0.0.0 so other
 # devices on the network can reach them. Press Ctrl+C to stop everything.
 #
-# Optional overrides: API_PORT (default 8000), WEB_PORT (default 5173),
-# NO_RELOAD=1 to run the API without auto-reload.
+# Optional overrides: API_PORT (default 8001), WEB_PORT (default 5173),
+# NO_RELOAD=0 to enable auto-reload during development. Demo default is stable.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-API_PORT="${API_PORT:-8000}"
+API_PORT="${API_PORT:-8001}"
 WEB_PORT="${WEB_PORT:-5173}"
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -44,7 +44,7 @@ fi
 
 # --- Dependencies ----------------------------------------------------------
 info "Syncing Python dependencies"
-uv sync --quiet
+uv sync --frozen --quiet
 
 if [[ ! -d ccifj-frontend/node_modules ]]; then
   info "Installing frontend dependencies"
@@ -63,8 +63,8 @@ port_busy "$WEB_PORT" && fail "Port $WEB_PORT is already in use (another fronten
 # On exit, stop every process this script started (the whole process group).
 trap 'trap - INT TERM EXIT; echo; info "Stopping"; kill 0 2>/dev/null; wait' INT TERM EXIT
 
-reload_flag=(--reload)
-[[ "${NO_RELOAD:-}" == "1" ]] && reload_flag=()
+reload_flag=()
+[[ "${NO_RELOAD:-1}" == "0" ]] && reload_flag=(--reload)
 
 info "Starting API on 0.0.0.0:$API_PORT"
 uv run uvicorn concierge.main:app --app-dir src --host 0.0.0.0 --port "$API_PORT" "${reload_flag[@]}" &

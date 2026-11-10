@@ -1,18 +1,36 @@
-from .config import EMBED_MODEL_NAME, COHERE_API_KEY, COHERE_RERANK_MODEL
-import cohere
+from __future__ import annotations
+from .config import EMBED_MODEL_NAME, COHERE_API_KEY, COHERE_RERANK_MODEL, OUTDATED_SOURCE_URLS
 import logging
-import os
-import threading
 import time
-from collections import OrderedDict, deque
-from typing import Literal
-from chromadb.api.models.Collection import Collection
-from sentence_transformers import (SentenceTransformer)
-from .index_init import create_collection
-from transformers import AutoTokenizer
-import bm25s
+from functools import lru_cache
+from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
+from concierge.evidence import record_warning
+from .diagnostics import record as diagnose
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    import bm25s
+    from chromadb.api.models.Collection import Collection
+    from sentence_transformers import SentenceTransformer
+
+
+@lru_cache(maxsize=1)
+def get_tokenizer():
+    from transformers import AutoTokenizer
+    try:
+        return AutoTokenizer.from_pretrained(EMBED_MODEL_NAME, local_files_only=True)
+    except OSError:
+        return AutoTokenizer.from_pretrained(EMBED_MODEL_NAME)
+
+
+@lru_cache(maxsize=1)
+def get_rerank_client():
+    import cohere
+    return cohere.ClientV2(api_key=COHERE_API_KEY, timeout=8)
+
+import threading
 
 _collection: Collection | None = None
 _collection_lock = threading.Lock()
@@ -24,158 +42,171 @@ def get_collection() -> Collection:
     global _collection
     with _collection_lock:
         if _collection is None:
+            from .index_init import create_collection
             _collection = create_collection(overwrite=False)
         return _collection
 
 
-# --- Reranking limits -------------------------------------------------------
-# Reranking is an external call (Cohere) and must never take an answer down with
-# it. A trial key allows 10 calls a minute, and one market-entry question can
-# run 6 or more searches across three agents. So: stay under the limit, stop
-# calling for a while after a refusal, and fall back to the fused ranking.
-#   CCIFJ_RERANK_PER_MINUTE   calls allowed per minute, default 9 (0 = never call).
-#   CCIFJ_RERANK_TIMEOUT      seconds to wait for one rerank, default 8.
-def _env_number(name: str, default: float) -> float:
+
+def search_passages(retriever, model, query: str, original_n=20, hybrid_n=10, reranked_n=5,
+                    extra_queries=()) -> list[dict]:
+    """Hybrid retrieval with stable chunk IDs, source URLs and bounded reranking.
+
+    `query` is the agent's English rewrite. `extra_queries` are other formulations, typically the
+    user's original wording in French or Japanese: each one is searched semantically (the
+    multilingual embedding matches across languages) and lexically (which only matches sources in
+    that language), and every result list joins the same rank fusion. Reranking uses `query`.
+
+    Reranker downtime degrades to fused ranking; it never discards retrieved
+    evidence or lets the model improvise an answer in place of a failed lookup.
+    """
+    if not 0 < reranked_n <= hybrid_n <= original_n:
+        raise ValueError("Expected 0 < reranked_n <= hybrid_n <= original_n")
+    if not query.strip() or len(query) > 4000:
+        raise ValueError("Search query must be nonempty and at most 4000 characters")
     try:
-        return float(os.getenv(name, "").strip() or default)
+        if len(get_tokenizer().encode(query, add_special_tokens=False)) > 450:
+            raise ValueError("Search query exceeds 450 tokens")
     except ValueError:
-        return default
-
-
-RERANK_PER_MINUTE = int(_env_number("CCIFJ_RERANK_PER_MINUTE", 9))
-RERANK_TIMEOUT = _env_number("CCIFJ_RERANK_TIMEOUT", 8)
-_RERANK_PAUSE_SECONDS = 60
-_rerank_lock = threading.Lock()
-_rerank_calls: deque[float] = deque()
-_rerank_paused_until = 0.0
-_cohere_client = None
-
-# Identical searches inside a conversation (and across the three agents of one
-# turn) reuse the result instead of searching and reranking again.
-_SEARCH_CACHE_SIZE = 256
-_SEARCH_CACHE_SECONDS = 600
-_search_cache: OrderedDict[tuple, tuple[float, list[str]]] = OrderedDict()
-_search_cache_lock = threading.Lock()
-
-
-def _rerank_allowed() -> bool:
-    """Reserve one rerank call if the per-minute budget and the pause allow it."""
-    if not COHERE_API_KEY or RERANK_PER_MINUTE <= 0:
-        return False
-    now = time.monotonic()
-    with _rerank_lock:
-        if now < _rerank_paused_until:
-            return False
-        while _rerank_calls and now - _rerank_calls[0] >= 60:
-            _rerank_calls.popleft()
-        if len(_rerank_calls) >= RERANK_PER_MINUTE:
-            return False
-        _rerank_calls.append(now)
-        return True
-
-
-def _pause_rerank() -> None:
-    global _rerank_paused_until
-    with _rerank_lock:
-        _rerank_paused_until = time.monotonic() + _RERANK_PAUSE_SECONDS
-
-
-def _get_cohere_client():
-    global _cohere_client
-    if _cohere_client is None:
-        _cohere_client = cohere.ClientV2(api_key=COHERE_API_KEY, timeout=RERANK_TIMEOUT)
-    return _cohere_client
-
-
-def search(retriever: bm25s.BM25, model: SentenceTransformer, query: str, original_n: int, hybrid_n: int, reranked_n: int) -> list[str]:
-    """Retrieve and rerank source chunks relevant to a query.
-
-    Args:
-        model: Sentence-transformer model used to embed the query.
-        query: Text to search for; queries longer than 450 tokenizer tokens
-            return a message instead of performing the search.
-        original_n: Number of vector-search results to retrieve for reranking.
-        reranked_n: Number of reranked results to return.
-
-    Returns:
-        Formatted strings containing each reranked result's URL and text.
-    """
-
-    if (hybrid_n > original_n):
-        return ["hybrid_n can't be greater than original_n"]
-    if (reranked_n >= hybrid_n):
-        return ["reranked_n can't be equal to or greater than hybrid_n"]
-
-    key = (" ".join(query.split()).casefold(), original_n, hybrid_n, reranked_n)
-    now = time.monotonic()
-    with _search_cache_lock:
-        cached = _search_cache.get(key)
-        if cached and now - cached[0] < _SEARCH_CACHE_SECONDS:
-            _search_cache.move_to_end(key)
-            return list(cached[1])
-
-    collection = get_collection()
-    # Either search can fail on its own (a model or index problem); the other
-    # one still gives a usable ranking.
+        raise
+    except Exception as exc:
+        diagnose('tokenizer', exc)
+        # Keyword lookup does not need a Hugging Face tokenizer. Its failure
+        # must not take down otherwise usable local evidence.
+        logger.exception("Search tokenizer unavailable; using character bound")
+        record_warning('retrieval_tokenizer_unavailable')
+    started = time.perf_counter()
+    queries = [query, *dict.fromkeys(q.strip()[:4000] for q in extra_queries
+                                     if isinstance(q, str) and q.strip() and q.strip() != query.strip())]
+    semantic_lists, lexical_lists, failed = [], [], False
     try:
-        results1 = semantic_search(query, collection=collection, model=model, limit=original_n)
-    except Exception:
-        logger.exception("Semantic search failed; using keyword search only")
-        results1 = []
+        if model is None:
+            raise RuntimeError('Embedding model unavailable')
+        collection = get_collection()
+        count = collection.count()
+        for text in queries:
+            found = semantic_search(text, collection, model, min(original_n, count)) if count else []
+            try:
+                # Files staff uploaded live in their own collection; merge by distance.
+                from concierge.knowledge import semantic_upload_results
+                vector = model.encode(f"query: {text}", normalize_embeddings=True).tolist()
+                uploads = semantic_upload_results(vector, original_n)
+                if uploads:
+                    found = sorted([*found, *uploads], key=lambda r: r.get("distance", 1.0))[:original_n]
+            except Exception:
+                logger.exception('Uploaded knowledge search unavailable; keeping website results')
+            semantic_lists.append(found)
+        diagnose('semantic')
+    except Exception as exc:
+        diagnose('semantic', exc)
+        logger.exception('Semantic retrieval unavailable; keeping keyword search')
+        record_warning('retrieval_semantic_unavailable')
+        failed = True
     try:
-        results2 = lexical_search(retriever, query, limit=original_n)
-    except Exception:
-        logger.exception("Keyword search failed; using semantic search only")
-        results2 = []
-    if not results1 and not results2:
-        raise RuntimeError("Knowledge search is unavailable: both searches failed.")
-
-    docs = rrf(results1, results2, hybrid_n)
-    docs = [{"id": doc[0], "text": doc[1][1]} for doc in docs]
-    rerank_docs, reranked = rerank_or_fused(query, docs, reranked_n)
-    texts = [doc["text"] for doc in rerank_docs]
-    # Keep a fused-only result for a short time: the reranker may be back soon.
-    if reranked:
-        with _search_cache_lock:
-            _search_cache[key] = (now, texts)
-            while len(_search_cache) > _SEARCH_CACHE_SIZE:
-                _search_cache.popitem(last=False)
-    return texts
-
-
-def rerank_or_fused(query: str, docs: list[dict], n: int) -> tuple[list[dict], bool]:
-    """Rerank with Cohere when possible; otherwise keep the fused order.
-
-    Returns the documents and whether they were reranked. Never raises: a rate
-    limit, a timeout, or a missing key must not fail the user's answer.
-    """
+        if retriever is None:
+            raise RuntimeError('Keyword index unavailable')
+        for text in queries:
+            lexical_lists.append(lexical_search(retriever, text, original_n))
+        diagnose('lexical')
+    except Exception as exc:
+        diagnose('lexical', exc)
+        logger.exception('Keyword retrieval unavailable; keeping semantic search')
+        record_warning('retrieval_lexical_unavailable')
+        failed = True
+    had_records = any(semantic_lists) or any(lexical_lists)
+    semantic_lists = [valid_records(records, 'content') for records in semantic_lists]
+    lexical_lists = [valid_records(records, 'text') for records in lexical_lists]
+    # The persisted vector index and BM25 corpus can use independent chunk
+    # layouts. Equal numeric IDs do not prove equal text or source URLs.
+    # Uploaded documents share chunk IDs across both indexes, so they keep their ID and fuse.
+    from concierge.knowledge import UPLOAD_ID_BASE
+    semantic_lists = [[r if int(r['id']) >= UPLOAD_ID_BASE else {**r, 'id': f"vector:{r['id']}"} for r in records]
+                      for records in semantic_lists]
+    results1 = semantic_lists[0] if semantic_lists else []
+    results2 = lexical_lists[0] if lexical_lists else []
+    if not any(semantic_lists) and not any(lexical_lists) and (failed or had_records):
+        raise RetrievalUnavailable('No retrieval backend could provide evidence')
+    fused = rrf(results1, results2, hybrid_n,
+                extra=[(records, 'content') for records in semantic_lists[1:]] +
+                      [(records, 'text') for records in lexical_lists[1:]])
+    metadata = {str(r["id"]): r for records in [*semantic_lists, *lexical_lists] for r in records}
+    docs = []
+    for chunk_id, (_, text) in fused:
+        record = metadata.get(str(chunk_id), {})
+        # Older checked-in BM25 records store their URL inside the passage.
+        url = record.get("url") or next((line[5:].strip() for line in text.splitlines() if line.startswith("url: ")), "")
+        if any(marker in url for marker in OUTDATED_SOURCE_URLS):
+            continue  # superseded by a newer CCIFJ document; see rag config
+        try:
+            parsed = urlsplit(url)
+            # ccifj-doc://<id> cites an uploaded CCIFJ document that has no public link.
+            if parsed.scheme not in ("https", "ccifj-doc") or not parsed.hostname:
+                continue
+        except ValueError:
+            continue
+        title = next((line.lstrip("# ").strip() for line in text.splitlines() if line.startswith("#")), parsed.hostname)
+        docs.append({"id": str(chunk_id), "text": text, "url": url, "title": title})
     if not docs:
-        return [], False
-    if not _rerank_allowed():
-        return docs[:n], False
+        if results1 or results2:
+            raise RetrievalUnavailable('Retrieved records contain no usable source URLs')
+        return []
     try:
-        return rerank(query, docs, n), True
-    except Exception as error:
-        status = getattr(error, "status_code", None)
-        if status == 429:
-            _pause_rerank()
-            logger.warning("Rerank rate limit reached; using the fused ranking for %ss", _RERANK_PAUSE_SECONDS)
-        else:
-            logger.warning("Rerank failed (%s); using the fused ranking", type(error).__name__)
-        return docs[:n], False
+        ranked = rerank(query, docs, min(reranked_n, len(docs)))
+        diagnose('rerank')
+    except Exception as exc:
+        diagnose('rerank', exc)
+        logger.warning("Reranking unavailable (%s); using fused ranking", type(exc).__name__)
+        record_warning("retrieval_rerank_fallback")
+        ranked = docs[:reranked_n]
+    from concierge.source_context import event_facts
+    ranked = [{**p, "text": p["text"] + event_facts(p["url"])} for p in ranked]
+    logger.info("retrieval duration_ms=%.1f candidates=%d returned=%d", (time.perf_counter()-started)*1000, len(docs), len(ranked))
+    return ranked
 
-def rrf(results1, results2, top_n: int, k: int = 60) -> list[tuple[Literal["id"], tuple[int, str]]]:
+
+def search(retriever, model, query, original_n, hybrid_n, reranked_n) -> list[str]:
+    """Compatibility interface for CLI and existing callers."""
+    return [f"Source: {p['url']}\nChunk: {p['id']}\n{p['text']}" for p in search_passages(retriever, model, query, original_n, hybrid_n, reranked_n)]
+
+class RetrievalUnavailable(RuntimeError):
+    """A failed lookup is not evidence that nothing matches."""
+
+
+def valid_records(records, text_field):
+    valid=[]
+    for record in records:
+        if not isinstance(record, dict) or not isinstance(record.get(text_field), str):
+            record_warning('retrieval_invalid_record')
+            continue
+        try:
+            int(record['id'])
+        except (KeyError, TypeError, ValueError):
+            record_warning('retrieval_invalid_record')
+            continue
+        valid.append(record)
+    return valid
+
+
+def rrf(results1, results2, top_n: int, k: int = 60, extra=()) -> list[tuple[int | str, tuple[float, str]]]:
+    """Reciprocal rank fusion of a semantic and a lexical list, plus any `extra` (records, text_field) lists
+    from additional query formulations (e.g. the user's original wording next to the English rewrite)."""
     final_ranks = {}
-    for rank, result in enumerate(results1):
-        final_ranks[int(result["id"])] = (final_ranks.get(int(result["id"]), (0, ""))[0] + (1 / (k + rank + 1)), result["content"])
-
-    for rank, result in enumerate(results2):
-        final_ranks[int(result["id"])] = (final_ranks.get(int(result["id"]), (0, ""))[0] + (1 / (k + rank + 1)), result["text"])
+    for records, text_field in ((results1, 'content'), (results2, 'text'), *extra):
+        for rank, result in enumerate(records):
+            raw_id = str(result['id'])
+            key = int(raw_id) if raw_id.isdecimal() else raw_id
+            final_ranks[key] = (final_ranks.get(key, (0, ''))[0] + 1 / (k + rank + 1), result[text_field])
 
     return sorted(final_ranks.items(), key=lambda x: x[1][0], reverse=True)[:top_n]
 
 def lexical_search(retriever: bm25s.BM25, query: str, limit: int):
+    import bm25s
     query_tokens = bm25s.tokenize(query)
+    corpus = getattr(retriever, "corpus", None)
+    if corpus is not None:
+        limit = min(limit, len(corpus))
+    if limit <= 0:
+        return []
     docs, scores = retriever.retrieve(query_tokens, k=limit)
     return docs.tolist()[0]
 
@@ -183,19 +214,18 @@ def rerank(query: str, docs: list[dict], n: int = 5):
     if not COHERE_API_KEY:
         raise ValueError("COHERE_API_KEY is missing")
 
-    response = _get_cohere_client().rerank(
+    client = get_rerank_client()
+
+    response = client.rerank(
         model=COHERE_RERANK_MODEL,
         query=query,
         documents=[doc["text"] for doc in docs],
         top_n=n,
-        # Fail fast: the caller falls back to the fused ranking.
-        request_options={"max_retries": 0, "timeout_in_seconds": max(1, int(RERANK_TIMEOUT))},
     )
 
     return [
         {
-            "id": docs[item.index]["id"],
-            "text": docs[item.index]["text"],
+            **docs[item.index],
             "score": item.relevance_score,
         }
         for item in response.results
@@ -232,7 +262,7 @@ def semantic_search(
         {
             "id": result_id,
             "content": content,
-            "url": metadata["url"],
+            "url": (metadata or {}).get("url", ""),
             "distance": distance,
         }
         for result_id, content, metadata, distance in zip(

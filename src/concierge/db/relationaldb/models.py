@@ -45,6 +45,25 @@ class StaffRequestStatus(str, Enum):
     closed = "closed"
 
 
+class UserRole(str, Enum):
+    user = "user"  # signed-in account; "member" comes from a Belongs link, not from this field
+    staff = "staff"  # can open the admin dashboard
+
+
+class IntroStatus(str, Enum):
+    new = "new"              # a member asked; staff have not acted yet
+    proposed = "proposed"    # staff wrote to the other company
+    introduced = "introduced"  # both sides agreed and were put in touch
+    declined = "declined"
+    closed = "closed"
+
+
+class OutreachStatus(str, Enum):
+    pending = "pending"    # waiting for staff approval
+    sent = "sent"          # delivered (in-app) or written to the mock email/LINE outbox
+    skipped = "skipped"    # staff decided not to send
+
+
 class MessageRole(str, Enum):
     user = "user"
     assistant = "assistant"
@@ -61,6 +80,7 @@ class User(SQLModel, table=True):
     email: str = Field(max_length=255, unique=True, index=True)
     mobile: Optional[str] = Field(default=None, max_length=30)
     address: Optional[str] = Field(default=None, max_length=255)
+    role: UserRole = Field(default=UserRole.user, sa_column_kwargs={"server_default": "user"})
     created_at: NaiveDatetime = Field(default_factory=utcnow)
     updated_at: NaiveDatetime = updated_at_field()
 
@@ -233,6 +253,12 @@ class ContactUs(SQLModel, table=True):
     email: str = Field(max_length=255)
     category: str = Field(max_length=100)
     sub_category: str = Field(max_length=255)
+    # Staff directory fields: which agent topics this contact handles (comma-separated keys),
+    # the languages they answer in, and whether they triage requests nobody else fits.
+    topics: Optional[str] = Field(default=None, max_length=255)
+    languages: Optional[str] = Field(default=None, max_length=50)
+    is_triage: bool = Field(default=False, sa_column_kwargs={"server_default": "0"})
+    is_active: bool = Field(default=True, sa_column_kwargs={"server_default": "1"})
     created_at: NaiveDatetime = Field(default_factory=utcnow)
     updated_at: NaiveDatetime = updated_at_field()
 
@@ -289,6 +315,109 @@ class StaffRequest(SQLModel, table=True):
     status: StaffRequestStatus = Field(default=StaffRequestStatus.new)
     created_at: NaiveDatetime = Field(default_factory=utcnow)
     updated_at: NaiveDatetime = updated_at_field()
+
+
+class IntroRequest(SQLModel, table=True):
+    """A member asking CCIFJ to introduce them to another member company.
+
+    Staff handle it from the dashboard; nothing is sent to the other company automatically.
+    """
+    __tablename__ = "intro_request"
+
+    intro_id: Optional[int] = Field(default=None, primary_key=True)
+    reference: str = Field(max_length=32, unique=True)  # e.g. "IR-2026-000012", shown to the member
+    requester_user_id: int = Field(foreign_key="user.user_id", index=True)
+    requester_member_id: Optional[int] = Field(default=None, foreign_key="member.member_id")
+    target_member_id: int = Field(foreign_key="member.member_id", index=True)
+    message: str
+    status: IntroStatus = Field(default=IntroStatus.new)
+    staff_note: Optional[str] = Field(default=None)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = updated_at_field()
+
+
+class MemberProfile(SQLModel, table=True):
+    """Onboarding data for a member account: when it joined and what it wants from CCIFJ."""
+    __tablename__ = "member_profile"
+
+    user_id: int = Field(foreign_key="user.user_id", primary_key=True)
+    joined_at: Optional[NaiveDatetime] = Field(default=None)  # None: linked before onboarding existed
+    goals: Optional[str] = Field(default=None)        # comma-separated keys, e.g. "find_clients,network"
+    interests: Optional[str] = Field(default=None)    # free text: sectors, topics, products
+    preferred_language: str = Field(default="en", max_length=2)
+    preferred_channel: str = Field(default="in_app", max_length=10)  # in_app | email | line
+    profile_completed_at: Optional[NaiveDatetime] = Field(default=None)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = updated_at_field()
+
+
+class ActivityEvent(SQLModel, table=True):
+    """Logins and chats; bookings, reservations and introductions are read from their own tables."""
+    __tablename__ = "activity_event"
+
+    activity_id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.user_id", index=True)
+    kind: str = Field(max_length=20)
+    created_at: NaiveDatetime = Field(default_factory=utcnow, index=True)
+
+
+class AutomationRule(SQLModel, table=True):
+    """Staff settings for one engagement rule (the rule logic itself lives in concierge.engagement)."""
+    __tablename__ = "automation_rule"
+
+    rule_key: str = Field(max_length=30, primary_key=True)
+    enabled: bool = Field(default=True)
+    requires_approval: bool = Field(default=False)
+    updated_at: NaiveDatetime = updated_at_field()
+
+
+class AutomationRun(SQLModel, table=True):
+    __tablename__ = "automation_run"
+
+    run_id: Optional[int] = Field(default=None, primary_key=True)
+    as_of: NaiveDatetime
+    triggered_by: str = Field(max_length=20)  # schedule | staff | membership_approval
+    created_count: int = 0
+    duplicate_count: int = 0
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+
+
+class Outreach(SQLModel, table=True):
+    """One message the engagement rules decided to send. `dedupe_key` is unique, so a rule
+    never fires twice for the same member and situation, however often the job runs."""
+    __tablename__ = "outreach"
+
+    outreach_id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.user_id", index=True)
+    rule_key: str = Field(max_length=30, index=True)
+    dedupe_key: str = Field(max_length=120, unique=True)
+    channel: str = Field(max_length=10)  # in_app | email | line | staff_task
+    subject: str = Field(max_length=255)
+    body: str
+    reason: str  # the facts that made the rule fire, shown to staff
+    status: OutreachStatus = Field(default=OutreachStatus.pending, index=True)
+    run_id: Optional[int] = Field(default=None, foreign_key="automation_run.run_id")
+    staff_request_id: Optional[int] = Field(default=None, foreign_key="staff_request.request_id")
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    sent_at: Optional[NaiveDatetime] = Field(default=None)
+    read_at: Optional[NaiveDatetime] = Field(default=None)
+
+
+class KnowledgeDocument(SQLModel, table=True):
+    """A file staff uploaded as an agent source. Its chunks live in the upload search
+    index (see concierge.knowledge), not in this table."""
+    __tablename__ = "knowledge_document"
+
+    doc_id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(max_length=255)
+    filename: str = Field(max_length=200)
+    mime_type: str = Field(max_length=100)
+    source_url: Optional[str] = Field(default=None, max_length=500)  # public page/Calameo link, if any
+    sha256: str = Field(max_length=64, unique=True)
+    char_count: int = 0
+    chunk_count: int = 0
+    uploaded_by: Optional[int] = Field(default=None, foreign_key="user.user_id")
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
 
 
 class StaffRequestRecipient(SQLModel, table=True):

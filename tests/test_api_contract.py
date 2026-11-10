@@ -295,6 +295,24 @@ class ApiContractTest(unittest.TestCase):
         me = self.client.get("/api/v1/auth/me", headers={"Authorization": "Bearer " + account["access_token"]})
         self.assertEqual(me.json()["email"], "me@example.com")
 
+    def test_membership_followups_survive_http_and_saved_history(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from concierge.api.catalog import localized_question
+        account=self.client.post('/api/v1/auth/register',json={
+            'name':'Example','email':'followups@example.test','password':'password123'}).json()
+        headers={'Authorization':'Bearer '+account['access_token']}
+        category=SimpleNamespace(category_name='Example',annual_price=100,currency='JPY')
+        question=localized_question('What are the CCIFJ membership fees?','fr')
+        with patch('concierge.api.answers.crud.list_member_categories',AsyncMock(return_value=[category])):
+            response=self.client.post('/api/v1/chat',headers=headers,json={'message':question,'locale':'fr'})
+        self.assertEqual(response.status_code,200)
+        body=response.json()
+        self.assertEqual(len(body['suggested_questions']),2)
+        self.assertIn(localized_question('What are the benefits of CCIFJ membership?','fr'),body['suggested_questions'])
+        history=self.client.get('/api/v1/sessions/'+body['session_id']+'/messages',headers=headers).json()
+        self.assertEqual(history['messages'][-1]['response']['suggested_questions'],body['suggested_questions'])
+
     def test_guided_space_path_runs_without_agent_and_is_saved(self):
         calls = []
         original = self.backend.chat
@@ -395,6 +413,15 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         self.backend = AgentBackend.__new__(AgentBackend)
         self.backend.pending = lambda result: [dict(item) for item in result.get("__interrupt__", [])]
 
+    async def test_suggestions_do_not_repeat_questions_already_asked_or_each_other(self):
+        from langchain_core.messages import HumanMessage, AIMessage
+        result={'messages':[HumanMessage('What are my options?'),AIMessage('Earlier answer'),
+                            HumanMessage('Tell me the next step.'),AIMessage('A useful next step.')],
+                'suggested_questions':[' WHAT ARE MY OPTIONS？ ', 'How should I prepare?',
+                                       'how should I prepare？', 'Can I compare the fees?']}
+        formatted=await self.backend.format_result(result)
+        self.assertEqual(formatted['suggested_questions'],['How should I prepare?','Can I compare the fees?'])
+
     async def test_reply_is_limited_to_the_current_turn(self):
         from langchain_core.messages import AIMessage, HumanMessage
         result = {"messages": [HumanMessage("old"), AIMessage("Old answer"), HumanMessage("new"), AIMessage("")]}
@@ -413,9 +440,11 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(formatted["intent"], {"code": "events"})
         self.assertEqual(formatted["suggested_questions"], ["a", "b", "c"])
         self.assertEqual(formatted["path_actions"], [])
-        self.assertEqual(formatted["agent_state"], {"out_of_scope_count": 2, "last_targets": ["events"]})
+        self.assertEqual(formatted["agent_state"], {"out_of_scope_count": 2})
         self.assertEqual(formatted["attachment_count"], 1)
-        self.assertEqual(formatted["sources"][0]["url"], "https://www.ccifj.or.jp/en/events.html")
+        # Model-generated links are actions, not retrieved source evidence.
+        self.assertEqual(formatted["sources"], [])
+        self.assertEqual(formatted["actions"][0]["url"], "https://www.ccifj.or.jp/en/events.html")
         token = response_locale.set("ja")
         try:
             guest = await self.backend.format_result({**result, "__interrupt__": [{"interrupt_id": "i", "action_requests": [{"name": "book_space", "args": {}}]}]}, guest=True)
@@ -428,6 +457,7 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         from langchain_core.messages import AIMessage, HumanMessage
         result = {
             "messages": [HumanMessage("Any events?"), AIMessage("Networking Night is on Friday.")],
+            "suggested_questions": ["Which event fits my goals?"],
             "next_actions": [
                 {"id": "run.sql", "label": "Unknown", "prompt": "drop"},
                 {"id": "event.book", "label": " Book Networking Night ", "prompt": "I want to book a ticket for event ID 12", "event_id": 12},
@@ -441,9 +471,10 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
             {"id": "event.book", "label": "Book Networking Night", "prompt": "I want to book a ticket for event ID 12", "event_id": 12},
             {"id": "auth.login", "label": "Log in", "prompt": "I want to log in"},
         ])
-        self.assertEqual(formatted["suggested_questions"], [])
+        self.assertEqual(formatted["suggested_questions"], ["Which event fits my goals?"])
         pending = await self.backend.format_result({**result, "__interrupt__": [{"interrupt_id": "i", "action_requests": [{"name": "book_space", "args": {}}]}]}, guest=True)
         self.assertEqual(pending["next_actions"], [])
+        self.assertEqual(pending["suggested_questions"], [])
 
     async def test_model_suggestions_pass_through_and_fill_up_to_three_buttons(self):
         from langchain_core.messages import AIMessage, HumanMessage
@@ -594,7 +625,8 @@ class BookingButtonTest(unittest.IsolatedAsyncioTestCase):
         async def fake_session():
             yield None
 
-        event = SimpleNamespace(event_id=56, title="Kansai International Career Forum")
+        from datetime import datetime
+        event = SimpleNamespace(event_id=56, title="Kansai International Career Forum", reg_deadline=datetime(2099, 1, 1))
         state = {"user_id": "7", "lang": "en", "user_context": {"upcoming_bookings": []}}
         findings = "Booked.\n\n[Event IDs from the events database this turn: ID 56 = Kansai International Career Forum]"
         with mock.patch("concierge.db.relationaldb.session.AsyncSessionLocal", fake_session), \

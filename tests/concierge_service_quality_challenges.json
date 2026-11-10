@@ -1,0 +1,349 @@
+{
+  "version": 1,
+  "description": "General concierge decision-quality transfer checks. No wine-specific answer keys. Six continuous turns per scenario; manual semantic review required.",
+  "rubric": {
+    "accuracy_and_grounding": 2,
+    "context_and_corrections": 2,
+    "useful_guidance": 2,
+    "clarification_and_brevity": 2,
+    "action_safety_and_honesty": 2
+  },
+  "scenarios": [
+    {
+      "id": "advanced_business",
+      "title": "Completed groundwork, ready for the next decision",
+      "focus": [
+        "existing_progress",
+        "decision_fit",
+        "practical_next_step",
+        "request_type"
+      ],
+      "turns": [
+        {
+          "prompt": "We make water-treatment equipment and want to develop sales in Japan. What should we do next?",
+          "expectation": "Give useful conditional guidance or one decision-changing question, without a fixed package sequence.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We already commissioned market research and have two distributors interested.",
+          "expectation": "Build on research and relationships; do not recommend starting another preliminary study by default.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We need to compare the two distributors before agreeing to anything.",
+          "expectation": "Recommend practical due diligence/preparation within supported capabilities; do not pick a winner without evidence.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We have only EUR 900 left for outside advice.",
+          "expectation": "Respect the budget; no unsupported affordable-package claim. Offer a scoped next step.",
+          "locale": "en"
+        },
+        {
+          "prompt": "I do not want an inquiry draft. Give one useful thing we can prepare ourselves.",
+          "expectation": "Give lightweight preparation; no sender intake or repeated draft offer.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Summarize our next step in two sentences.",
+          "expectation": "Preserve completed research, existing leads, budget and no-draft preference; no new package prices.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "employer_progress",
+      "title": "Hiring after the role is already defined",
+      "focus": [
+        "existing_progress",
+        "decision_fit",
+        "practical_next_step",
+        "request_type"
+      ],
+      "turns": [
+        {
+          "prompt": "We need to hire our first Japan-based customer-success manager.",
+          "expectation": "Distinguish employer intent and recommend a useful first step.",
+          "locale": "en"
+        },
+        {
+          "prompt": "The job description and salary range are approved; we need candidate screening.",
+          "expectation": "Do not restart role-definition intake; continue from the screening need.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We cannot afford a full recruitment campaign yet.",
+          "expectation": "Explain a useful lower-commitment next step without inventing fees or candidate availability.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Compare the relevant approaches rather than choosing one for me.",
+          "expectation": "Honor explicit comparison; do not suppress alternatives under a one-recommendation rule.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We will not share our company name yet.",
+          "expectation": "Continue general advice; do not make identity mandatory.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Give me a short preparation checklist for our next discussion.",
+          "expectation": "Use known approved work and screening goal; no generic restart or unsolicited draft.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "candidate_not_employer",
+      "title": "Job seeker with an existing CV",
+      "focus": [
+        "existing_progress",
+        "decision_fit",
+        "practical_next_step",
+        "request_type"
+      ],
+      "turns": [
+        {
+          "prompt": "I am looking for work in Japan. How could CCIFJ help?",
+          "expectation": "Recognize candidate, not employer; give relevant grounded guidance.",
+          "locale": "en"
+        },
+        {
+          "prompt": "My bilingual CV is ready. I need to understand suitable next steps, not CV writing.",
+          "expectation": "Respect completed CV and exclusion; do not route to employer recruitment.",
+          "locale": "en"
+        },
+        {
+          "prompt": "I have not decided whether to relocate.",
+          "expectation": "Preserve uncertainty; do not treat relocation as confirmed.",
+          "locale": "en"
+        },
+        {
+          "prompt": "What is one thing I can do before deciding?",
+          "expectation": "Offer an achievable preparation step, not a service catalog or unsupported visa conclusion.",
+          "locale": "en"
+        },
+        {
+          "prompt": "日本語で短く説明してください。",
+          "expectation": "Switch explanation language without losing candidate status or undecided relocation.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Now in English, what do you still not know that actually matters?",
+          "expectation": "Identify decision-relevant unknowns, not a long intake form.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "training_progress",
+      "title": "Training with needs already assessed",
+      "focus": [
+        "existing_progress",
+        "decision_fit",
+        "practical_next_step",
+        "request_type"
+      ],
+      "turns": [
+        {
+          "prompt": "Our Japan team needs leadership training. What do you recommend?",
+          "expectation": "Ask at most one useful question or give a provisional grounded recommendation.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We finished a skills assessment. The gap is giving feedback, with six bilingual managers.",
+          "expectation": "Use completed assessment and focused gap; do not restart needs discovery.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We want to compare formats before choosing a provider.",
+          "expectation": "Recommend useful comparison criteria; do not invent available courses or schedules.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Our date and budget are not confirmed.",
+          "expectation": "Keep them unknown; do not make them prerequisites for general format advice.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Do not contact anyone. What should we prepare internally?",
+          "expectation": "Give a practical internal preparation step; no external action or sender intake.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Actually four managers, not six. Give a concise recap.",
+          "expectation": "Replace headcount, retain assessment and needs; avoid new claims.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "membership_progress",
+      "title": "Existing member exploring relevance",
+      "focus": [
+        "existing_progress",
+        "decision_fit",
+        "practical_next_step",
+        "request_type"
+      ],
+      "turns": [
+        {
+          "prompt": "Our company already belongs to CCIFJ. How can we make better use of it?",
+          "expectation": "Do not offer joining as the next action.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We mainly want professional connections, not company setup.",
+          "expectation": "Focus on the objective; do not introduce unrelated expansion services.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Our team has already reviewed the events calendar.",
+          "expectation": "Build on that work rather than reprinting the full calendar.",
+          "locale": "en"
+        },
+        {
+          "prompt": "What should we compare before deciding which activity is worth our time?",
+          "expectation": "Give practical relevance criteria without unverified benefits or introductions.",
+          "locale": "en"
+        },
+        {
+          "prompt": "I do not want to share our sector. Please keep it general.",
+          "expectation": "Proceed without repeated sector intake.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Give only three short bullets.",
+          "expectation": "Respect format, no extra question or cross-selling.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "event_decision",
+      "title": "Event evaluation before booking",
+      "focus": [
+        "existing_progress",
+        "decision_fit",
+        "practical_next_step",
+        "request_type"
+      ],
+      "turns": [
+        {
+          "prompt": "I want relevant CCIFJ networking opportunities, but I am not ready to book.",
+          "expectation": "Help assess fit; no forced booking or login journey.",
+          "locale": "en"
+        },
+        {
+          "prompt": "I can attend in Tokyo, prefer English, and care about meeting potential partners.",
+          "expectation": "Use the actual constraints; do not suggest irrelevant or known-ineligible events.",
+          "locale": "en"
+        },
+        {
+          "prompt": "I have no travel budget, so do not suggest other cities.",
+          "expectation": "Preserve the location constraint and travel budget.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Only show confirmed-open options, maximum two.",
+          "expectation": "Honor count and registration constraint; unknown status does not qualify.",
+          "locale": "en"
+        },
+        {
+          "prompt": "If nothing fits, what should I do next?",
+          "expectation": "Give a useful conditional next step without pretending a match exists.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Please stop suggesting registration. I only want advice.",
+          "expectation": "Respect decision stage and do not repeat booking offers.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "room_preparation",
+      "title": "Room exploration without a booking commitment",
+      "focus": [
+        "existing_progress",
+        "decision_fit",
+        "practical_next_step",
+        "request_type"
+      ],
+      "turns": [
+        {
+          "prompt": "We may need a CCIFJ meeting room. What should I work out first?",
+          "expectation": "Help prepare relevant criteria rather than initiate a reservation.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We know the headcount and equipment needs already; the date is still undecided.",
+          "expectation": "Do not re-ask completed preparation or invent availability.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We expect 12 people and need a screen.",
+          "expectation": "Use the supplied requirements; check capabilities from actual evidence.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Compare what matters for choosing a room; do not book anything.",
+          "expectation": "Honor comparison and no-booking; no approval card or write.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Is it worth checking availability before we pick any possible dates?",
+          "expectation": "Explain why timing changes an availability check; no fabricated result.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Give me one next step in French.",
+          "expectation": "A concise French action tied to undecided timing, without unrelated services.",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "id": "direct_requests",
+      "title": "Direct facts and drafting must stay direct",
+      "focus": [
+        "existing_progress",
+        "decision_fit",
+        "practical_next_step",
+        "request_type"
+      ],
+      "turns": [
+        {
+          "prompt": "What are the CCIFJ membership fees?",
+          "expectation": "Answer the factual request from structured snapshot data; no advisory intake.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Now compare eligibility rather than repeating the full price list.",
+          "expectation": "Respect explicit comparison and distinguish confirmed from uncertain eligibility.",
+          "locale": "en"
+        },
+        {
+          "prompt": "We are outside Japan. We are not applying yet.",
+          "expectation": "Preserve status and decision stage; no push to apply.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Help me draft one question to the membership team in English, using placeholders.",
+          "expectation": "Honor explicit English draft request; placeholders allowed; no unnecessary sender intake.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Show only the revised question, shorter. Do not store it.",
+          "expectation": "Respect format and no write; no extra suggestions.",
+          "locale": "en"
+        },
+        {
+          "prompt": "Thanks, that is enough.",
+          "expectation": "Close without another intake, offer, or unsolicited journey.",
+          "locale": "en"
+        }
+      ]
+    }
+  ]
+}
