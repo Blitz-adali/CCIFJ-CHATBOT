@@ -3,6 +3,7 @@ import { LogIn } from 'lucide-react';
 import { WidgetChat } from './WidgetChat';
 import { AUTH_EXPIRED_EVENT, clearAuthSession, getSavedAuthSession, getCurrentUser } from './api';
 import { AuthDialog } from './AuthDialog';
+import { LinkAccount, takeLinkToken } from './LinkAccount';
 import { readLocale, saveLocale, siteCopy } from './site-copy';
 import { AdminDashboard } from './AdminDashboard';
 import { MemberCorner } from './MemberCorner';
@@ -14,6 +15,8 @@ export default function App() {
   const [inboxOpen, setInboxOpen] = useState(false);
   const [auth, setAuth] = useState<AuthSession | null>(getSavedAuthSession);
   const [authOpen, setAuthOpen] = useState(false);
+  // Set when the page was opened from a WhatsApp/Slack account-linking link (?link=...).
+  const [linkToken, setLinkToken] = useState(takeLinkToken);
   const t = siteCopy[locale];
   const authLabels = locale === 'fr' ? ['Connexion', 'Déconnexion'] : locale === 'ja' ? ['ログイン', 'ログアウト'] : ['Sign in', 'Sign out'];
   useEffect(() => {
@@ -60,6 +63,7 @@ export default function App() {
         <WidgetChat locale={locale} isAuthenticated={Boolean(auth)} userId={auth?.user.user_id} onLogin={()=>setAuthOpen(true)}/>
       </section>
     </main>
+    {linkToken && <LinkAccount locale={locale} token={linkToken} auth={auth} onLogin={()=>setAuthOpen(true)} onClose={()=>setLinkToken(null)}/>}
     <AuthDialog locale={locale} open={authOpen} onClose={()=>setAuthOpen(false)} onSuccess={setAuth}/>
   </div>;
 }

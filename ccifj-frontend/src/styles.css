@@ -72,6 +72,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .auth-switch { width: 100%; margin-top: 19px; padding: 8px 0; border: 0; background: transparent; color: #526d7c; font-size: 12px; }
 .auth-switch:hover:not(:disabled) { color: var(--red); }
 .auth-error { margin: 0; padding: 11px; border-radius: 8px; background: #fbe5eb; color: #9f2e4d; font-size: 13px; line-height: 1.5; }
+.link-dialog p { margin: 0 0 16px; color: #415c6b; font-size: 14px; line-height: 1.6; }
+.link-dialog .auth-submit { width: 100%; }
+.link-dialog .link-warning { font-size: 12.5px; }
 @media(max-width:720px) {
   .topbar { height: 66px; flex-basis: 66px; padding: 0 16px; gap: 12px; }
   .brand { gap: 9px; }

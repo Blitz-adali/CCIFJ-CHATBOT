@@ -261,6 +261,22 @@ export async function registerAccount(name: string, email: string, password: str
   return saveAuthSession(session);
 }
 
+export interface ChatAccountLink {
+  platform: 'whatsapp' | 'slack';
+  /** The last characters of the phone number or Slack ID, e.g. "•••• 5678". */
+  account_hint: string;
+}
+
+/** Which WhatsApp/Slack account a linking link belongs to. Does not use up the link. */
+export async function previewAccountLink(token: string): Promise<ChatAccountLink> {
+  return requestJson<ChatAccountLink>(API_ENDPOINTS.linkPreview, { method: "POST", body: JSON.stringify({ token }) });
+}
+
+/** Link that chat account to the signed-in user. The link works once. */
+export async function completeAccountLink(token: string, locale: Locale): Promise<ChatAccountLink> {
+  return requestJson<ChatAccountLink>(API_ENDPOINTS.linkComplete, { method: "POST", body: JSON.stringify({ token, locale }) });
+}
+
 export async function resolveApproval({ session_id, ...decision }: {
   session_id: string;
   interrupt_id: string;
