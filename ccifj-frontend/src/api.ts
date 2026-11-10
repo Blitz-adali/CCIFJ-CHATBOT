@@ -313,6 +313,16 @@ export async function updateStaffRequestStatus(reference: string, status: import
   await requestJson(`/api/v1/staff/requests/${encodeURIComponent(reference)}`, { method: 'PATCH', body: JSON.stringify({ status }) }, 10000);
 }
 
+export async function getStaffConversations(withRequest = false, offset = 0): Promise<{items: import('./types').StaffConversationItem[]; next_offset: number | null}> {
+  const params = new URLSearchParams({ offset: String(offset) });
+  if (withRequest) params.set('with_request', 'true');
+  return requestJson(`/api/v1/staff/conversations?${params}`, { method: 'GET' }, 10000);
+}
+
+export async function getStaffConversation(conversationId: number): Promise<import('./types').StaffConversation> {
+  return requestJson(`/api/v1/staff/conversations/${conversationId}`, { method: 'GET' }, 10000);
+}
+
 // ---------- Admin dashboard (staff only) ----------
 
 export async function getAdminOverview(): Promise<import('./types').AdminOverview> {

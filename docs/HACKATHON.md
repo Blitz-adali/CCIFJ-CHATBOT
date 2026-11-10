@@ -36,6 +36,13 @@ stored requests, recipients, references, timestamps and existing statuses, with
 refresh, filtering and pagination. It is read-only; no email is sent by opening
 or refreshing it. Server-side authorization protects every inbox request.
 
+The **Conversations** tab shows what visitors asked and what the agent answered,
+with the sources it cited; each request also opens the conversation it came
+from. It never shows the agent's internal tool messages. Signed-in conversations
+are always kept. A guest conversation is deleted when the page closes, unless the
+visitor confirmed a request: then it is kept with the request, and the approval
+card says so before the visitor confirms.
+
 Account IDs are intentional: this signup flow does not verify email ownership,
 so allowing staff access merely by email address would be unsafe.
 

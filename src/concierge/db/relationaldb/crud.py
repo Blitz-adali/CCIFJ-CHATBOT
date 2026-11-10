@@ -365,17 +365,22 @@ async def claim_chat_session(session: AsyncSession, session_id: int, user_id: in
 
 
 async def _delete_guest_sessions(session: AsyncSession, guest_sessions) -> int:
-    """Delete guest sessions (a subquery of ids) with their messages; owned sessions are never matched."""
+    """Delete guest sessions (a subquery of ids) with their messages; owned sessions are never matched.
+
+    A guest conversation that produced a staff request is kept: the visitor approved sending
+    that request to CCIFJ, and staff read the conversation behind it to follow up.
+    """
+    with_request = select(StaffRequest.session_id).where(col(StaffRequest.session_id).is_not(None))
     ids = select(ChatSession.session_id).where(
-        col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None)
-    )
-    # Staff keep any request a guest sent; it just loses the link to the deleted chat.
-    await session.exec(
-        update(StaffRequest).where(col(StaffRequest.session_id).in_(ids)).values(session_id=None)
+        col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None),
+        col(ChatSession.session_id).not_in(with_request),
     )
     await session.exec(delete(Message).where(col(Message.session_id).in_(ids)))
     result = await session.exec(
-        delete(ChatSession).where(col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None))
+        delete(ChatSession).where(
+            col(ChatSession.session_id).in_(guest_sessions), ChatSession.user_id.is_(None),
+            col(ChatSession.session_id).not_in(with_request),
+        )
     )
     await session.commit()
     return result.rowcount or 0
