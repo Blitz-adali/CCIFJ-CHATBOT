@@ -52,7 +52,7 @@ class HackathonApiTest(unittest.TestCase):
             self.assertEqual(self.client.get('/api/v1/staff/requests?status=closed', headers=headers).json()['items'], [])
             self.assertEqual(self.client.get('/api/v1/staff/requests?limit=500', headers=headers).status_code, 422)
 
-    def test_guided_event_cards_work_without_loading_models(self):
+    def test_upcoming_event_cards_work_without_loading_models(self):
         self.client.app.dependency_overrides.pop(chat.agent_backend)
         async def seed():
             async with AsyncSession(self.engine, expire_on_commit=False) as db:
@@ -63,17 +63,14 @@ class HackathonApiTest(unittest.TestCase):
                 await db.refresh(event)
                 return event.event_id
         event_id = self.client.portal.call(seed)
-        with patch('concierge.api.chat.get_agent_backend', side_effect=AssertionError('Guided paths must not initialize models')):
-            response = self.client.post('/api/v1/chat', json={'message':'Événements', 'locale':'fr', 'path_step_id':'events.upcoming'})
+        with patch('concierge.api.chat.get_agent_backend', side_effect=AssertionError('The upcoming-events answer must not initialize models')):
+            response = self.client.post('/api/v1/chat', json={'message':'Quels sont les prochains événements de la CCIFJ ?', 'locale':'fr'})
             self.assertEqual(response.status_code, 200)
             card = response.json()['events'][0]
             self.assertEqual(card['event_id'], event_id)
             self.assertIsNone(card['price'])
             self.assertTrue(card['registration_open'])
             self.assertTrue(card['start_at'].endswith('+09:00'))
-            details = self.client.post('/api/v1/chat', json={'message':'Détails', 'locale':'fr', 'session_id':response.json()['session_id'], 'path_step_id':'events.details', 'path_event_id':str(event_id)})
-            self.assertEqual(details.status_code, 200)
-            self.assertIn('Meet business leaders.', details.json()['reply'])
 
     def test_lost_approval_is_released_without_replaying_action(self):
         from concierge.api.agent_backend import ApprovalStateUnavailable

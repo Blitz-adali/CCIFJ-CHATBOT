@@ -25,11 +25,11 @@ class EventSelectionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registration_preferences('Show my bookings, including past events.',browsing=True),(True,True))
 
     async def test_upcoming_browse_drops_closed_cards_and_caps_the_shortlist(self):
-        from concierge.api.paths import run_path_step
-        from concierge.api.schemas import ChatRequest
+        from concierge.api.answers import common_answer
         events=[self.event(i,'Forum '+str(i),closed=i==1) for i in range(1,6)]
-        with patch('concierge.api.paths.crud.search_events',AsyncMock(return_value=events)):
-            result=await run_path_step(ChatRequest(message='Upcoming events',path_step_id='events.upcoming'),None,None)
+        with patch('concierge.api.answers.crud.search_events',AsyncMock(return_value=events)):
+            result=await common_answer('What events are coming up at CCIFJ?','en',None)
+        self.assertEqual(result['mode'],'database_answer')
         self.assertEqual([card['event_id'] for card in result['events']],[2,3,4])
 
     async def test_explicit_closed_event_details_are_still_available(self):

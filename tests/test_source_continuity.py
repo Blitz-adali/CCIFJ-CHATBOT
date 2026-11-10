@@ -153,7 +153,7 @@ class SourceApiPersistenceTest(unittest.TestCase):
     setUp=contract.ApiContractTest.setUp
     tearDown=contract.ApiContractTest.tearDown
 
-    def test_source_memory_and_brief_survive_faq_and_guided_paths(self):
+    def test_source_memory_and_brief_survive_model_free_answers(self):
         from concierge.api.agent_backend import agent_inputs
         seen=[]
         brief={'products':{'value':'recycling equipment','quote':'We sell recycling equipment.'}}
@@ -165,7 +165,7 @@ class SourceApiPersistenceTest(unittest.TestCase):
         token=first['session_id']
         faq=self.client.post('/api/v1/chat',json={'session_id':token,'message':'What are the CCIFJ membership fees?'})
         self.assertEqual(faq.status_code,200)
-        guided=self.client.post('/api/v1/chat',json={'session_id':token,'message':'Events','path_step_id':'events.upcoming'})
+        guided=self.client.post('/api/v1/chat',json={'session_id':token,'message':'What events are coming up at CCIFJ?'})
         self.assertEqual(guided.status_code,200)
         result=self.client.post('/api/v1/chat',json={'session_id':token,'message':'What was that venue again?'})
         self.assertEqual(result.status_code,200)

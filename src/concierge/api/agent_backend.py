@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 response_locale = ContextVar("api_response_locale", default="en")
 response_events = ContextVar("api_response_events", default=None)
-# Per-turn extras: {"context": [...], "agent_message": str | None, "out_of_scope_count": int,
+# Per-turn extras: {"context": [...], "out_of_scope_count": int,
 # "user_context": dict | None}
 agent_inputs = ContextVar("api_agent_inputs", default=None)
 
@@ -372,10 +372,6 @@ class AgentBackend:
             )
             for row in history if row.role.value in {"user", "assistant"}
         ]
-        override = inputs.get("agent_message")
-        if override and messages and isinstance(messages[-1], HumanMessage):
-            # A guided path turns structured selections into an explicit request.
-            messages[-1] = HumanMessage(content=override, id=messages[-1].id)
         graph_input = {
             "used_source_ids": [],
             "messages": messages,
@@ -516,8 +512,6 @@ class AgentBackend:
             "reply": reply, "pending_approvals": approvals, "sources": sources, "actions": actions, "events": events,
             "suggested_questions": suggested, "warnings": warnings,
             "intent": {"code": intent} if intent else None,
-            # Guided journeys start from the welcome screen, not under agent answers.
-            "path_actions": [],
             "next_actions": actions_for_turn,
             "attachment_count": len(result.get("context") or []),
             "agent_state": {**({"space_checks": checks} if checks else {}), **({"source_urls": source_urls} if source_urls else {}), "out_of_scope_count": int(result.get("out_of_scope_count") or 0),

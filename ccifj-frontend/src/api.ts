@@ -1,6 +1,5 @@
 import { API_BASE_URL, API_ENDPOINTS } from "./endpoints";
 import type { ApiStatusResponse, AuthSession, ChatRequest, ChatResponse, Locale } from "./types";
-import type { PathAction } from "./types";
 import englishQuestions from "../../src/concierge/data/predefined_qa.json";
 import localizedQuestions from "../../src/concierge/data/predefined_qa_i18n.json";
 
@@ -101,15 +100,8 @@ function normalizeResponse(raw: unknown): ChatResponse {
     events: Array.isArray(body.events) ? body.events : [],
     actions: Array.isArray(body.actions) ? body.actions : [],
     warnings: Array.isArray(body.warnings) ? body.warnings : [],
-    path_actions: Array.isArray(body.path_actions) ? body.path_actions : [],
     next_actions: Array.isArray(body.next_actions) ? body.next_actions : [],
   };
-}
-
-export function getPathStepForQuestion(question: string, locale: Locale): string | undefined {
-  const canonical = 'What events are coming up at CCIFJ?';
-  const localized = locale === 'en' ? canonical : localizedQuestions[locale]?.[canonical]?.question;
-  return localized === question.trim() ? 'events.upcoming' : undefined;
 }
 
 async function requestJson<T>(path: string, init: RequestInit = {}, timeout = timeoutMs, sendAuth = true): Promise<T> {
@@ -522,19 +514,6 @@ export async function getSuggestedQuestions(locale: Locale = "en"): Promise<stri
     }
   } catch { /* The bundled catalog still allows the welcome screen to render offline. */ }
   return getLocalSuggestedQuestions(locale);
-}
-
-export async function getStarterPaths(locale: Locale): Promise<PathAction[]> {
-  const fallback: PathAction[] = [
-    { id: 'events.upcoming', label: locale === 'fr' ? 'Événements CCIFJ à venir' : locale === 'ja' ? '今後のCCIFJイベント' : 'Browse upcoming CCIFJ events' },
-    { id: 'spaces.start', label: locale === 'fr' ? 'Vérifier la disponibilité et réserver un espace' : locale === 'ja' ? '会場の空き状況を確認して予約' : 'Check space availability and book' },
-  ];
-  try {
-    const response = await requestJson<{ starter_paths?: PathAction[] }>(`${API_ENDPOINTS.suggestions}?locale=${encodeURIComponent(locale)}`);
-    return Array.isArray(response?.starter_paths) ? response.starter_paths : fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 export function getLocalSuggestedQuestions(locale: Locale): string[] {

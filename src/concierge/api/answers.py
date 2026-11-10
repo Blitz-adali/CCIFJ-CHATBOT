@@ -4,8 +4,21 @@ Prices and categories come from SQL on each request, never a cached FAQ or RAG
 snapshot. These paths need no model initialization and perform no writes.
 """
 from concierge.db.relationaldb import crud
+from concierge.db.relationaldb.datetimes import japan_now
 from concierge.resources import MEMBERSHIP_FEE_SOURCE, membership_form
 from .catalog import canonical_question, localized_question
+from .events import event_card
+
+
+async def _upcoming_events(locale, session):
+    """The next few events still open for registration, as event cards."""
+    events = list(await crud.search_events(session, date_from=japan_now(), limit=30))
+    heading = {"en": "Upcoming CCIFJ events", "fr": "Événements CCIFJ à venir", "ja": "今後のCCIFJイベント"}[locale]
+    note = {"en": "Choose an event to see its details. Times are shown in Japan time (JST).", "fr": "Choisissez un événement pour en savoir plus. Les horaires sont indiqués à l’heure du Japon (JST).", "ja": "イベントを選択して詳細をご確認ください。日時は日本時間（JST）です。"}[locale]
+    empty = {"en": "No upcoming events are listed. Ask me to help you contact the events team.", "fr": "Aucun événement à venir n’est répertorié. Je peux vous aider à contacter l’équipe événements.", "ja": "現在、今後のイベントは登録されていません。イベント担当者へのお問い合わせをお手伝いできます。"}[locale]
+    cards = [card for card in (event_card(event) for event in events) if card['registration_open'] is not False][:3]
+    return {'mode': 'database_answer', 'reply': f"## {heading}\n\n{note if cards else empty}", 'intent': {'code': 'events'},
+            'events': cards, 'suggested_questions': [], 'next_actions': []}
 
 
 async def common_answer(message, locale, session, user=None, conversation_brief=None):
@@ -13,9 +26,7 @@ async def common_answer(message, locale, session, user=None, conversation_brief=
     if question is None:
         return None
     if question == 'What events are coming up at CCIFJ?':
-        from .paths import run_path_step
-        from .schemas import ChatRequest
-        return await run_path_step(ChatRequest(message=message, locale=locale, path_step_id='events.upcoming'), user, session)
+        return await _upcoming_events(locale, session)
     copy = {
         'en': {'fees':'Annual membership fees','tier':'Category','fee':'Annual fee','categories':'Available categories','known':'I can help compare eligibility for your situation.','unknown':'Not specified',
                'snapshot':'These are the fees in the current CCIFJ database snapshot. Confirm eligibility, current rates, taxes and any prorating with the membership team before applying.',

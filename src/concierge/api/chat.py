@@ -15,7 +15,6 @@ from concierge.db.relationaldb.models import MessageRole
 from .agent_backend import ApprovalStateUnavailable, agent_inputs, get_agent_backend, response_locale, response_events
 from .attachments import MAX_FILES_PER_CONVERSATION, extract_attachment
 from .answers import common_answer
-from .paths import run_path_step, space_booking_agent_message
 from .progress import initial_label
 from .schemas import ApprovalRequest, ChatRequest, ChatResponse
 from .session_access import authorize_session, pending_turn, session_token, session_turn, active_turns, turn_status, normalize_approvals
@@ -128,17 +127,7 @@ async def chat(
             except ValueError as exc:
                 raise HTTPException(status_code=404, detail="Session not found.") from exc
         files, state = conversation_state(await crud.list_message_metadata(session, conversation.session_id))
-        if body.path_step_id and not body.attachments:
-            direct = await run_path_step(body, user, session)
-            if direct is not None:
-                # Guided steps are fixed, read-only lookups: no agent, no presentation pass.
-                preserve_context(direct, state)
-                await crud.add_message(session, conversation.session_id, MessageRole.user, body.message)
-                direct.update(request_id=body.request_id, attachment_count=len(files))
-                result = await save_reply(session, conversation, token, direct, None)
-                response.headers["Cache-Control"] = "no-store"
-                return result
-        if not body.path_step_id and not body.attachments and not files:
+        if not body.attachments and not files:
             direct = await common_answer(body.message, body.locale, session, user, state.get("conversation_brief"))
             if direct is not None:
                 await crud.add_message(session, conversation.session_id, MessageRole.user, body.message)
@@ -150,7 +139,6 @@ async def chat(
                 return result
         if isinstance(backend, LazyBackend):
             backend = await backend.load()
-        agent_message = space_booking_agent_message(body) if body.path_step_id == "spaces.submit" else None
         known = {item.get("id") for item in files}
         new_files = []
         for item in uploaded:
@@ -187,7 +175,7 @@ async def chat(
         active_turns.add(conversation.session_id)
         locale_token = response_locale.set(body.locale)
         inputs_token = agent_inputs.set({
-            "context": files, "agent_message": agent_message,
+            "context": files,
             "out_of_scope_count": state.get("out_of_scope_count", 0),
             "user_context": user_context,
             "conversation_brief": state.get("conversation_brief", {}),

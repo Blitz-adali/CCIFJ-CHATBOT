@@ -86,9 +86,12 @@
 .widget-suggestions button { display: flex; width: 100%; min-width: 0; min-height: 64px; align-items: center; gap: 12px; padding: 14px; border: 1px solid #d7d8d3; border-radius: 15px; background: #f8f6f1; color: #25495e; text-align: left; font-size: 12px; font-weight: 500; line-height: 1.5; transition: transform .16s, border-color .16s, background .16s; }
 .widget-suggestions button:hover:not(:disabled) { transform: translateY(-3px); border-color: #9ab5c4; background: #fffdf9; }
 .suggestion-icon { display: grid; flex: none; width: 33px; height: 33px; place-items: center; border-radius: 10px; background: #e3ecf1; color: #245c7b; }
-.widget-suggestions button:nth-child(2) .suggestion-icon { background: #f4e2e6; color: #ad4d67; }
-.widget-suggestions button:nth-child(3) .suggestion-icon { background: #ede6d4; color: #8a733b; }
+.widget-suggestions button:nth-child(3n+2) .suggestion-icon { background: #f4e2e6; color: #ad4d67; }
+.widget-suggestions button:nth-child(3n) .suggestion-icon { background: #ede6d4; color: #8a733b; }
 .suggestion-icon svg { width: 17px; height: 17px; }
+.suggestion-copy { display: grid; gap: 2px; }
+.suggestion-copy strong { font-size: 12.5px; font-weight: 600; color: #25495e; }
+.suggestion-copy small { font-size: 11px; font-weight: 400; line-height: 1.45; color: #6d777b; }
 .widget-suggestions button > svg:last-child { width: 14px; height: 14px; flex: none; margin-left: auto; color: #84949a; }
 .widget-thread > [role=log] { width: min(100%,var(--chat-width)); margin: 0 auto; }
 .widget-turn { width: 100%; margin: 0 0 28px; font-size: 15px; line-height: 1.8; }
