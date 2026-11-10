@@ -369,6 +369,16 @@ export async function saveAdminEvent(eventId: number | null, body: EventInput): 
     : requestJson(`/api/v1/admin/events/${eventId}`, { method: 'PUT', body: JSON.stringify(body) }, 10000);
 }
 
+/** Cancel an event or restore it. Nothing is deleted; existing bookings stay. */
+export async function setAdminEventCancelled(eventId: number, cancelled: boolean): Promise<import('./types').AdminEvent> {
+  return requestJson(`/api/v1/admin/events/${eventId}/status`, { method: 'PATCH', body: JSON.stringify({ cancelled }) }, 10000);
+}
+
+/** Hide a member company from the agent's directory and matching, or show it again. */
+export async function setAdminMemberVisible(memberId: number, visible: boolean): Promise<{ member_id: number; directory_visible: boolean }> {
+  return requestJson(`/api/v1/admin/members/${memberId}`, { method: 'PATCH', body: JSON.stringify({ directory_visible: visible }) }, 10000);
+}
+
 export async function getAdminMembers(q = '', sector = '', offset = 0): Promise<{items: import('./types').AdminMember[]; next_offset: number | null; sectors: string[]}> {
   const params = new URLSearchParams({ offset: String(offset) });
   if (q.trim()) params.set('q', q.trim());

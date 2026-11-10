@@ -30,6 +30,9 @@ from .schema_prompts import (
     )
 from .model import llm, llm_routing
 from .redact import clean_button_text, scrub
+from concierge.conversation import (
+    asks_draft_language, draft_language_note, draft_language_question, draft_text_language, set_draft_language,
+)
 from concierge.conversation import brief_prompt, merge_brief, apply_language_requests, conversation_language, draft_language, user_history_prompt, interaction_prompt, reference_prompt
 from concierge.resources import MEMBERSHIP_FEE_SOURCE
 from ..db.relationaldb.datetimes import japan_now
@@ -92,7 +95,7 @@ def _messages_with_attachment_context(messages: list, context: list[dict]) -> li
 # Keys accepted from the backend's user_context payload (see the backend ticket).
 # Lists are capped so the profile stays small in every prompt.
 _USER_CONTEXT_LIST_LIMITS = {"upcoming_bookings": 5, "upcoming_space_reservations": 3, "recommended_events": 2}
-_USER_CONTEXT_KEYS = ("name", "email", "access_level", "membership", "onboarding", "newsletter_subscribed", "interests",
+_USER_CONTEXT_KEYS = ("name", "email", "phone", "access_level", "membership", "onboarding", "newsletter_subscribed", "interests",
                       *_USER_CONTEXT_LIST_LIMITS)
 
 
@@ -134,7 +137,8 @@ def _user_context_prompt(state: dict) -> str:
     if reply_language:
         brief += f"\n\n## REPLY LANGUAGE\nWrite explanations and questions in language code {reply_language}. "
         if document_language:
-            brief += f"Only the requested email/ticket draft uses language code {document_language}. "
+            brief += (f"Only the requested email/ticket draft uses language code {document_language}. "
+                      "That draft language is already chosen: do not ask which language to use again. ")
         brief += "Do not infer conversation language from the draft text or translate a draft unless asked."
     membership = state.get("membership_context") or []
     if membership:
@@ -169,6 +173,8 @@ def _user_context_prompt(state: dict) -> str:
         "The authenticated user's current CCIFJ records, loaded from the database for this turn. "
         "Use them to personalize the answer and avoid offering what the user already has. "
         "For forms and bookings, propose the known name/email for confirmation instead of asking for them again. "
+        "In an email or ticket draft, write the known name, email, phone and member company directly into the "
+        "`From:` line and signature instead of placeholders; the user reviews the draft before it is stored. "
         "`membership: null` means the user is not linked to any member company. "
         "`access_level` is guest, user, member or staff; staff may see member company names. "
         "When `onboarding.new_member` is true and `onboarding.profile_completed` is false, welcome the user as a new "
@@ -514,8 +520,19 @@ async def orchestrator_node(state: AgentState):
     brief = merge_brief(state.get("conversation_brief"), response.memory_updates, current_question) if response.scope != "out_of_scope" else state.get("conversation_brief", {})
     if response.scope != 'out_of_scope':
         previous_answer = next((m.content for m in reversed(conversation[:-1]) if isinstance(m, AIMessage) and isinstance(m.content, str)), '')
-        waiting_for_draft_language = bool(re.search(r'draft|brouillon|下書き', previous_answer, re.I) and re.search(r'language|langue|言語', previous_answer, re.I) and not re.search(r'(?:```|~~~)(?:email|ticket)', previous_answer))
+        waiting_for_draft_language = asks_draft_language(previous_answer)
+        chosen_before = draft_language(brief)
         brief = apply_language_requests(brief, current_question, waiting_for_draft_language)
+        # The visitor is answering the draft-language question: exact words are matched above, and
+        # anything looser ("en", "ok", "the first one") is read by the model. Its reading is used
+        # only here, never to guess a language nobody was asked about.
+        if waiting_for_draft_language and draft_language(brief) == chosen_before:
+            reading = response.draft_language_reply
+            if reading == 'no_preference' and not chosen_before:
+                # "You choose": use the language of the conversation rather than ask again.
+                spoken = state.get('lang') or lang
+                reading = spoken if spoken in ('en', 'fr', 'ja') else 'en'
+            brief = set_draft_language(brief, reading, current_question)
     lang = conversation_language(brief, lang, current_question)
     # Canonical (English) catalog questions; the API localizes them to the UI language.
     suggested = _clean_suggestions(response.suggested_questions)
@@ -844,21 +861,36 @@ async def general_node(state: AgentState, config: RunnableConfig = None) -> dict
         last_m = new_messages[-1]
         response_text = _message_text(getattr(last_m, "content", ""))
 
-    if re.search(r'(?:```|~~~)(?:email|ticket)\b', response_text) and not draft_language(state.get('conversation_brief')):
+    brief = state.get('conversation_brief')
+    brief_update = {}
+    if re.search(r'(?:```|~~~)(?:email|ticket)\b', response_text) and not draft_language(brief):
         locale = state.get('lang', 'en')
-        response_text = {
-            'en':'Before I write the draft, which language should it use: English, French or Japanese? I recommend English. I have not submitted a staff request.',
-            'fr':'Avant de rédiger le brouillon, quelle langue préférez-vous : français, anglais ou japonais ? Je recommande le français. Aucune demande au personnel n’a été soumise.',
-            'ja':'下書きの言語を英語・フランス語・日本語からお選びください。日本語をおすすめします。スタッフへの問い合わせは送信されていません。',
-        }.get(locale, 'Which language should the draft use: English, French or Japanese? No staff request has been submitted.')
-    if draft_language(state.get('conversation_brief')):
+        history = state.get('messages', [])
+        latest_question = next((i for i in range(len(history)-1, -1, -1) if isinstance(history[i], HumanMessage)), -1)
+        previous_answer = next((m.content for m in reversed(history[:max(latest_question, 0)])
+                                if isinstance(m, AIMessage) and isinstance(m.content, str)), '')
+        if asks_draft_language(previous_answer):
+            # Asked once already and the answer named no language: never ask twice. Keep the
+            # draft, record the language it is written in and tell the visitor how to change it.
+            used = draft_text_language(response_text)
+            question = history[latest_question].content if latest_question >= 0 else ''
+            brief = set_draft_language(brief, used, question if isinstance(question, str) else '')
+            brief_update = {"conversation_brief": brief}
+            response_text = draft_language_note(used, locale) + "\n\n" + response_text
+        else:
+            response_text = draft_language_question(locale)
+    if draft_language(brief):
         from concierge.drafts import ensure_recipient
         response_text, recipient_missing = ensure_recipient(response_text, state.get('messages', []), new_messages, state.get('lang','en'))
         if recipient_missing:
             from concierge.evidence import record_warning
             record_warning('draft_recipient_unconfirmed')
+    # A signed-in user's own name, email, phone and company replace any placeholder left for them.
+    from concierge.drafts import fill_sender
+    response_text = fill_sender(response_text, state.get('user_context'), state.get('messages', []))
     return {
         "worker_results": {"general": response_text},
+        **brief_update,
     }
 
 

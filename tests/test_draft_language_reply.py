@@ -21,6 +21,21 @@ class DraftLanguageChoiceTest(unittest.TestCase):
             with self.subTest(reply=reply):
                 self.assertEqual(draft_language(apply_language_requests({}, reply, True)), code)
 
+    def test_language_named_in_the_request_itself_is_recognised(self):
+        """Seen while recording the demo: "in English to the ... team" was not understood."""
+        requests = {
+            'Help me write an email in English to the Business Support team asking about a market study.': 'en',
+            'Write a message in French asking about membership fees': 'fr',
+            'Draft an email in Japanese regarding our booking': 'ja',
+            'Rédige un e-mail en français à l’équipe Appui aux entreprises': 'fr',
+            'Write the email in English.': 'en',
+        }
+        for text, code in requests.items():
+            with self.subTest(text=text):
+                self.assertEqual(draft_language(apply_language_requests({}, text)), code)
+        # Still not a guess: naming a language outside a writing request sets nothing.
+        self.assertIsNone(draft_language(apply_language_requests({}, 'Do you have events in English to recommend?')))
+
     def test_a_bare_code_means_nothing_when_the_question_was_not_asked(self):
         for reply in ('en', 'fr', 'ok'):
             self.assertIsNone(draft_language(apply_language_requests({}, reply, False)))

@@ -135,6 +135,9 @@ class Event(SQLModel, table=True):
     non_member_price: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=2)
     currency: Optional[str] = Field(default=None, max_length=3)  # ISO code: "JPY", "EUR"; None when unknown
     reg_deadline: Optional[NaiveDatetime] = Field(default=None)
+    # Set by staff in the dashboard. A cancelled event is not listed, recommended or bookable;
+    # it stays in the database with its bookings so staff can contact the attendees.
+    cancelled: bool = Field(default=False, sa_column_kwargs={"server_default": "0"})
     created_at: NaiveDatetime = Field(default_factory=utcnow)
     updated_at: NaiveDatetime = updated_at_field()
 

@@ -80,8 +80,21 @@ _LANGUAGE_CODES = {
     'japanese':'ja', 'japonais':'ja', '日本語':'ja',
 }
 _LANGUAGE_NAMES = '|'.join(re.escape(word) for word in _LANGUAGE_CODES)
+# Short answers to "which language should the draft use?": codes and unaccented spellings.
+_SHORT_LANGUAGE_CHOICES = {
+    'en': 'english', 'eng': 'english',
+    'fr': 'french', 'fra': 'french', 'francais': 'french',
+    'ja': 'japanese', 'jp': 'japanese', 'jpn': 'japanese',
+}
+_DRAFT_LANGUAGE_CHOICE = re.compile(
+    r'\s*(?:in\s+|en\s+)?(?P<language>' + _LANGUAGE_NAMES + '|' + '|'.join(_SHORT_LANGUAGE_CHOICES) + r')'
+    r'(?:\s+please|\s+s’il vous plaît|\s+svp|でお願いします)?[.!。]?\s*', re.I)
 # Explicit directives are parsed only outside quoted code/document bodies.
-_LANGUAGE_TAIL = r"(?=\s*(?:$|[,.!?;:()\[\]]|please\b|for\b|from\b|now\b|but\b|and\b|about\b|what\b|how\b|which\b|mais\b|pour\b))"
+# What may follow the language name. "to", "asking" and the like cover the usual way of asking
+# for a draft: "write an email in English to the Business Support team asking about ...".
+_LANGUAGE_TAIL = (r"(?=\s*(?:$|[,.!?;:()\[\]]|please\b|for\b|from\b|now\b|but\b|and\b|about\b|what\b|how\b|which\b|mais\b|pour\b"
+                  r"|to\b|with\b|so\b|then\b|that\b|asking\b|regarding\b|concerning\b|saying\b|explaining\b|telling\b"
+                  r"|à\b|au\b|aux\b|afin\b|concernant\b|adressé\b|destiné\b))")
 _LANGUAGE_REQUEST = re.compile(
     r'(?P<role>write|draft|email|e-mail|letter|message|reply|respond|answer|explain|explanations?|speak|talk|switch|réponds|répondez|explique|rédige|brouillon)'
     r'\b[^.!?;,\n]{0,65}?\b(?:in|en)\s+(?:simple\s+|plain\s+)?(?P<language>'+_LANGUAGE_NAMES+r')\b'+_LANGUAGE_TAIL, re.I)
@@ -105,6 +118,20 @@ def _current_choice(entry, text):
     return bool(entry.get('quote') and entry['quote'] in text)
 
 
+def set_draft_language(brief, code, text):
+    """Record the draft language from a language code ('en', 'fr', 'ja'); any other code changes nothing.
+
+    Used for the routing model's reading of the user's answer to the draft-language question,
+    and for the language a draft was written in when no answer could be read.
+    """
+    name = _SHORT_LANGUAGE_CHOICES.get((code or '').casefold())
+    if not name:
+        return brief
+    brief = merge_brief(brief, [], '')
+    brief['draft_language'] = _language_entry(name, text, 'document')
+    return brief
+
+
 def apply_language_requests(brief, text, awaiting_draft_language=False):
     """Track document, task-local reply, persistent reply and explanation roles.
 
@@ -120,9 +147,12 @@ def apply_language_requests(brief, text, awaiting_draft_language=False):
     # Quoted examples and document contents are data, not new preferences.
     directive = re.sub(r'```[\s\S]*?```|~~~[\s\S]*?~~~', '', text)
     if awaiting_draft_language:
-        choice = re.fullmatch(r'\s*(?P<language>'+_LANGUAGE_NAMES+r')(?:\s+please|\s+s’il vous plaît|でお願いします)?[.!。]?\s*', directive, re.I)
+        # Fast path for a bare answer; anything looser is read by the routing model
+        # (OrchestratorPlan.draft_language_reply) and recorded with set_draft_language.
+        choice = _DRAFT_LANGUAGE_CHOICE.fullmatch(directive)
         if choice:
-            brief['draft_language'] = _language_entry(choice['language'], text, 'document')
+            name = choice['language']
+            brief['draft_language'] = _language_entry(_SHORT_LANGUAGE_CHOICES.get(name.casefold(), name), text, 'document')
     matches = sorted([*_LANGUAGE_REQUEST.finditer(directive), *_LANGUAGE_BEFORE_ROLE.finditer(directive),
                       *_SWITCH_LANGUAGE_REQUEST.finditer(directive), *_NOW_LANGUAGE.finditer(directive)],key=lambda m:m.start())
     for match in matches:
@@ -272,3 +302,62 @@ def reference_prompt(messages):
             'ask which item; do not select or claim the visitor chose one. Verify any '
             'facts through source records before relying on these old statements.\n'
             +json.dumps(excerpts,ensure_ascii=False))
+
+
+# ---------- Asking for the draft language ----------
+# The agent never writes an email or ticket draft without a draft language. It asks once;
+# if the answer still names no language, it keeps the draft and says which language it used.
+
+_DRAFT_LANGUAGE_QUESTION = {
+    'en': 'Before I write the draft, which language should it use: English, French or Japanese? I recommend English. I have not submitted a staff request.',
+    'fr': 'Avant de rédiger le brouillon, quelle langue préférez-vous : français, anglais ou japonais ? Je recommande le français. Aucune demande au personnel n’a été soumise.',
+    'ja': '下書きの言語を英語・フランス語・日本語からお選びください。日本語をおすすめします。スタッフへの問い合わせは送信されていません。',
+}
+_DRAFT_LANGUAGE_NOTE = {
+    'en': 'I wrote this draft in {used}, since no language was chosen. Tell me if you would prefer {first} or {second}. I have not submitted a staff request.',
+    'fr': 'J’ai rédigé ce brouillon en {used}, aucune langue n’ayant été choisie. Dites-moi si vous préférez une autre langue ({first} ou {second}). Aucune demande au personnel n’a été soumise.',
+    'ja': '言語の指定がなかったため、この下書きは{used}で作成しました。{first}または{second}をご希望の場合はお知らせください。スタッフへの問い合わせは送信されていません。',
+}
+# The part of each note that identifies it in the previous answer (see asks_draft_language).
+_DRAFT_LANGUAGE_NOTE_MARK = re.compile(r'since no language was chosen|aucune langue n’ayant été choisie|言語の指定がなかったため')
+_DISPLAY_NAMES = {
+    'en': {'en': 'English', 'fr': 'French', 'ja': 'Japanese'},
+    'fr': {'en': 'anglais', 'fr': 'français', 'ja': 'japonais'},
+    'ja': {'en': '英語', 'fr': 'フランス語', 'ja': '日本語'},
+}
+_DRAFT_BLOCK = re.compile(r'(?:```|~~~)(?:email|ticket)\b([\s\S]*?)(?:```|~~~|$)')
+_FRENCH_WORDS = re.compile(r'\b(?:bonjour|madame|monsieur|cordialement|nous|notre|votre|société|entreprise|souhaitons|merci)\b', re.I)
+
+
+def draft_language_question(locale):
+    return _DRAFT_LANGUAGE_QUESTION.get(
+        locale, 'Which language should the draft use: English, French or Japanese? No staff request has been submitted.')
+
+
+def asks_draft_language(previous_answer):
+    """True when the assistant's previous message asked for the draft language, or named the one it used."""
+    answer = previous_answer or ''
+    if _DRAFT_LANGUAGE_NOTE_MARK.search(answer):
+        return True
+    if re.search(r'(?:```|~~~)(?:email|ticket)', answer):
+        return False
+    # The fixed question above, or the same question in the model's own words
+    # ("Which language would you like the email in: English, French, or Japanese?").
+    document = re.search(r'draft|e-?mail|message|ticket|inquiry|request|brouillon|courriel|demande|下書き|メール|問い合わせ', answer, re.I)
+    language = re.search(r'language|langue|言語', answer, re.I)
+    return bool(document and language and re.search(r'[?？]|お選びください', answer))
+
+
+def draft_text_language(text):
+    """The language ('en', 'fr' or 'ja') an email or ticket draft is written in."""
+    body = ' '.join(_DRAFT_BLOCK.findall(text or '')) or (text or '')
+    if re.search(r'[぀-ヿ㐀-鿿]', body):
+        return 'ja'
+    return 'fr' if len(_FRENCH_WORDS.findall(body)) >= 2 else 'en'
+
+
+def draft_language_note(used, locale):
+    """One line telling the visitor which language a draft uses and how to change it."""
+    names = _DISPLAY_NAMES.get(locale, _DISPLAY_NAMES['en'])
+    first, second = (names[code] for code in ('en', 'fr', 'ja') if code != used)
+    return _DRAFT_LANGUAGE_NOTE.get(locale, _DRAFT_LANGUAGE_NOTE['en']).format(used=names[used], first=first, second=second)

@@ -89,6 +89,8 @@ export interface AdminEvent {
   price: number | null;
   currency: string | null;
   languages: string[];
+  cancelled?: boolean; // staff cancelled it: the agent no longer lists or books it
+  confirmed_bookings?: number;
 }
 
 export interface AdminMember {

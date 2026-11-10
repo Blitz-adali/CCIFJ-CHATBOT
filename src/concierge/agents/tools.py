@@ -225,6 +225,8 @@ def _overlaps(start_a, end_a, start_b, end_b) -> bool:
 
 def _registration_problem(event) -> Optional[str]:
     """Why the event can't be booked right now, or None. Mirrors crud.book_event."""
+    if getattr(event, "cancelled", False):
+        return "the event has been cancelled by CCIFJ"
     now = _now()
     if event.start_at is not None and event.start_at <= now:
         return "the event has already started or taken place"
@@ -1755,7 +1757,8 @@ async def request_introduction(
             return ("Only CCIFJ members can request introductions through the directory. Offer a message to "
                     "CCIFJ staff (submit_staff_request) instead, and the membership information.")
         own = (await session.exec(sql_select(Belongs.member_id).where(Belongs.user_id == user_id))).first()
-        everyone = (await session.exec(sql_select(Member))).all()
+        # A company staff hid from the directory cannot be asked for by name either.
+        everyone = [m for m in (await session.exec(sql_select(Member))).all() if m.directory_visible is not False]
         created, unknown = [], []
         for name in names:
             target = (await session.exec(sql_select(Member).where(sa_func.lower(Member.name) == name.lower()))).first()
@@ -1763,7 +1766,7 @@ async def request_introduction(
                 # "company 11", "Acme KK": accept the name only when it points to one company.
                 close = _members_by_name(everyone, {}, name)
                 target = close[0][0] if len(close) == 1 else None
-            if target is None or target.member_id == own:
+            if target is None or target.member_id == own or target.directory_visible is False:
                 unknown.append(name)
                 continue
             intro = IntroRequest(reference=f"pending-{uuid4().hex[:24]}", requester_user_id=user_id,

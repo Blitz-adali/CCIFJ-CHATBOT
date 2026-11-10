@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
   approveMembership, deleteKnowledgeDoc, getAdminEvents, getAdminMembers, getImportTemplate, getKnowledgeDocs, importFile,
-  linkKnowledgeDoc, saveAdminEvent, syncKnowledgeDoc, uploadKnowledgeDoc,
+  linkKnowledgeDoc, saveAdminEvent, setAdminEventCancelled, setAdminMemberVisible, syncKnowledgeDoc, uploadKnowledgeDoc,
 } from './api';
 import type { EventInput } from './api';
 import { toAttachmentUploads } from './attachments';
@@ -162,10 +162,19 @@ export function EventsPanel() {
     <div className="admin-table-wrap"><table className="admin-table">
       <thead><tr><th>Event</th><th>When</th><th>Format</th><th>Price</th><th>Languages</th><th></th></tr></thead>
       <tbody>{items.map(item => <tr key={item.event_id}>
-        <td className="admin-wrap"><strong>{item.title}</strong><small>{item.location ?? ''}</small></td>
+        <td className="admin-wrap"><strong>{item.title}</strong>{item.cancelled && <span className="admin-badge level-staff">Cancelled</span>}<small>{item.location ?? ''}</small></td>
         <td>{formatJst(item.start_at)}</td><td>{item.category}</td><td>{price(item)}</td>
         <td>{item.languages.join(', ') || '—'}</td>
-        <td><button type="button" className="admin-link" onClick={() => { setFormError(''); setEditing({ id: item.event_id, form: { ...item, member_price: item.member_price, non_member_price: item.non_member_price } }); window.scrollTo?.(0, 0); }}>Edit</button></td>
+        <td><button type="button" className="admin-link" onClick={() => { setFormError(''); setEditing({ id: item.event_id, form: { ...item, member_price: item.member_price, non_member_price: item.non_member_price } }); window.scrollTo?.(0, 0); }}>Edit</button>{' '}
+          <button type="button" className={item.cancelled ? 'admin-link' : 'admin-link danger'} onClick={() => {
+            const cancel = !item.cancelled;
+            if (cancel && !window.confirm(`Cancel "${item.title}"? The agent will stop listing and booking it. Nothing is deleted: existing bookings are kept so you can contact the attendees.`)) return;
+            setError('');
+            setAdminEventCancelled(item.event_id, cancel).then(updated => {
+              setItems(old => old.map(row => row.event_id === item.event_id ? { ...row, cancelled: updated.cancelled } : row));
+              if (cancel && updated.confirmed_bookings) window.alert(`${updated.confirmed_bookings} confirmed booking(s) exist for this event. Please contact the attendees.`);
+            }).catch(e => setError(errorText(e)));
+          }}>{item.cancelled ? 'Restore' : 'Cancel event'}</button></td>
       </tr>)}</tbody>
     </table></div>
     {!busy && !items.length && !error && <p>No events found.</p>}
@@ -228,7 +237,15 @@ export function MembersPanel() {
         <td className="admin-wrap">{item.contacts?.length ? item.contacts.map(person => <small key={person.name + (person.email ?? '')}>
           <strong>{person.name}</strong>{person.job_title ? `, ${person.job_title}` : ''}{person.language ? ` · ${person.language}` : ''}
         </small>) : (item.contact ?? '—')}</td>
-        <td>{item.accounts} <button type="button" className="admin-link" onClick={() => { setApproving(item); setApproveEmail(''); setApproveNote(''); }}>Add account</button></td>
+        <td>{item.accounts} <button type="button" className="admin-link" onClick={() => { setApproving(item); setApproveEmail(''); setApproveNote(''); }}>Add account</button>{' '}
+          <button type="button" className={item.directory_visible === false ? 'admin-link' : 'admin-link danger'} onClick={() => {
+            const show = item.directory_visible === false;
+            if (!show && !window.confirm(`Hide "${item.name}" from the directory? The agent will stop showing it in member search and matching. Nothing is deleted.`)) return;
+            setError('');
+            setAdminMemberVisible(item.member_id, show).then(result =>
+              setItems(old => old.map(row => row.member_id === item.member_id ? { ...row, directory_visible: result.directory_visible } : row)))
+              .catch(e => setError(errorText(e)));
+          }}>{item.directory_visible === false ? 'Show' : 'Hide'}</button></td>
       </tr>)}</tbody>
     </table></div>
     {!busy && !items.length && !error && <p>No companies found.</p>}

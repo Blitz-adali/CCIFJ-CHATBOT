@@ -359,7 +359,7 @@ async def run_engagement(session: AsyncSession, as_of: Optional[datetime] = None
     await session.flush()
     existing = set((await session.exec(select(Outreach.dedupe_key))).all())
     new_events = list((await session.exec(select(Event).where(
-        Event.created_at > as_of - timedelta(days=NEW_EVENT_DAYS), Event.created_at <= as_of, Event.start_at > as_of))).all())
+        Event.created_at > as_of - timedelta(days=NEW_EVENT_DAYS), Event.created_at <= as_of, Event.start_at > as_of, col(Event.cancelled).is_(False)))).all())
     created, duplicates = [], 0
     for state in await member_states(session, as_of, only_user):
         candidates = _candidates(state, as_of, new_events)
