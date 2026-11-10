@@ -191,6 +191,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .admin-table td.admin-wrap { min-width: 240px; max-width: 420px; white-space: normal; }
 .admin-table td.admin-wrap small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
 .admin-main .admin-link.danger { color: #b3261e; }
+/* Row actions side by side (Edit | Cancel event, Sync now | Remove, Add account | Hide): a gap and a divider keep them apart. */
+.admin-main .admin-table td .admin-link + .admin-link { margin-left: 14px; padding-left: 14px; border-left: 1px solid #cfd8dc; border-radius: 0; }
 .admin-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 18px; }
 .admin-main .admin-tabs button.active { border-color: var(--navy); background: var(--navy); color: #fff; }
 .admin-tabs.small { margin: 0 0 12px; gap: 18px; }
