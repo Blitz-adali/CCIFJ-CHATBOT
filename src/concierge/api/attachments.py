@@ -101,13 +101,16 @@ def _docx_text(name: str, raw: bytes) -> str:
 def _ocr(image) -> str:
     import pytesseract
     from pytesseract import TesseractError
+    from concierge import ocr
 
+    ocr.configure()  # finds Tesseract off the PATH too, and the project's own language files
     try:
         return pytesseract.image_to_string(image, lang=OCR_LANGUAGES).strip()
     except (TesseractError, pytesseract.TesseractNotFoundError) as exc:
         raise HTTPException(
             503,
-            "OCR is unavailable: install Tesseract and its English, French, and Japanese language data.",
+            "OCR is unavailable: install Tesseract and its English, French, and Japanese language data "
+            "(run `bash scripts/install_ocr.sh`, or scripts\\install_ocr.ps1 on Windows). Text PDFs and Word files work without it.",
         ) from exc
 
 

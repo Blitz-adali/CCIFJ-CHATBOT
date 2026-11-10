@@ -51,6 +51,12 @@ if [[ ! -d ccifj-frontend/node_modules ]]; then
   (cd ccifj-frontend && npm ci)
 fi
 
+# --- OCR (optional) ----------------------------------------------------------
+# Only scanned PDFs and images need it; everything else works without. Never stops the start.
+if ! uv run --quiet python -m concierge.ocr >/dev/null 2>&1; then
+  info "OCR is not set up (optional): scanned PDFs and images will not be read. To add it: bash scripts/install_ocr.sh"
+fi
+
 # --- Database --------------------------------------------------------------
 info "Applying database migrations"
 uv run concierge-db upgrade
