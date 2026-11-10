@@ -57,7 +57,7 @@ If a turn fails, times out, or is cancelled, the server cannot be sure whether a
 
 ## Attachments and edited messages
 
-Attached files (PDF, PNG, JPEG, DOCX, TXT, MD, CSV, JSON, XML, HTML; up to 4 per conversation, 5 MB each) are sent base64-encoded in the `attachments` request field. The server extracts their text (OCR for images and scanned PDF pages) and keeps it as context for the rest of the conversation; the user's message stays exactly as typed, and the bubble shows the file names as chips. If the server has no Tesseract, its 503 message is shown. Editing a sent prompt resubmits a correction in the same session.
+Attached files (PDF, PNG, JPEG, DOCX, TXT, MD, CSV, JSON, XML, HTML; up to 4 per conversation, 20 MB each) are sent base64-encoded in the `attachments` request field. The server extracts their text (OCR for images and scanned PDF pages) and keeps it as context for the rest of the conversation; the user's message stays exactly as typed, and the bubble shows the file names as chips. If the server has no Tesseract, its 503 message is shown. Editing a sent prompt resubmits a correction in the same session.
 
 ## Conversation history in the frontend
 

@@ -21,7 +21,7 @@ from xml.etree import ElementTree
 from fastapi import HTTPException
 
 MAX_FILES_PER_CONVERSATION = 4
-MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_PDF_PAGES = 20
 MAX_TEXT_CHARS_PER_FILE = 12_000
 OCR_LANGUAGES = "eng+fra+jpn"

@@ -1,8 +1,8 @@
 import type { AttachmentUpload } from './types';
 
-/** Matches the server: four distinct files per conversation, 5 MB each. */
+/** Matches the server: four distinct files per conversation, 20 MB each. */
 export const MAX_FILES_PER_CONVERSATION = 4;
-export const MAX_FILE_BYTES = 5 * 1024 * 1024;
+export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 const TYPES_BY_EXTENSION: Record<string, string> = {
   pdf: 'application/pdf',
