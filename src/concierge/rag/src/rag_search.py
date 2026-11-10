@@ -202,18 +202,68 @@ def lexical_search(retriever: bm25s.BM25, query: str, limit: int):
     docs, scores = retriever.retrieve(query_tokens, k=limit)
     return docs.tolist()[0]
 
+# Reranking is an external call with a quota (a Cohere trial key allows 10 calls
+# a minute). Stay under it, make one attempt only, and stop calling for a minute
+# after a refusal: three refused attempts per search cost about four seconds.
+#   CCIFJ_RERANK_PER_MINUTE   calls allowed per minute, default 9 (0 = never call).
+RERANK_PAUSE_SECONDS = 60
+_rerank_gate = threading.Lock()
+_rerank_calls: list[float] = []
+_rerank_paused_until = 0.0
+
+
+class RerankSkipped(RuntimeError):
+    """The reranker was not called: over the per-minute budget, or paused after a refusal."""
+
+
+def _rerank_budget() -> int:
+    import os
+    try:
+        return int(os.getenv("CCIFJ_RERANK_PER_MINUTE", "").strip() or 9)
+    except ValueError:
+        return 9
+
+
+def _reserve_rerank_call() -> None:
+    """Take one call from the per-minute budget, or raise RerankSkipped."""
+    now = time.monotonic()
+    with _rerank_gate:
+        if now < _rerank_paused_until:
+            raise RerankSkipped("paused after a rate limit")
+        _rerank_calls[:] = [moment for moment in _rerank_calls if now - moment < 60]
+        if len(_rerank_calls) >= _rerank_budget():
+            raise RerankSkipped("per-minute budget used")
+        _rerank_calls.append(now)
+
+
+def _pause_rerank() -> None:
+    global _rerank_paused_until
+    with _rerank_gate:
+        _rerank_paused_until = time.monotonic() + RERANK_PAUSE_SECONDS
+
+
 def rerank(query: str, docs: list[dict], n: int = 5):
     if not COHERE_API_KEY:
         raise ValueError("COHERE_API_KEY is missing")
 
+    _reserve_rerank_call()
+
     client = get_rerank_client()
 
-    response = client.rerank(
-        model=COHERE_RERANK_MODEL,
-        query=query,
-        documents=[doc["text"] for doc in docs],
-        top_n=n,
-    )
+    try:
+        response = client.rerank(
+            model=COHERE_RERANK_MODEL,
+            query=query,
+            documents=[doc["text"] for doc in docs],
+            top_n=n,
+            # One attempt: the caller falls back to the fused ranking.
+            request_options={"max_retries": 0},
+        )
+    except Exception as error:
+        if getattr(error, "status_code", None) == 429:
+            _pause_rerank()
+        raise
+
 
     return [
         {

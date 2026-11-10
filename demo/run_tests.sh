@@ -13,8 +13,18 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-API="${API:-http://127.0.0.1:8000}"
 MODE="${1:-all}"
+# Use API=... when given; otherwise find the concierge on the usual ports.
+if [[ -z "${API:-}" ]]; then
+  API="http://127.0.0.1:8000"
+  for port in 8000 8001 8002; do
+    if [[ "$(curl -fsS --max-time 3 "http://127.0.0.1:$port/status" 2>/dev/null || true)" == *'"agent_ready"'* ]]; then
+      API="http://127.0.0.1:$port"
+      break
+    fi
+  done
+fi
+echo "Testing the concierge at $API"
 OUT="demo/runs/$(date +%Y-%m-%d_%H-%M-%S)"
 
 status="$(curl -fsS --max-time 5 "$API/status" 2>/dev/null || true)"

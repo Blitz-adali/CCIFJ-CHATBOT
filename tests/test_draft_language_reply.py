@@ -36,6 +36,31 @@ class DraftLanguageChoiceTest(unittest.TestCase):
         # Still not a guess: naming a language outside a writing request sets nothing.
         self.assertIsNone(draft_language(apply_language_requests({}, 'Do you have events in English to recommend?')))
 
+    def test_a_sentence_answering_the_question_sets_the_draft_not_the_conversation(self):
+        """Seen live: 「英語で書いてください。私の名前は…」 switched the replies to English and the
+        draft language was asked a second time."""
+        replies = {
+            '英語で書いてください。私の名前は田中太郎、メールは taro.tanaka@example.test です。': 'en',
+            'フランス語で書いてください': 'fr',
+            'Please write it in English. My name is Jane Doe and my email is jane.doe@example.test.': 'en',
+            'Écrivez-le en français s’il vous plaît, je m’appelle Jean Dupont.': 'fr',
+        }
+        for reply, code in replies.items():
+            with self.subTest(reply=reply):
+                brief = apply_language_requests({}, reply, True)
+                self.assertEqual(draft_language(brief), code)
+                self.assertNotIn('conversation_language', brief)
+        # Not asked: the same words keep their old meaning (the language of the replies).
+        self.assertIsNone(draft_language(apply_language_requests({}, '英語で書いてください', False)))
+
+    def test_the_question_as_one_item_of_a_list_is_recognised(self):
+        for question in ('メール案を作る前に、次の2点を教えてください。\n- メール本文は日本語・英語・フランス語のどれにしますか？\n- 差出人の氏名と返信先メールアドレスは何にしますか？',
+                         'メールの下書きを作る前に、次の3点を教えてください。\n- 下書きの言語（日本語・英語・フランス語）\n- 差出人のお名前\n- 返信先にするメールアドレス',
+                         'Before I write the email, please tell me:\n- the language of the draft (English, French or Japanese)\n- your name',
+                         'Avant de rédiger le courriel, indiquez-moi la langue souhaitée, votre nom et votre adresse.'):
+            with self.subTest(question=question):
+                self.assertTrue(asks_draft_language(question))
+
     def test_a_bare_code_means_nothing_when_the_question_was_not_asked(self):
         for reply in ('en', 'fr', 'ok'):
             self.assertIsNone(draft_language(apply_language_requests({}, reply, False)))
