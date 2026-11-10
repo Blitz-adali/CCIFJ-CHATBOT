@@ -133,6 +133,11 @@ export interface KnowledgeDoc {
   char_count: number;
   chunk_count: number;
   created_at: string;
+  linked?: boolean; // added by URL and re-synced on a schedule
+  download_url?: string | null;
+  checked_at?: string | null;
+  changed_at?: string | null;
+  sync_note?: string | null;
 }
 
 export interface MemberMatch {

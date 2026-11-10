@@ -79,6 +79,29 @@ async def daily_engagement() -> None:
         await asyncio.sleep(ENGAGEMENT_CHECK_SECONDS)
 
 
+async def sync_linked_knowledge() -> None:
+    """Re-check knowledge documents linked by URL (Calameo, web pages, PDFs) every few hours.
+
+    CCIFJ_LINK_SYNC_HOURS sets the interval (default 6); "off" disables it ("Sync now" still works).
+    """
+    import os
+    from concierge import linked_sources
+    setting = os.getenv("CCIFJ_LINK_SYNC_HOURS", "6").strip().lower()
+    if setting in {"off", "0", "false"}:
+        logger.info("Linked knowledge sync is off")
+        return
+    await asyncio.sleep(120)  # let the embedding model load first
+    while True:
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await linked_sources.sync_all(session)
+            if result["checked"]:
+                logger.info("Linked knowledge sync: %d checked, %d re-indexed", result["checked"], result["changed"])
+        except Exception:
+            logger.exception("Linked knowledge sync failed")
+        await asyncio.sleep(float(setting) * 3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -91,11 +114,13 @@ async def lifespan(app: FastAPI):
     warm_task.add_done_callback(_log_warm_up_failure)
     sweep_task = asyncio.create_task(sweep_expired_guest_sessions())
     engagement_task = asyncio.create_task(daily_engagement())
+    link_sync_task = asyncio.create_task(sync_linked_knowledge())
     try:
         yield
     finally:
         sweep_task.cancel()
         engagement_task.cancel()
+        link_sync_task.cancel()
         await engine.dispose()
 
 

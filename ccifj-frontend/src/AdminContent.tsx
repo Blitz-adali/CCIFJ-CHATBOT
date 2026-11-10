@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
   approveMembership, deleteKnowledgeDoc, getAdminEvents, getAdminMembers, getImportTemplate, getKnowledgeDocs, importFile,
-  saveAdminEvent, uploadKnowledgeDoc,
+  linkKnowledgeDoc, saveAdminEvent, syncKnowledgeDoc, uploadKnowledgeDoc,
 } from './api';
 import type { EventInput } from './api';
 import { toAttachmentUploads } from './attachments';
@@ -287,8 +287,36 @@ export function KnowledgePanel() {
     deleteKnowledgeDoc(doc.doc_id).then(() => setDocs(old => old.filter(item => item.doc_id !== doc.doc_id)))
       .catch(e => setError(errorText(e)));
   };
+  // ---- Linked sources (Calameo, web pages, PDF links): re-checked on a schedule ----
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkTitle, setLinkTitle] = useState('');
+  const [downloadUrl, setDownloadUrl] = useState('');
+  const [linkStatus, setLinkStatus] = useState('');
+  const [linkError, setLinkError] = useState('');
+  const [syncing, setSyncing] = useState<number | null>(null);
+  const isCalameo = /(^|\.)calameo\.com\//i.test(linkUrl.replace(/^https:\/\//i, ''));
+  const addLink = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true); setLinkError(''); setLinkStatus('Reading the link and indexing… (long PDFs can take a minute)');
+    try {
+      const doc = await linkKnowledgeDoc(linkUrl.trim(), linkTitle.trim(), downloadUrl.trim());
+      setLinkStatus(`Added "${doc.title}" as ${doc.chunk_count} passages.${doc.sync_note ? ' ' + doc.sync_note : ''}`);
+      setLinkUrl(''); setLinkTitle(''); setDownloadUrl('');
+      load();
+    } catch (e) { setLinkStatus(''); setLinkError(errorText(e)); }
+    setBusy(false);
+  };
+  const syncNow = async (doc: KnowledgeDoc) => {
+    setSyncing(doc.doc_id); setLinkError('');
+    try {
+      const updated = await syncKnowledgeDoc(doc.doc_id);
+      setDocs(old => old.map(item => item.doc_id === doc.doc_id ? updated : item));
+      setLinkStatus(updated.changed ? `"${doc.title}" changed and was re-indexed.` : `"${doc.title}" is up to date.`);
+    } catch (e) { setLinkError(errorText(e)); }
+    setSyncing(null);
+  };
   return <section aria-labelledby="knowledge-title">
-    <h1 id="knowledge-title">Knowledge files</h1>
+    <h1 id="knowledge-title">Knowledge files and links</h1>
     <p className="admin-note">Brochures, price lists, procedures and FAQs the agent can quote. Files are read (with OCR for scans), split into passages and searched together with the website.
       Prefer validated, current documents: the agent treats them as official CCIFJ sources.</p>
     <form className="admin-form" onSubmit={upload}>
@@ -314,14 +342,38 @@ export function KnowledgePanel() {
       <div className="admin-form-actions"><button type="submit" className="primary" disabled={busy || !files.length}>
         {busy ? 'Indexing…' : files.length > 1 ? `Upload and index ${files.length} files` : 'Upload and index'}</button></div>
     </form>
+    <form className="admin-form" onSubmit={addLink}>
+      <h2>Link a source (auto-updated)</h2>
+      <p className="admin-note">Paste a Calameo publication, a web page or a link to a PDF. The agent re-reads it every few hours,
+        so when you update the publication or page, the agent follows without a new upload.</p>
+      <div className="admin-form-grid admin-file-details">
+        <label>Link<input type="url" required value={linkUrl} disabled={busy} onChange={e => setLinkUrl(e.target.value)}
+          placeholder="https://www.calameo.com/read/… or https://…/brochure.pdf" /></label>
+        <label>Title (optional)<input value={linkTitle} maxLength={255} disabled={busy} onChange={e => setLinkTitle(e.target.value)}
+          placeholder="Taken from the page if empty" /></label>
+        {isCalameo && <label>PDF download link (optional, for the full text)<input type="url" value={downloadUrl} disabled={busy}
+          onChange={e => setDownloadUrl(e.target.value)} placeholder="https://… link to the same PDF" /></label>}
+      </div>
+      {isCalameo && !downloadUrl && <p className="admin-note">Without a PDF link, only the publication's title and summary are indexed
+        (Calameo does not share the full text). Enable "Allow download" on Calameo, or paste a link to the same PDF, to index every page.</p>}
+      {linkStatus && <p role="status" className="admin-success">{linkStatus}</p>}
+      {linkError && <p role="alert" className="admin-error">{linkError}</p>}
+      <div className="admin-form-actions"><button type="submit" className="primary" disabled={busy || !linkUrl.trim()}>
+        {busy ? 'Indexing…' : 'Add link'}</button></div>
+    </form>
     <div className="admin-table-wrap"><table className="admin-table">
       <thead><tr><th>Document</th><th>Passages</th><th>Added</th><th>Link</th><th></th></tr></thead>
       <tbody>{docs.map(doc => <tr key={doc.doc_id}>
-        <td className="admin-wrap"><strong>{doc.title}</strong><small>{doc.filename} · {doc.char_count.toLocaleString()} characters</small></td>
+        <td className="admin-wrap"><strong>{doc.title}</strong><small>{doc.filename} · {doc.char_count.toLocaleString()} characters</small>
+          {doc.linked && <small>Auto-updated · checked {doc.checked_at ? new Date(doc.checked_at).toLocaleString() : 'never'}
+            {doc.changed_at && ` · content from ${new Date(doc.changed_at).toLocaleString()}`}</small>}
+          {doc.sync_note && <small className={doc.sync_note.startsWith('Last check failed') ? 'admin-error' : undefined}>{doc.sync_note}</small>}</td>
         <td>{doc.chunk_count}</td>
         <td>{new Date(doc.created_at).toLocaleDateString()}</td>
         <td>{doc.source_url ? <a className="admin-link" href={doc.source_url} target="_blank" rel="noreferrer">Open</a> : 'Internal'}</td>
-        <td><button type="button" className="admin-link danger" onClick={() => remove(doc)}>Remove</button></td>
+        <td>{doc.linked && <button type="button" className="admin-link" disabled={syncing !== null} onClick={() => syncNow(doc)}>
+          {syncing === doc.doc_id ? 'Syncing…' : 'Sync now'}</button>}{' '}
+          <button type="button" className="admin-link danger" onClick={() => remove(doc)}>Remove</button></td>
       </tr>)}</tbody>
     </table></div>
     {!docs.length && !error && <p>No files yet. The agent currently uses the website content only.</p>}

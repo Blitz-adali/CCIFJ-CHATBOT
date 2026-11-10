@@ -246,12 +246,24 @@ class KnowledgeUpload(FileUpload):
     source_url: Optional[str] = Field(default=None, max_length=500)
 
 
+class KnowledgeLink(BaseModel):
+    url: str = Field(min_length=8, max_length=500)
+    title: str = Field(default="", max_length=255)
+    download_url: Optional[str] = Field(default=None, max_length=500)
+
+
 def knowledge_json(doc: KnowledgeDocument) -> dict:
     return {
         "doc_id": doc.doc_id, "title": doc.title, "filename": doc.filename, "mime_type": doc.mime_type,
         "source_url": doc.source_url, "char_count": doc.char_count, "chunk_count": doc.chunk_count,
         "created_at": doc.created_at.isoformat() + "Z",
+        "linked": doc.sync_url is not None, "download_url": doc.download_url,
+        "checked_at": _utc(doc.checked_at), "changed_at": _utc(doc.changed_at), "sync_note": doc.sync_error,
     }
+
+
+def _utc(value) -> Optional[str]:
+    return value.isoformat() + "Z" if value else None
 
 
 @router.get("/knowledge")
@@ -296,6 +308,63 @@ async def upload_knowledge(body: KnowledgeUpload, session: DatabaseSession, staf
     session.add(doc)
     await session.commit()
     return knowledge_json(doc)
+
+
+@router.post("/knowledge/link", status_code=201)
+async def link_knowledge(body: KnowledgeLink, session: DatabaseSession, staff: StaffUser):
+    """Add a document by URL (Calameo, web page or file link); it is re-checked on a schedule."""
+    from concierge import linked_sources
+
+    url = body.url.strip()
+    download_url = (body.download_url or "").strip() or None
+    digest = linked_sources.link_digest(url)
+    if (await session.exec(select(KnowledgeDocument).where(KnowledgeDocument.sha256 == digest))).first():
+        raise HTTPException(409, "This link is already in the knowledge base. Use Sync now to refresh it.")
+    try:
+        fetched = await asyncio.to_thread(linked_sources.fetch_source, url, download_url,
+                                          max_pages=KNOWLEDGE_MAX_PAGES, max_chars=KNOWLEDGE_MAX_CHARS)
+    except linked_sources.LinkError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Reading linked source %s failed: %s", url, exc)
+        raise HTTPException(502, f"The link could not be read: {linked_sources.error_text(exc)}") from None
+    now = utcnow()
+    doc = KnowledgeDocument(title=body.title.strip() or fetched.title, filename=fetched.filename,
+                            mime_type=fetched.mime_type, source_url=url, sha256=digest,
+                            char_count=len(fetched.text), uploaded_by=staff.user_id, created_at=now,
+                            sync_url=url, download_url=download_url, version=fetched.version,
+                            checked_at=now, changed_at=now, sync_error=fetched.note or None)
+    session.add(doc)
+    await session.commit()
+    await session.refresh(doc)
+    from concierge import knowledge
+    try:
+        doc.chunk_count = await asyncio.to_thread(
+            knowledge.index_document, doc.doc_id, doc.title, url, fetched.text, fetched.filename)
+    except Exception as exc:
+        logger.exception("Indexing linked document %s failed", doc.doc_id)
+        await asyncio.to_thread(knowledge.remove_document, doc.doc_id)
+        await session.delete(doc)
+        await session.commit()
+        raise HTTPException(503, "The link was read but could not be indexed. Try again later.") from exc
+    session.add(doc)
+    await session.commit()
+    return knowledge_json(doc)
+
+
+@router.post("/knowledge/{doc_id}/sync")
+async def sync_knowledge(doc_id: int, session: DatabaseSession):
+    """Fetch a linked document now (staff just updated it on Calameo or the website)."""
+    from concierge import linked_sources
+    doc = await session.get(KnowledgeDocument, doc_id)
+    if doc is None:
+        raise HTTPException(404, "Document not found.")
+    if not doc.sync_url:
+        raise HTTPException(400, "This document was uploaded as a file; upload the new version instead.")
+    changed = await linked_sources.sync_document(session, doc)
+    return {**knowledge_json(doc), "changed": changed}
 
 
 @router.delete("/knowledge/{doc_id}", status_code=204)
