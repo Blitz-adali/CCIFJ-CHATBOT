@@ -68,7 +68,6 @@ def record_reference(title: str, url: str, record_type: str) -> None:
 
 
 _STAFF_CONTACT = re.compile(r'[\w.+-]+@ccifj\.or\.jp', re.I)
-_CATEGORY_WORD = re.compile(r'member|adh[ée]|会員|メンバー', re.I)
 _FEE_AMOUNT = re.compile(r'(?:¥|€|JPY|EUR|円|ユーロ)\s?\d|\d[\d,.\s]*\s?(?:¥|€|JPY|EUR|円|ユーロ|yen|euros?)', re.I)
 
 
@@ -79,8 +78,8 @@ def with_reference_sources(sources, reply, evidence, intent='', categories=()):
     membership table; both reach the answer without a search, so no page was "retrieved".
     The visitor still deserves to see where such a fact comes from. A reference is added
     only when the answer visibly uses it: a CCIFJ email address, a directory lookup that
-    returned companies, or membership categories named in a membership answer that has no
-    other source (the fee source when it quotes amounts).
+    returned companies, or a membership answer with no other source that compares
+    categories or quotes their fees (the fee source when it quotes amounts).
     """
     from concierge.resources import TEAM_PAGE, MEMBERSHIP_PAGE, MEMBERSHIP_FEE_SOURCE
     sources = list(sources or [])
@@ -98,8 +97,11 @@ def with_reference_sources(sources, reply, evidence, intent='', categories=()):
         if item.get('record_type') != 'staff_contact':
             add(item['title'], item['url'], item['record_type'])
     named = [name for name in categories if name and re.search(r'(?<![\w-])' + re.escape(name) + r'(?![\w-])', text, re.I)]
-    if 'membership' in (intent or '') and not sources and named and (_CATEGORY_WORD.search(text) or len(named) > 1):
-        if _FEE_AMOUNT.search(text):
+    fees = bool(_FEE_AMOUNT.search(text))
+    # One category named in passing ("your Active membership") does not make the answer a
+    # description of the categories: the reference would then sit under a claim it does not carry.
+    if 'membership' in (intent or '') and not sources and named and (fees or len(named) > 1):
+        if fees:
             # The same source the fee tool records: where the stored fees were taken from.
             add('Membership annual fees', MEMBERSHIP_FEE_SOURCE, 'member_category')
         else:

@@ -122,7 +122,7 @@ screenshots under `/tmp`.
 
 ## Remaining boundaries
 
-Implementation checks pass locally: 290 backend tests, 48 frontend tests and the
+Implementation checks pass locally: 292 backend tests, 48 frontend tests and the
 TypeScript typecheck. Live-model results are not included in those counts; they
 are in [demo/live_eval_results.md](../demo/live_eval_results.md).
 

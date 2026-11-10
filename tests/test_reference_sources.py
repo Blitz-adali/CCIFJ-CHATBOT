@@ -36,10 +36,14 @@ class ReferenceSourcesTest(unittest.TestCase):
         sources = with_reference_sources([], 'COMPANY 01 supplies premium ingredients.', evidence, 'membership', CATEGORIES)
         self.assertEqual([source['url'] for source in sources], [MEMBERS_DIRECTORY_PAGE])
 
-    def test_a_membership_answer_naming_a_category_cites_the_membership_page(self):
-        reply = 'Yes. If your company holds Active membership, its employees are members too.'
+    def test_a_membership_answer_comparing_categories_cites_the_membership_page(self):
+        reply = 'Startup is for companies under three years old; Non-Kanto is for companies outside the Tokyo area.'
         sources = with_reference_sources([], reply, {}, 'membership', CATEGORIES)
         self.assertEqual([source['url'] for source in sources], [MEMBERSHIP_PAGE])
+
+    def test_one_category_named_in_passing_does_not_source_another_claim(self):
+        reply = 'Yes. If your company holds Active membership, its employees are members too.'
+        self.assertEqual(with_reference_sources([], reply, {}, 'membership', CATEGORIES), [])
 
     def test_fees_quoted_from_the_membership_table_cite_the_fee_source(self):
         from concierge.resources import MEMBERSHIP_FEE_SOURCE

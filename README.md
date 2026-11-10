@@ -257,7 +257,7 @@ in this backend. See [prisme/README.md](prisme/README.md).
   the organisers' question bank: 19 of 20 scenarios pass and 1 is partial, 5 of 5 safe fallbacks, and all 25 answers
   cite at least one validated source. 13 questions were asked in English, 7 in French and 5 in Japanese, each
   answered in its own language. Raw answers are in `demo/*.json`.
-- **Automated tests:** 290 backend tests and 48 frontend tests pass. Run them with
+- **Automated tests:** 292 backend tests and 48 frontend tests pass. Run them with
   `uv run python -m unittest discover -s tests -p 'test_*.py'` (backend, no API keys needed) and
   `cd ccifj-frontend && npm test`. See [Testing](#testing).
 - **Prisme.ai:** on 10 November 2026 the published Prisme agent answered in English, French and Japanese through
