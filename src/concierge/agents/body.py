@@ -29,6 +29,7 @@ from .schema_prompts import (
         localized_answer,
     )
 from .model import llm, llm_routing
+from .redact import clean_button_text, scrub
 from concierge.conversation import brief_prompt, merge_brief, apply_language_requests, conversation_language, draft_language, user_history_prompt, interaction_prompt, reference_prompt
 from concierge.resources import MEMBERSHIP_FEE_SOURCE
 from ..db.relationaldb.datetimes import japan_now
@@ -193,7 +194,8 @@ def _clean_suggestions(questions: list[str] | None, actions: list[dict] = ()) ->
     taken = {text.strip().casefold() for action in actions for text in (action["label"], action["prompt"])}
     cleaned: list[str] = []
     for question in questions or []:
-        question = " ".join(str(question).split())[:160]
+        # The user sends a suggestion as their own message: no IDs or code names.
+        question = clean_button_text(question)[:160]
         if question and question.casefold() not in taken and question.casefold() not in {q.casefold() for q in cleaned}:
             cleaned.append(question)
     return cleaned[:3]
@@ -305,7 +307,7 @@ def _validate_next_actions(
             continue
         if action.id == "contact.staff" and staff_request_in_progress:
             continue
-        label, prompt = action.label.strip(), action.prompt.strip()
+        label, prompt = clean_button_text(action.label), clean_button_text(action.prompt)
         key = (action.id, action.event_id)
         if not label or not prompt or key in seen:
             continue
@@ -883,8 +885,9 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
     candidates = source_candidates(asdict(evidence) if evidence else {}, state.get("source_urls") or [])
     if len(results) == 1 and not candidates:
         domain, text = next(iter(results.items()))
-        cleaned = re.sub(r"\n*\[Event IDs from the events database this turn:.*?\]", "", str(text), flags=re.S).strip()
-        if cleaned and not cleaned.startswith(("[ID ", "CAN BOOK", "CANNOT BOOK", "Returning to")):
+        raw = str(text).strip()
+        cleaned = scrub(raw)
+        if cleaned and not raw.startswith(("[ID ", "CAN BOOK", "CANNOT BOOK", "Returning to")):
             booked_ids = await _booked_event_ids(state) if domain == "events" else set()
             actions = await _with_booking_action([], state, str(text), booked_ids) if domain == "events" else []
             if domain == 'events' and state.get('user_id') is None and _anonymous_ticket_request(state.get('messages', [])):
@@ -936,7 +939,7 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
     try:
         output = await llm.with_structured_output(CollectorOutput).ainvoke(synthesis_messages, config=config)
         if output is not None:
-            answer = output.answer.strip()
+            answer = scrub(output.answer.strip())
             used_source_ids = [sid for sid in output.used_source_ids if sid in candidates]
             findings = "\n".join(str(content) for content in results.values())
             booked_ids = await _booked_event_ids(state)
@@ -957,6 +960,7 @@ async def collector_node(state: AgentState, config: RunnableConfig = None) -> di
         used_source_ids = []
         # Never lose the answer because structured output failed.
         synthesized_response = await llm.ainvoke(synthesis_messages, config=config)
+        synthesized_response = AIMessage(content=scrub(_message_text(synthesized_response.content)))
         next_actions = []
         suggested = _clean_suggestions(state.get("suggested_questions") or [])
 

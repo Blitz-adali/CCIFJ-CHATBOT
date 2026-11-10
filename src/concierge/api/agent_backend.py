@@ -124,10 +124,12 @@ def next_actions(result) -> list[dict]:
     for action in result.get("next_actions") or []:
         if not isinstance(action, dict) or action.get("id") not in NEXT_ACTION_IDS:
             continue
-        label, prompt = action.get("label"), action.get("prompt")
-        if not isinstance(label, str) or not label.strip() or not isinstance(prompt, str) or not prompt.strip():
+        from concierge.agents.redact import clean_button_text
+        # The prompt is sent as the user's own message: no database IDs or code names in it.
+        label, prompt = clean_button_text(action.get("label")), clean_button_text(action.get("prompt"))
+        if not label or not prompt:
             continue
-        item = {"id": action["id"], "label": label.strip(), "prompt": prompt.strip()}
+        item = {"id": action["id"], "label": label, "prompt": prompt}
         if isinstance(action.get("event_id"), int):
             item["event_id"] = action["event_id"]
         actions.append(item)
@@ -455,13 +457,18 @@ class AgentBackend:
                 warnings.append(APPROVAL_WARNING[locale])
         if not reply:
             raise RuntimeError("Agent returned no reply.")
+        from concierge.agents.redact import clean_button_text, scrub
+        if not approvals:
+            # Approval prompts are built by the backend from booking data, not by the model.
+            reply = scrub(reply) or reply
         # Written by the model for this user, already in the user's language.
         from .catalog import normalize_question
         seen = {normalize_question(_text(message.content)) for message in messages if isinstance(message, HumanMessage)}
         suggested = []
         if not had_approval:
             for question in result.get('suggested_questions') or []:
-                if not isinstance(question, str):
+                question = clean_button_text(question) if isinstance(question, str) else ""
+                if not question:
                     continue
                 key = normalize_question(question)
                 if key and key not in seen:

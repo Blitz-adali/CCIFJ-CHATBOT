@@ -1328,6 +1328,77 @@ def _member_region_pattern(region: str):
     return re.compile("|".join(parts), re.IGNORECASE)
 
 
+# Legal forms carry no meaning for "which company": "Acme K.K." and "ACME Japan Co., Ltd." are the
+# same search. Removed only as whole words (or as the Japanese prefix/suffix).
+_LEGAL_FORMS = re.compile(
+    r"\b(?:kabushiki\s+kaisha|godo\s+kaisha|k\.?\s?k\.?|g\.?\s?k\.?|co\.?|corp\.?|corporation|company\s+limited|"
+    r"ltd\.?|limited|inc\.?|incorporated|llc|llp|plc|s\.?a\.?s\.?|s\.?a\.?r\.?l\.?|s\.?a\.?|gmbh|ag|bv|nv)(?=\W|$)",
+    re.IGNORECASE)
+_JA_LEGAL_FORMS = re.compile(r"株式会社|合同会社|有限会社|\(株\)|（株）|㈱")
+
+
+def _name_key(value: str) -> str:
+    """A company or person name reduced to what identifies it: case, width, punctuation,
+    legal forms and leading zeros ("COMPANY 01" == "company 1") do not matter."""
+    import unicodedata
+    text = unicodedata.normalize("NFKC", value or "")
+    # Accents are often dropped when typing ("Dupre" for "Dupré"); kana voicing marks are kept.
+    text = "".join(ch for ch in unicodedata.normalize("NFD", text)
+                   if not (unicodedata.combining(ch) and ord(ch) < 0x0370))
+    text = unicodedata.normalize("NFKC", text)
+    text = _JA_LEGAL_FORMS.sub(" ", text)
+    stripped = _LEGAL_FORMS.sub(" ", text)
+    if re.search(r"\w", stripped):  # never strip a name down to nothing ("SA" alone stays)
+        text = stripped
+    text = re.sub(r"(?<=[^\W\d_])(?=\d)|(?<=\d)(?=[^\W\d_])", " ", text)  # "company11" -> "company 11"
+    words = re.findall(r"\w+", text.casefold())
+    return " ".join(str(int(w)) if w.isdigit() else w for w in words)
+
+
+def _name_score(query: str, name: str) -> float:
+    """1.0 same name, 0.9 the query is a whole-word part of the name, else spelling similarity."""
+    from difflib import SequenceMatcher
+    q, n = _name_key(query), _name_key(name)
+    if not q or not n:
+        return 0.0
+    if q == n or q.replace(" ", "") == n.replace(" ", ""):
+        return 1.0
+    numbers = re.findall(r"\d+", q)
+    if numbers and set(numbers) - set(re.findall(r"\d+", n)):
+        return 0.0  # a different number is a different company: "COMPANY 11" is not "COMPANY 01"
+    if len(q) >= 3 and re.search(r"(?<!\w)" + re.escape(q) + r"(?!\w)", n):
+        return 0.9
+    if " " not in q and len(q) >= 4 and q in n.replace(" ", ""):
+        return 0.85  # "company11", "lvmh" inside "lvmh moet hennessy"
+    return SequenceMatcher(None, q.replace(" ", ""), n.replace(" ", "")).ratio()
+
+
+_NAME_MATCH = 0.82  # tolerates a typo or two, not a different company
+
+
+def _members_by_name(members: list, contacts: dict, query: str) -> list[tuple[object, str]]:
+    """Members whose company name, or one of whose contact people, matches `query`.
+
+    Returns (member, why) pairs, best first; `why` names the matched contact person if any.
+    """
+    scored = []
+    for m in members:
+        best, why = _name_score(query, m.name or ""), ""
+        for contact in contacts.get(getattr(m, "member_id", None), []):
+            score = _name_score(query, getattr(contact, "name", "") or "")
+            if score > best:
+                best, why = score, f"contact person {contact.name}"
+        if best >= _NAME_MATCH:
+            scored.append((best, m, why))
+    if not scored:
+        return []
+    top = max(score for score, _, _ in scored)
+    # An exact name hides near-misses: asking for "COMPANY 1" must not also list COMPANY 11.
+    floor = 1.0 if top == 1.0 else _NAME_MATCH
+    scored.sort(key=lambda item: -item[0])
+    return [(m, why) for score, m, why in scored if score >= floor]
+
+
 def _contacts_line(contacts: list) -> str:
     """Contact people of a member company, with the role and working language of each."""
     people = []
@@ -1376,17 +1447,23 @@ async def _events_by_topic(topic: str, start, end, category: Optional[str], loca
 async def search_member_directory(
     industry: Optional[str] = None,
     region: Optional[str] = None,
+    company_name: Optional[str] = None,
     runtime: ToolRuntime = None,
 ) -> str:
     """
-    Search the CCIFJ member directory for companies matching the provided industry and/or region.
+    Search the CCIFJ member directory for companies by name, industry and/or region.
 
     Use this tool when:
+    - The user names a company or a person ("is Acme a member?", "contact for COMPANY 11",
+      "how do I reach Marie Dupont?"): pass company_name, alone.
     - The user wants to find member companies in the CCIFJ network.
     - The user asks for companies in a particular sector (e.g., IT, Energy, Luxury, Aerospace).
     - The user asks for companies in a particular place.
 
     Args:
+        company_name: Optional company name, or a contact person's name, as the user wrote
+            it. Case, spacing, legal forms (K.K., Co., Ltd., SAS) and small typos do not
+            matter. When set, industry and region are ignored.
         industry: Optional directory sector, e.g. "Wine and Spirits", "Food & Beverage",
             "Distribution", "IT & Computer". Use list_available_industries_and_regions
             for the exact list.
@@ -1399,10 +1476,13 @@ async def search_member_directory(
         and directory descriptions. Names are shown to members and staff only;
         other users get how many companies match.
     """
+    company_name = (company_name or "").strip()[:200]
+    if company_name:
+        return await _directory_by_name(company_name, runtime)
     pattern = _member_region_pattern(region or "")
     if not industry and pattern is None:
         return (
-            "Please provide an industry and/or a place in Japan or abroad to search. "
+            "Please provide a company name, an industry and/or a place in Japan or abroad to search. "
             "Use list_available_industries_and_regions to see the industries."
         )
 
@@ -1463,6 +1543,41 @@ async def search_member_directory(
     if len(members) > PAGE_SIZE:
         text += f"\n\nShowing the first {PAGE_SIZE} results; more companies match. Add another filter to narrow it down."
     return text
+
+
+async def _directory_by_name(query: str, runtime) -> str:
+    """Directory records for a company (or contact person) the user named."""
+    async with AsyncSessionLocal() as session:
+        everyone = [m for m in await crud.search_members(session, limit=_MEMBER_FETCH_LIMIT)
+                    if getattr(m, "directory_visible", True) is not False]
+        ids = [m.member_id for m in everyone if getattr(m, "member_id", None) is not None]
+        contacts = await crud.member_contacts(session, ids) if ids else {}
+    found = _members_by_name(everyone, contacts, query)
+    level = await _access_level(runtime)
+    if level in ("guest", "user"):
+        # Confirming or denying that a named company is a member is itself directory information.
+        return (f"The user asked about \"{query}\" in the member directory. " + MEMBERS_ONLY_NOTE
+                + " Do not say whether this company is or is not a member.")
+    if not found:
+        return (f"No member company or contact person named \"{query}\" is in the CCIFJ directory "
+                "(checked ignoring case, spacing, legal forms and small typos). Say so plainly; it may "
+                "not be a member, or be listed under another name. Offer a search by sector, or a "
+                "message to CCIFJ staff.")
+    blocks = []
+    for m, why in found[:PAGE_SIZE]:
+        place = ", ".join(p for p in (m.region, m.country) if p) or "region unknown"
+        block = f"{m.name} | Industry: {m.sector or 'unknown'} | {place}"
+        if why:
+            block += f" | matched on {why}"
+        if getattr(m, "secondary_sectors", None):
+            block += f" | Also: {m.secondary_sectors}"
+        if m.description:
+            block += f"\n  {m.description[:2000]}"
+        block += _contacts_line(contacts.get(getattr(m, "member_id", None), []))
+        blocks.append(block)
+    head = (f"Directory records for \"{query}\" (exact name matches first). If several are listed, "
+            "the user's spelling was close to more than one: show them and ask which one is meant.\n\n")
+    return _names_allowed_note(level) + head + "\n\n".join(blocks)
 
 
 #################################################
@@ -1640,9 +1755,14 @@ async def request_introduction(
             return ("Only CCIFJ members can request introductions through the directory. Offer a message to "
                     "CCIFJ staff (submit_staff_request) instead, and the membership information.")
         own = (await session.exec(sql_select(Belongs.member_id).where(Belongs.user_id == user_id))).first()
+        everyone = (await session.exec(sql_select(Member))).all()
         created, unknown = [], []
         for name in names:
             target = (await session.exec(sql_select(Member).where(sa_func.lower(Member.name) == name.lower()))).first()
+            if target is None:
+                # "company 11", "Acme KK": accept the name only when it points to one company.
+                close = _members_by_name(everyone, {}, name)
+                target = close[0][0] if len(close) == 1 else None
             if target is None or target.member_id == own:
                 unknown.append(name)
                 continue

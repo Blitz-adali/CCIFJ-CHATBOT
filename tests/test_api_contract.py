@@ -460,7 +460,7 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
             "suggested_questions": ["Which event fits my goals?"],
             "next_actions": [
                 {"id": "run.sql", "label": "Unknown", "prompt": "drop"},
-                {"id": "event.book", "label": " Book Networking Night ", "prompt": "I want to book a ticket for event ID 12", "event_id": 12},
+                {"id": "event.book", "label": " Book Networking Night ", "prompt": "I want to book a ticket for Networking Night", "event_id": 12},
                 {"id": "membership.join", "label": "Join", "prompt": ""},
                 {"id": "auth.login", "label": "Log in", "prompt": "I want to log in"},
                 {"id": "contact.staff", "label": "Contact staff", "prompt": "Contact staff"},
@@ -468,7 +468,7 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         }
         formatted = await self.backend.format_result(result)
         self.assertEqual(formatted["next_actions"], [
-            {"id": "event.book", "label": "Book Networking Night", "prompt": "I want to book a ticket for event ID 12", "event_id": 12},
+            {"id": "event.book", "label": "Book Networking Night", "prompt": "I want to book a ticket for Networking Night", "event_id": 12},
             {"id": "auth.login", "label": "Log in", "prompt": "I want to log in"},
         ])
         self.assertEqual(formatted["suggested_questions"], ["Which event fits my goals?"])
@@ -483,7 +483,7 @@ class AgentBackendFormattingTest(unittest.IsolatedAsyncioTestCase):
         result = {
             "messages": [HumanMessage("What networking events are coming up?"), AIMessage("Networking Night is on Friday.")],
             "next_actions": [
-                {"id": "event.book", "label": "Book", "prompt": "I want to book a ticket for event ID 12", "event_id": 12},
+                {"id": "event.book", "label": "Book", "prompt": "I want to book a ticket for Networking Night", "event_id": 12},
                 {"id": "events.browse", "label": "Browse", "prompt": "Show me more events"},
             ],
             "suggested_questions": [question, " Can CCIFJ help me find a distributor? ", ""],

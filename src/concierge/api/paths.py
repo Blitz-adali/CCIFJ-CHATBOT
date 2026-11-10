@@ -205,8 +205,8 @@ def _format_event_list_markdown(text: str, locale: str) -> str:
     for line in text.splitlines():
         match = re.match(r"\[ID\s+([^\]]+)\]\s+(.+?)\s+\|\s+(.+?)\s+\|\s+(.+?)\s+\|\s+Category:\s*(.+?)\s+\|\s+Price:\s*(.+)$", line)
         if match:
-            event_id, title, date, location, category, price = match.groups()
-            items.append(f"### {title}\n\n- **Date:** {date}\n- **Location:** {location}\n- **Category:** {category}\n- **Price:** {price}\n- **Event ID:** {event_id}")
+            _, title, date, location, category, price = match.groups()  # the database ID stays internal
+            items.append(f"### {title}\n\n- **Date:** {date}\n- **Location:** {location}\n- **Category:** {category}\n- **Price:** {price}")
         elif line.startswith("Showing the first "):
             items.append(f"_{line}_")
     return headings[locale] + "\n\n" + ("\n\n".join(items) if items else no_events[locale])
@@ -216,7 +216,10 @@ def _format_event_details_markdown(text: str) -> str:
     if text.startswith("No event was found") or text.startswith("Invalid event"):
         return f"## Event details\n\n{text}"
     lines = text.splitlines()
-    title = lines[0].strip() if lines else "Event details"
+    title = re.sub(r"^\[ID\s+[^\]]*\]\s*", "", lines[0].strip()) if lines else "Event details"
+    # Only the event's own fields: the tool text also carries notes for the model.
+    shown = {"Category", "Location", "Starts", "Ends", "Registration deadline", "Registration status",
+             "Price", "Languages", "Contact", "Description"}
     fields = []
     description = ""
     speakers: list[str] = []
@@ -228,6 +231,8 @@ def _format_event_details_markdown(text: str) -> str:
             speakers.append(line[2:].strip())
         elif ": " in line:
             key, value = line.split(": ", 1)
+            if key not in shown:
+                continue
             if key == "Description":
                 description = value
             else:

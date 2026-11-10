@@ -198,7 +198,8 @@ export function WidgetChat({initialLocale,locale:controlledLocale,initialDraft='
     setErrorNote(problems.join(' '));
   }
   function requestEventBooking(event:{event_id:number;title:string}){
-    const prompt=locale==='fr'?`Je souhaite réserver l’événement ${event.event_id} : ${event.title}.`:locale==='ja'?`イベントID ${event.event_id}「${event.title}」を予約したいです。`:`I'd like to book event ID ${event.event_id}: ${event.title}.`;
+    // The user sees this as their own message: name the event by its title, never by its database ID.
+    const prompt=locale==='fr'?`Je souhaite réserver l’événement « ${event.title} ».`:locale==='ja'?`イベント「${event.title}」を予約したいです。`:`I'd like to book the event "${event.title}".`;
     if(!isAuthenticated){setDraft(prompt);onLogin();return;}
     void ask(prompt);
   }
