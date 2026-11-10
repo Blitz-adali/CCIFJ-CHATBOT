@@ -61,7 +61,7 @@ def run():
         # A starter prompt is sent to the agent as an ordinary message.
         page.locator(".new-chat-rail-button").click()
         page.get_by_role("button", name="Book a meeting room").click()
-        expect(page.get_by_text("Answer: Is a CCIFJ meeting room free next Tuesday from 2 pm to 5 pm for 10 people?", exact=True)).to_be_visible()
+        expect(page.get_by_text("Answer: I’d like to book a meeting room at CCIFJ.", exact=True)).to_be_visible()
 
         # Cancelling leaves an uncertain outcome that must be acknowledged before continuing.
         ask("cancel")

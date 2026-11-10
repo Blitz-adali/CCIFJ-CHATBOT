@@ -18,9 +18,9 @@ type Turn={id:number;role:'user'|'assistant';text:string;response?:ChatResponse;
 const starterPrompts=[
   {icon:CalendarDays,label:{en:'Upcoming events',fr:'Événements à venir',ja:'今後のイベント'},prompt:{en:'What events are coming up at CCIFJ?',fr:'Quels sont les prochains événements de la CCIFJ ?',ja:'CCIFJの今後のイベントを教えてください'}},
   {icon:UsersRound,label:{en:'Membership fees',fr:'Tarifs d’adhésion',ja:'会費'},prompt:{en:'What are the CCIFJ membership fees?',fr:'Quels sont les tarifs d’adhésion à la CCIFJ ?',ja:'CCIFJの会費はいくらですか？'}},
-  {icon:Building2,label:{en:'Book a meeting room',fr:'Réserver une salle',ja:'会議室を予約'},prompt:{en:'Is a CCIFJ meeting room free next Tuesday from 2 pm to 5 pm for 10 people?',fr:'Une salle de réunion de la CCIFJ est-elle libre mardi prochain de 14 h à 17 h pour 10 personnes ?',ja:'来週の火曜日14時〜17時に10人で使えるCCIFJの会議室は空いていますか？'}},
-  {icon:Rocket,label:{en:'Enter the Japanese market',fr:'S’implanter au Japon',ja:'日本市場への進出'},prompt:{en:'I run a French startup and want to enter the Japanese market. How can CCIFJ help?',fr:'Je dirige une start-up française et je veux m’implanter au Japon. Comment la CCIFJ peut-elle m’aider ?',ja:'フランスのスタートアップとして日本市場に進出したいです。CCIFJはどのように支援できますか？'}},
-  {icon:Lightbulb,label:{en:'Events for my industry',fr:'Événements pour mon secteur',ja:'業界向けのイベント'},prompt:{en:'Which CCIFJ events would suit a food and beverage company?',fr:'Quels événements de la CCIFJ conviendraient à une entreprise agroalimentaire ?',ja:'食品・飲料業界の会社に合うCCIFJのイベントはどれですか？'}},
+  {icon:Building2,label:{en:'Book a meeting room',fr:'Réserver une salle',ja:'会議室を予約'},prompt:{en:'I’d like to book a meeting room at CCIFJ.',fr:'Je souhaite réserver une salle de réunion à la CCIFJ.',ja:'CCIFJの会議室を予約したいです。'}},
+  {icon:Rocket,label:{en:'Enter the Japanese market',fr:'S’implanter au Japon',ja:'日本市場への進出'},prompt:{en:'How can CCIFJ help my company enter the Japanese market?',fr:'Comment la CCIFJ peut-elle aider mon entreprise à s’implanter au Japon ?',ja:'日本市場への進出について、CCIFJはどのように支援できますか？'}},
+  {icon:Lightbulb,label:{en:'Events for my company',fr:'Événements pour mon entreprise',ja:'自社に合うイベント'},prompt:{en:'Can you recommend CCIFJ events for my company?',fr:'Pouvez-vous me recommander des événements de la CCIFJ pour mon entreprise ?',ja:'私の会社に合うCCIFJのイベントを提案してください。'}},
   {icon:Mail,label:{en:'Newsletters',fr:'Newsletters',ja:'ニュースレター'},prompt:{en:'Which CCIFJ newsletters can I subscribe to?',fr:'À quelles newsletters de la CCIFJ puis-je m’abonner ?',ja:'購読できるCCIFJのニュースレターを教えてください。'}},
 ] as const;
 const words={
