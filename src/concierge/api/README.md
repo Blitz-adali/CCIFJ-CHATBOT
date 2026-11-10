@@ -295,3 +295,31 @@ action, the API returns a login prompt instead of an approval and leaves the
 session usable.
 
 `GET /auth/me` returns the signed-in user.
+
+## WhatsApp, Slack and account linking
+
+`POST /api/v1/webhooks/whatsapp` (Meta WhatsApp Cloud API; `GET` answers Meta's
+verification handshake) and `POST /api/v1/webhooks/slack` (Slack Events API,
+`message.im`) feed text messages into the same pipeline as `/chat`. Each request must
+carry the platform's signature; a channel whose variables are not set in `.env`
+answers 404. The webhook is acknowledged at once and the answer is sent afterwards.
+
+A sender starts as a guest. When they ask for something that needs an account, or
+send `link`, the bot replies with `{CCIFJ_PUBLIC_URL}/?link=<token>`. The website
+keeps the token in memory, the user logs in as usual, and then:
+
+- `POST /auth/link/preview` with `{ "token" }` returns `platform` and a masked
+  `account_hint` (for example `•••• 5678`) so the user can check what they link.
+- `POST /auth/link/complete` with `{ "token", "locale" }` attaches that chat account
+  to the signed-in user and sends a confirmation to the chat.
+- `GET /auth/links` lists the user's linked chat accounts; `DELETE /auth/links/{link_id}`
+  removes one. Sending `unlink` in the chat does the same.
+
+All four need `Authorization: Bearer <access_token>`. The token is valid for
+`CCIFJ_LINK_TOKEN_SECONDS` (at most 10 minutes), works once, is stored only as a
+SHA-256 hash, and is replaced when a new link is requested. It is not a login token:
+it returns 410 once expired or used, and 409 if the chat account already belongs to
+another user. An account has one linked WhatsApp number and one Slack user per workspace.
+
+In the chat, actions that show an approval card on the website list the same details
+as text and are confirmed by replying `yes` or `no`.

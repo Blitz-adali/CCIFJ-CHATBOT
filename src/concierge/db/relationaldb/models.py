@@ -3,7 +3,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, Index, JSON, text
+from sqlalchemy import Column, Index, JSON, UniqueConstraint, text
 from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
@@ -448,6 +448,43 @@ class KnowledgeDocument(SQLModel, table=True):
     checked_at: Optional[NaiveDatetime] = None
     changed_at: Optional[NaiveDatetime] = None
     sync_error: Optional[str] = Field(default=None, max_length=500)
+
+
+class ChannelIdentity(SQLModel, table=True):
+    """A person writing from WhatsApp or Slack (see concierge.channels).
+
+    `user_id` stays empty until they prove who they are by logging in on the website through
+    a one-time link (see concierge.account_linking). A Slack user ID is only unique inside
+    its workspace, so `team_id` is part of the key; it is "" for WhatsApp.
+    """
+    __tablename__ = "channel_identity"
+    __table_args__ = (
+        UniqueConstraint("platform", "team_id", "platform_user_id", name="uq_channel_identity"),
+    )
+
+    identity_id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(max_length=20)  # whatsapp | slack
+    platform_user_id: str = Field(max_length=64)  # WhatsApp number (digits) or Slack user ID
+    team_id: str = Field(default="", max_length=64)
+    reply_to: Optional[str] = Field(default=None, max_length=64)  # Slack DM channel; unused for WhatsApp
+    user_id: Optional[int] = Field(default=None, foreign_key="user.user_id", index=True)
+    # Current conversation. Not a foreign key: guest conversations are swept after their
+    # token lifetime, and a missing one simply starts a new conversation.
+    session_id: Optional[int] = Field(default=None)
+    linked_at: Optional[NaiveDatetime] = Field(default=None)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = updated_at_field()
+
+
+class LinkToken(SQLModel, table=True):
+    """A short-lived, single-use account-linking token. Only its SHA-256 is stored, and the
+    row is deleted the moment it is used, so a leaked database or a replayed link is useless."""
+    __tablename__ = "link_token"
+
+    token_hash: str = Field(max_length=64, primary_key=True)
+    identity_id: int = Field(foreign_key="channel_identity.identity_id", index=True)
+    expires_at: NaiveDatetime
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
 
 
 class StaffRequestRecipient(SQLModel, table=True):

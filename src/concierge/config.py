@@ -20,6 +20,13 @@ Optional:
     CCIFJ_WEB_SEARCH               on/off, default on: OpenAI web search for the events and
                                    general agents (ignored for Ollama models).
     CCIFJ_WEB_SEARCH_DOMAINS       Comma-separated allowed domains (e.g. ccifj.or.jp); default "*" = whole web.
+    CCIFJ_PUBLIC_URL               Public address of the website, used in account-linking links sent
+                                   to WhatsApp/Slack. Defaults to the first CCIFJ_CORS_ORIGINS entry.
+    CCIFJ_LINK_TOKEN_SECONDS       Lifetime of an account-linking link, default 600 (maximum 600).
+    WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN
+                                   WhatsApp Cloud API; set all four to enable /webhooks/whatsapp.
+    SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
+                                   Slack app; set both to enable /webhooks/slack.
 
 Run: uv run uvicorn concierge.main:app --app-dir src --reload
 """
@@ -61,6 +68,22 @@ class Settings:
     cors_origins: tuple[str, ...] = ()
     langsmith_tracing: bool = False
     staff_user_ids: tuple[int, ...] = ()
+    public_url: str = ""
+    link_token_seconds: int = 600
+    whatsapp_access_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_app_secret: str = ""
+    whatsapp_verify_token: str = ""
+    slack_bot_token: str = ""
+    slack_signing_secret: str = ""
+
+    @property
+    def whatsapp_enabled(self) -> bool:
+        return bool(self.whatsapp_access_token)
+
+    @property
+    def slack_enabled(self) -> bool:
+        return bool(self.slack_bot_token)
 
     @property
     def uses_ollama(self) -> bool:
@@ -151,6 +174,24 @@ def _load_settings() -> Settings:
     if tracing and _is_placeholder(_get("LANGSMITH_API_KEY")):
         problems.append("LANGSMITH_API_KEY is missing while LANGSMITH_TRACING=true (set it, or disable tracing).")
 
+    public_url = _get("CCIFJ_PUBLIC_URL").rstrip("/") or (cors_origins[0] if cors_origins else "")
+    if public_url and not public_url.startswith(("http://", "https://")):
+        problems.append("CCIFJ_PUBLIC_URL must start with http:// or https://.")
+    link_seconds = _positive_int("CCIFJ_LINK_TOKEN_SECONDS", 600, problems)
+    if link_seconds > 600:
+        problems.append("CCIFJ_LINK_TOKEN_SECONDS must be 600 or less: linking links are short-lived.")
+
+    # A channel is either fully configured or off; a half-set one would accept unsigned webhooks.
+    whatsapp = {name: _get(name) for name in (
+        "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN")}
+    slack = {name: _get(name) for name in ("SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET")}
+    for label, values in (("WhatsApp", whatsapp), ("Slack", slack)):
+        missing = [name for name, value in values.items() if not value]
+        if missing and len(missing) < len(values):
+            problems.append(f"{label} is partly configured; also set {', '.join(missing)} (or clear the others).")
+        elif not missing and not public_url:
+            problems.append(f"Set CCIFJ_PUBLIC_URL so {label} users can be sent an account-linking link.")
+
     if problems:
         raise ConfigError(problems)
 
@@ -165,6 +206,14 @@ def _load_settings() -> Settings:
         cors_origins=cors_origins,
         langsmith_tracing=tracing,
         staff_user_ids=tuple(dict.fromkeys(staff_ids)),
+        public_url=public_url,
+        link_token_seconds=link_seconds,
+        whatsapp_access_token=whatsapp["WHATSAPP_ACCESS_TOKEN"],
+        whatsapp_phone_number_id=whatsapp["WHATSAPP_PHONE_NUMBER_ID"],
+        whatsapp_app_secret=whatsapp["WHATSAPP_APP_SECRET"],
+        whatsapp_verify_token=whatsapp["WHATSAPP_VERIFY_TOKEN"],
+        slack_bot_token=slack["SLACK_BOT_TOKEN"],
+        slack_signing_secret=slack["SLACK_SIGNING_SECRET"],
     )
 
 
