@@ -15,7 +15,7 @@ dashboard, without coding.
 | Review the hackathon submission | [Hackathon submission](#hackathon-submission) |
 | Understand how it is built | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Install it for CCIFJ, and see the costs | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
-| Use it from Prisme.ai | [prisme/README.md](prisme/README.md) |
+| Use it from Prisme.ai | [From Prisme.ai](#from-prismeai) |
 | Rehearse the demo | [docs/HACKATHON.md](docs/HACKATHON.md) |
 
 ---
@@ -26,27 +26,19 @@ dashboard, without coding.
 
 - Python **3.12 or later** and [uv](https://docs.astral.sh/uv/)
 - Node.js and npm
-- An **OpenAI API key**
-- Optional: a Cohere API key (better search ranking)
-- Optional: OCR, only for reading scanned PDFs and images. One script sets it up; see
-  [Optional: OCR for scans and images](#optional-ocr-for-scans-and-images)
+
+The settings file `.env` is included and ready to use, so there are no keys to fill in.
 
 ### Start it
 
-1. Copy the settings file:
+1. Get the code:
 
    ```bash
-   cp .env.example .env
+   git clone https://github.com/Blitz-adali/CCIFJ-CHATBOT.git
+   cd CCIFJ-CHATBOT
    ```
 
-2. Open `.env` and fill in two values: `OPENAI_API_KEY`, and `CCIFJ_AUTH_SECRET`, which you
-   generate with:
-
-   ```bash
-   python -c "import secrets; print(secrets.token_urlsafe(48))"
-   ```
-
-3. Start everything:
+2. Start everything:
 
    ```bash
    ./start.sh
@@ -55,7 +47,7 @@ dashboard, without coding.
    The script installs the dependencies, prepares the database and starts the API on port 8001
    and the website on port 5173. It is a bash script: use macOS, Linux, WSL or Git Bash.
 
-4. Open **http://localhost:5173**.
+3. Open **http://localhost:5173**.
 
 The agent loads its models in the background when the API starts (about 12–18 seconds, longer
 the first time because the search model is downloaded). A message sent before that simply waits.
@@ -100,8 +92,6 @@ unavailable.
 
 ### Start it by hand (or in Windows PowerShell)
 
-Do steps 1 and 2 above first, then:
-
 ```bash
 uv sync
 uv run concierge-db upgrade
@@ -138,8 +128,6 @@ is opened to the public.
 
 | What you see | What to do |
 |---|---|
-| `.env is missing` | Run step 1. |
-| `Set CCIFJ_AUTH_SECRET in .env` | Generate the secret in step 2 and paste it into `.env`. |
 | `Port … is already in use` | Stop the other program, or choose other ports: `API_PORT=8002 WEB_PORT=5174 ./start.sh`. |
 | The first answer takes a long time | The models are still loading. `http://localhost:8001/api/v1/ready` answers once they are ready. |
 | "OCR is unavailable" on a scanned PDF or image | Run the [optional OCR script](#optional-ocr-for-scans-and-images). Text PDFs and Word files work without it. |
@@ -206,6 +194,40 @@ One line in the page template adds a chat button to any page, TYPO3 included:
 `ccifj-frontend/public/embed-demo.html` is an example page. Installation in CCIFJ's
 environment is described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
+### From Prisme.ai
+
+The concierge also runs as an agent in a Prisme.ai workspace, where CCIFJ staff already work.
+The Prisme agent holds no CCIFJ facts of its own: one custom function sends each question to
+this backend and shows the reply, so answers are the same as on the website and are updated in
+one place.
+
+| What it does | Details |
+|---|---|
+| Answers in three languages | English, French and Japanese, each in the language of the question. |
+| Keeps the conversation | Follow-up questions ("and what is her phone number?") stay in the same conversation, because the agent passes the conversation ID back to the backend. |
+| Cites the same sources | The reply comes from the backend, with the same sources as the web chat. |
+| Can be reused by another chamber | The exported agent, [`prisme/CCIFJ_Concierge.agents.md`](prisme/CCIFJ_Concierge.agents.md), imports in one step; only the backend address has to be set. |
+
+To try it with the backend on your machine:
+
+1. Start the concierge with `./start.sh`.
+2. Give it a public address (needs [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), no account):
+
+   ```bash
+   prisme/tunnel.sh
+   ```
+
+   It prints the **Endpoint URL**. Run it again to check that the address still answers;
+   `prisme/tunnel.sh stop` closes it.
+3. In Prisme, **Agent Creator → Create agent → Import AGENTS.md** with
+   `prisme/CCIFJ_Concierge.agents.md`, then paste the Endpoint URL into the function
+   **Ask the CCIFJ Concierge**.
+4. In the **Playground**, ask *"What are the membership fees?"*. "Ran 1 tool" above the answer
+   means the backend was called.
+
+Set-up by hand, a fixed address and the tests run in Prisme are in
+[prisme/README.md](prisme/README.md).
+
 ---
 
 ## What the concierge can do
@@ -227,7 +249,7 @@ environment is described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 | **Personal touch** | Asks for the details that change its advice (industry, country, B2B or B2C, stage) before answering an advisory question, once, and lets the user skip. Knows the date and the signed-in user's bookings, membership (with the company's industry and location), and newsletter status. Remembers the last few exchanges, so it builds on earlier advice instead of repeating it. |
 | **Web search** | With an OpenAI model, the events and general agents can search the web for market context (competitors, market size, trade shows) and recent CCIFJ news. CCIFJ facts (fees, events, members, contacts) still come only from the tools. Switch it off with `CCIFJ_WEB_SEARCH=off`. |
 | **Embedding** | `ccifj-frontend/public/embed.js` adds a chat button to any page (TYPO3 included) with one `<script>` tag; `embed-demo.html` is an example host page. |
-| **Prisme.ai** | A published Prisme agent passes each question to this backend through one custom function, so the concierge can be used inside CCIFJ's Prisme workspace with the same answers as on the website. The exported agent is in [`prisme/`](prisme/README.md) for another chamber to import. Text only: bookings and approvals stay in the web chat. |
+| **Prisme.ai** | A published Prisme agent passes each question to this backend through one custom function, so the concierge can be used inside CCIFJ's Prisme workspace with the same answers as on the website. The exported agent is in [`prisme/`](prisme/README.md) for another chamber to import. |
 | **Safety** | Keeps to CCIFJ topics and refuses unrelated requests. It treats tool results and documents as data, not instructions. Every database write needs explicit approval. It never shows the user its internals (databases, tools, event IDs). |
 
 ---
@@ -240,8 +262,8 @@ environment is described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 **Extra agents claimed as bonuses:** Agent 3 (member matching and introductions) and
 Agent 2 (member engagement).
 **Prisme reuse bonus:** claimed. The concierge runs as a published Prisme.ai agent that calls this
-backend, and the agent is exported for another chamber to import. It is a thin wrapper: the knowledge
-and the agents stay in this backend. See [prisme/README.md](prisme/README.md).
+backend, and the agent is exported for another chamber to import. The knowledge and the agents live
+in this backend, so Prisme and the website give the same answers. See [prisme/README.md](prisme/README.md).
 
 | Agent | Where to look |
 |---|---|
@@ -253,10 +275,9 @@ and the agents stay in this backend. See [prisme/README.md](prisme/README.md).
 
 ### Evidence
 
-- **Scenarios, fallbacks, languages:** [demo/live_eval_results.md](demo/live_eval_results.md) records a live run of
-  the organisers' question bank: 19 of 20 scenarios pass and 1 is partial, 5 of 5 safe fallbacks, and all 25 answers
-  cite at least one validated source. 13 questions were asked in English, 7 in French and 5 in Japanese, each
-  answered in its own language. Raw answers are in `demo/*.json`.
+- **Scenarios, fallbacks, languages:** a live run of the organisers' question bank: 19 of 20 scenarios pass and
+  1 is partial, 5 of 5 safe fallbacks, and all 25 answers cite at least one validated source. 13 questions were
+  asked in English, 7 in French and 5 in Japanese, each answered in its own language.
 - **Automated tests:** 275 backend tests and 48 frontend tests pass. Run them with
   `uv run python -m unittest discover -s tests -p 'test_*.py'` (backend, no API keys needed) and
   `cd ccifj-frontend && npm test`. See [Testing](#testing).
@@ -301,7 +322,8 @@ are reservations, not payments.
 
 ## Configuration
 
-Settings come from `.env` and are checked at startup (`src/concierge/config.py`).
+Settings come from `.env` and are checked at startup (`src/concierge/config.py`). The `.env` in
+the repository is ready for running the demo; you only need this table to change a setting.
 
 | Variable | Required | Description |
 |---|---|---|
@@ -319,7 +341,7 @@ Settings come from `.env` and are checked at startup (`src/concierge/config.py`)
 | `CALAMEO_API_KEY`, `CALAMEO_API_SECRET` | no | Calameo API keys (Premium/Platinum accounts). When set, linked Calameo publications are read through the official API instead of the public page, which also covers private publications. |
 | `CCIFJ_WEB_SEARCH` | no | `on` (default) or `off`: OpenAI's built-in web search for the events and general agents, used for market context and recent CCIFJ news. Ignored with Ollama models. |
 | `CCIFJ_WEB_SEARCH_DOMAINS` | no | Comma-separated domains the web search may use (e.g. `ccifj.or.jp`); default `*` is the whole web. |
-| `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY` | no | When all four are set, every staff request a visitor approves is also created in Odoo CRM as a lead (`src/concierge/integrations/odoo.py`; JSON-2 API on Odoo 19+, XML-RPC on older versions; check your instance with `uv run python demo/odoo_check.py`). Off by default; an Odoo outage never fails the answer. `ODOO_TIMEOUT` (seconds, default 10). |
+| `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY` | no | When all four are set, every staff request a visitor approves is also created in Odoo CRM as a lead (`src/concierge/integrations/odoo.py`; JSON-2 API on Odoo 19+, XML-RPC on older versions). Off by default; an Odoo outage never fails the answer. `ODOO_TIMEOUT` (seconds, default 10). |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, … | no | LangSmith tracing. Traces go to the project `<LANGSMITH_AGENT_ID>-<LANGSMITH_AGENT_ENVIRONMENT>` (e.g. `realhackathon-local`). Runs are listed by their start time, taken from this machine's clock: keep it synced, or runs recorded while it was wrong sort above newer ones. |
 
 Frontend settings (`ccifj-frontend/.env.local`): `CCIFJ_API_TARGET` for the
@@ -330,8 +352,7 @@ frontend variables.
 
 ## Testing
 
-The contract tests use a fake agent and a throwaway database, so they need no
-API keys (set any 32+ byte `CCIFJ_AUTH_SECRET` if `.env` is absent):
+The contract tests use a fake agent and a throwaway database, so they call no model:
 
 ```bash
 uv run python -m unittest discover -s tests -p 'test_*.py'
@@ -359,8 +380,7 @@ cd ccifj-frontend && npm test
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How a message is answered, the agents and tools, approvals, search, the staff dashboard, the API, the database and the project structure |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Installing it in CCIFJ's environment (TYPO3, Odoo, GetResponse), keeping content current, running costs and who maintains what |
 | [docs/HACKATHON.md](docs/HACKATHON.md) | The demo runbook: staff access, the walkthrough and the evaluation commands |
-| [demo/live_eval_results.md](demo/live_eval_results.md) | The live evaluation on the organisers' question bank |
-| [prisme/README.md](prisme/README.md) | The Prisme.ai agent: set-up, the backend's address, the exported agent, reuse by another chamber, limits |
+| [prisme/README.md](prisme/README.md) | The Prisme.ai agent: set-up, the backend's address, the exported agent, reuse by another chamber |
 | [src/concierge/api/README.md](src/concierge/api/README.md) | The full API reference |
 | [src/concierge/db/README.md](src/concierge/db/README.md) | The database tables |
 | [ccifj-frontend/README.md](ccifj-frontend/README.md) | The website and dashboard code |
